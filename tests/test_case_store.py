@@ -72,6 +72,7 @@ def test_local_case_store_survives_reopen_and_preserves_raw_snapshot(tmp_path) -
     )
     assert reopened.load_features(case.case_id)[0].geometry == aoi.parcel_geometry
     assert reopened.get_latest_collection_receipt(case.case_id) == receipt
+    assert reopened.list_collection_receipts(case.case_id) == [receipt]
     manifest = json.loads(
         (root / "cases" / case.case_id / "manifest.json").read_text("utf-8")
     )

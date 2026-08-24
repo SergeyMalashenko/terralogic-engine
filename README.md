@@ -63,17 +63,37 @@ case-store/
 Raw source responses are immutable gzip snapshots. Geometry is stored as WKB,
 with CRS and bounding coordinates in separate columns.
 
-## Proposed viewer
+## Case viewer
 
-The recommended viewer is a read-only Streamlit application with Folium:
+Install the optional Streamlit and Folium dependencies:
+
+```bash
+python -m pip install -e '.[viewer]'
+```
+
+Start the read-only viewer:
+
+```bash
+terralogic-view \
+  --store ./case-store \
+  --host 127.0.0.1 \
+  --port 8501
+```
+
+It provides:
 
 - case and snapshot selection in a sidebar;
 - parcel, NSPD and OSM layers on an interactive map;
 - layer filters, feature attributes, collection warnings and run history;
 - direct reading through the `CaseStore` interface rather than raw SQL.
 
-It is intentionally an optional extra (`terralogic-acquisition[viewer]`) so collection and
-analytics do not depend on a UI framework. Its implementation is planned after
-the acquisition contracts are exercised against the updated OSM MCP server.
-The proposed screens and alternatives are described in
+The application binds to localhost by default. For a remote server, create an
+SSH tunnel and then open `http://127.0.0.1:8501` locally:
+
+```bash
+ssh -L 8501:127.0.0.1:8501 user@remote-server
+```
+
+The viewer is intentionally an optional extra so collection and analytics do
+not depend on a UI framework. Its screens and alternatives are described in
 [`docs/case-viewer.md`](docs/case-viewer.md).

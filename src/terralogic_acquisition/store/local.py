@@ -264,6 +264,25 @@ class LocalCaseStore:
             return None
         return CollectionReceipt.model_validate_json(row["receipt_json"])
 
+    def list_collection_receipts(
+        self, case_id: str
+    ) -> list[CollectionReceipt]:
+        """Return completed collection runs, newest first."""
+
+        with self._connection(case_id) as connection:
+            rows = connection.execute(
+                """
+                SELECT receipt_json FROM runs
+                WHERE case_id = ? AND receipt_json IS NOT NULL
+                ORDER BY started_at DESC
+                """,
+                (case_id,),
+            ).fetchall()
+        return [
+            CollectionReceipt.model_validate_json(row["receipt_json"])
+            for row in rows
+        ]
+
     def save_snapshot(
         self,
         *,

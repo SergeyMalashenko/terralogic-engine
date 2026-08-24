@@ -39,6 +39,10 @@ class CaseStore(Protocol):
         self, case_id: str
     ) -> CollectionReceipt | None: ...
 
+    def list_collection_receipts(
+        self, case_id: str
+    ) -> list[CollectionReceipt]: ...
+
     def save_snapshot(
         self,
         *,

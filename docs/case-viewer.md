@@ -1,12 +1,12 @@
 # TerraLogic Case Explorer
 
-## Recommendation
+## Implementation
 
-Use a read-only Streamlit application with Folium as the first CaseStore
-viewer. It can run beside Hermes on the same server and requires no database or
-frontend service beyond the local Python process.
+The first CaseStore viewer is implemented as a read-only Streamlit application
+with Folium. It can run beside Hermes on the same server and requires no
+database or frontend service beyond the local Python process.
 
-Target command:
+Command:
 
 ```bash
 terralogic-view --store ./case-store --host 127.0.0.1 --port 8501
@@ -17,10 +17,11 @@ terralogic-view --store ./case-store --host 127.0.0.1 --port 8501
 The sidebar selects:
 
 - case;
-- collection run and source snapshots;
+- collection run;
 - source (`nspd` or `osm`);
 - functional block or canonical feature class;
-- visible map layers.
+- visible map layers. The source snapshots belonging to the run are shown in
+  the provenance tab.
 
 The main area contains:
 
@@ -32,14 +33,15 @@ The main area contains:
 
 ## Data access
 
-The viewer must depend on the `CaseStore` interface and use methods such as
+The viewer depends on the `CaseStore` interface and uses methods such as
 `list_cases`, `list_snapshots`, `get_area_of_interest`, and `load_features`.
-It must not issue source requests, edit SQLite directly, or write analytics
+It does not issue source requests, edit SQLite directly, or write analytics
 results.
 
 Geometry is converted from stored WKB by `LocalCaseStore` and passed to Folium
-as GeoJSON. Large layers should initially load only bbox summaries and retrieve
-full attributes on selection.
+as GeoJSON. The current MVP loads the geometries referenced by the selected
+collection receipt. Bounding-box pagination can be added when real case sizes
+require it.
 
 ## Why this option
 
