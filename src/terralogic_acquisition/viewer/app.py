@@ -20,9 +20,23 @@ from terralogic_acquisition.viewer.data import (
     feature_table_rows,
     group_features,
     load_receipt_features,
+    source_summary_rows,
 )
 
-SOURCE_COLORS = {"nspd": "#7c3aed", "osm": "#047857"}
+SOURCE_COLORS = {
+    "nspd": "#7c3aed",
+    "osm": "#047857",
+    "dgis": "#2563eb",
+}
+CLASS_COLORS = {
+    "parcel": "#dc2626",
+    "restriction_zone": "#9333ea",
+    "forest": "#15803d",
+    "lake": "#2563eb",
+    "river": "#0891b2",
+    "stream": "#38bdf8",
+    "road": "#ea580c",
+}
 
 
 def _store_path() -> Path:
@@ -74,18 +88,22 @@ def _add_feature_layers(
         geometry_count = len(collection["features"])
         if geometry_count == 0:
             continue
-        color = SOURCE_COLORS.get(source, "#334155")
+        color = CLASS_COLORS.get(
+            feature_class,
+            SOURCE_COLORS.get(source, "#334155"),
+        )
+        is_linear = feature_class in {"stream", "road"}
         layer = folium.FeatureGroup(
             name=f"{source.upper()} · {feature_class} ({geometry_count})",
             show=True,
         )
         folium.GeoJson(
             collection,
-            style_function=lambda _feature, color=color: {
+            style_function=lambda _feature, color=color, is_linear=is_linear: {
                 "color": color,
-                "weight": 2,
+                "weight": 4 if is_linear else 2,
                 "fillColor": color,
-                "fillOpacity": 0.25,
+                "fillOpacity": 0.3,
             },
             marker=folium.CircleMarker(
                 radius=5,
@@ -95,8 +113,22 @@ def _add_feature_layers(
                 fill_opacity=0.8,
             ),
             tooltip=folium.GeoJsonTooltip(
-                fields=["label", "source", "feature_class"],
-                aliases=["Объект", "Источник", "Класс"],
+                fields=[
+                    "label",
+                    "source",
+                    "feature_class",
+                    "category",
+                    "distance_m",
+                    "relation",
+                ],
+                aliases=[
+                    "Объект",
+                    "Источник",
+                    "Класс",
+                    "Категория",
+                    "Расстояние, м",
+                    "Отношение к участку",
+                ],
                 localize=True,
             ),
         ).add_to(layer)
@@ -132,7 +164,7 @@ def _render_map(
     )
     _add_reference_geometry(
         map_object,
-        name="Область поиска OSM",
+        name="Область анализа OSM и 2GIS",
         geometry=aoi.query_geometry,
         color="#d97706",
         fill_opacity=0.03,
@@ -142,6 +174,12 @@ def _render_map(
     min_x, min_y, max_x, max_y = shape(aoi.query_geometry).bounds
     map_object.fit_bounds([[min_y, min_x], [max_y, max_x]])
     folium.LayerControl(collapsed=False).add_to(map_object)
+    st.caption(
+        "Минимальный радиус участка: "
+        f"{aoi.parcel_minimum_radius_m:,.1f} м · "
+        f"отступ: {aoi.margin_m:,} м · "
+        f"радиус анализа: {aoi.search_radius_m:,.1f} м"
+    )
     st_folium(
         map_object,
         height=650,
@@ -156,7 +194,11 @@ def _snapshot_rows(
 ) -> list[dict[str, Any]]:
     selected_ids = {
         value
-        for value in (receipt.nspd_snapshot_id, receipt.osm_snapshot_id)
+        for value in (
+            receipt.nspd_snapshot_id,
+            receipt.osm_snapshot_id,
+            receipt.dgis_snapshot_id,
+        )
         if value is not None
     }
     return [
@@ -240,22 +282,42 @@ def run() -> None:
         and feature.feature_class in selected_classes
     ]
 
-    case_column, run_column, feature_column = st.columns(3)
+    case_column, run_column, feature_column, source_column = st.columns(4)
     case_column.metric(
         "Кадастровый номер",
         selected_case.cadastral_number,
     )
     run_column.metric("Статус запуска", receipt.status)
     feature_column.metric("Объектов", len(visible_features))
+    source_column.metric("Источников", len(selected_sources))
 
     if receipt.warnings:
         st.warning("\n".join(receipt.warnings))
     if receipt.errors:
         st.error("\n".join(receipt.errors))
 
-    map_tab, objects_tab, provenance_tab, history_tab = st.tabs(
-        ["Карта", "Объекты", "Источники", "История"]
+    summary_tab, map_tab, objects_tab, provenance_tab, history_tab = st.tabs(
+        [
+            "Сводка",
+            "Карта",
+            "Объекты",
+            "Источники",
+            "История",
+        ]
     )
+    with summary_tab:
+        st.subheader("Собранные данные")
+        st.dataframe(
+            source_summary_rows(visible_features),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "НСПД: участок и ограничения · OSM: леса, озёра, реки, "
+            "ручьи и дороги · 2GIS: социальная и транспортная "
+            "инфраструктура"
+        )
+
     with map_tab:
         _render_map(store, receipt, visible_features)
 

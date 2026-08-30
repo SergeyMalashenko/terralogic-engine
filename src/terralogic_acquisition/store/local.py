@@ -62,7 +62,31 @@ class LocalCaseStore:
         connection = sqlite3.connect(database)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
+        self._ensure_schema(connection)
         return connection
+
+    @staticmethod
+    def _ensure_schema(connection: sqlite3.Connection) -> None:
+        """Apply small additive migrations to CaseStores created by v0.2."""
+
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        if "areas_of_interest" not in tables:
+            return
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(areas_of_interest)")
+        }
+        if "metrics_json" not in columns:
+            connection.execute(
+                "ALTER TABLE areas_of_interest "
+                "ADD COLUMN metrics_json TEXT NOT NULL DEFAULT '{}'"
+            )
+            connection.commit()
 
     @contextmanager
     def _connection(self, case_id: str) -> Iterator[sqlite3.Connection]:
@@ -96,6 +120,7 @@ class LocalCaseStore:
         case_dir.mkdir(parents=True, exist_ok=True)
         (case_dir / "raw" / "nspd").mkdir(parents=True, exist_ok=True)
         (case_dir / "raw" / "osm").mkdir(parents=True, exist_ok=True)
+        (case_dir / "raw" / "dgis").mkdir(parents=True, exist_ok=True)
         (case_dir / "maps").mkdir(exist_ok=True)
         (case_dir / "reports").mkdir(exist_ok=True)
 
@@ -104,6 +129,7 @@ class LocalCaseStore:
         connection.row_factory = sqlite3.Row
         try:
             connection.executescript(self._migration_sql())
+            self._ensure_schema(connection)
             existing = connection.execute(
                 "SELECT * FROM case_info WHERE case_id = ?", (request.case_id,)
             ).fetchone()
@@ -384,8 +410,9 @@ class LocalCaseStore:
                     id, case_id, source_snapshot_id, geometry_hash,
                     parcel_geometry_wkb, query_geometry_wkb, source_crs,
                     metric_crs, min_x, min_y, max_x, max_y,
-                    representative_x, representative_y, warnings_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    representative_x, representative_y, warnings_json,
+                    metrics_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     aoi.id,
@@ -399,6 +426,15 @@ class LocalCaseStore:
                     *aoi.bbox,
                     *aoi.representative_point,
                     _json_dumps(aoi.validation_warnings),
+                    _json_dumps(
+                        {
+                            "parcel_minimum_radius_m": (
+                                aoi.parcel_minimum_radius_m
+                            ),
+                            "margin_m": aoi.margin_m,
+                            "search_radius_m": aoi.search_radius_m,
+                        }
+                    ),
                 ),
             )
 
@@ -412,6 +448,7 @@ class LocalCaseStore:
             ).fetchone()
         if row is None:
             raise KeyError(f"Area of interest {aoi_id!r} does not exist")
+        metrics = json.loads(row["metrics_json"] or "{}")
         return AreaOfInterest(
             id=row["id"],
             case_id=row["case_id"],
@@ -422,6 +459,11 @@ class LocalCaseStore:
                 row["representative_x"],
                 row["representative_y"],
             ),
+            parcel_minimum_radius_m=float(
+                metrics.get("parcel_minimum_radius_m", 0.0)
+            ),
+            margin_m=int(metrics.get("margin_m", 0)),
+            search_radius_m=float(metrics.get("search_radius_m", 0.0)),
             source_snapshot_id=row["source_snapshot_id"],
             geometry_hash=row["geometry_hash"],
             source_crs=row["source_crs"],

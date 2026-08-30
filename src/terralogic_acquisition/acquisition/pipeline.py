@@ -1,9 +1,10 @@
-"""Deterministic orchestration of NSPD and contour-based OSM collection."""
+"""Deterministic orchestration of NSPD, OSM, and 2GIS collection."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import math
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
@@ -12,6 +13,7 @@ from uuid import uuid4
 from shapely.geometry import mapping
 
 from terralogic_acquisition.acquisition.clients.base import (
+    DgisSourceClient,
     NspdSourceClient,
     OsmSourceClient,
 )
@@ -21,6 +23,7 @@ from terralogic_acquisition.acquisition.geometry import (
 )
 from terralogic_acquisition.acquisition.normalize import (
     count_features,
+    dgis_features,
     nspd_layer_features,
     osm_features,
     parcel_feature,
@@ -74,11 +77,24 @@ def _coverage_is_partial(payload: Mapping[str, Any]) -> bool:
     coverage = data.get("coverage")
     if isinstance(coverage, Mapping) and coverage.get("partial") is True:
         return True
-    return data.get("global_limit_reached") is True
+    return any(
+        (
+            data.get("global_limit_reached") is True,
+            data.get("source_complete") is False,
+            data.get("response_limited") is True,
+        )
+    )
+
+
+def _exception_payload(exc: BaseException) -> dict[str, str]:
+    return {
+        "transport_error": str(exc),
+        "exception_type": type(exc).__name__,
+    }
 
 
 class AcquisitionPipeline:
-    """Collect source data, persist snapshots, and return only a compact receipt."""
+    """Collect source data, persist snapshots, and return a compact receipt."""
 
     def __init__(
         self,
@@ -86,6 +102,7 @@ class AcquisitionPipeline:
         store: CaseStore,
         nspd: NspdSourceClient,
         osm: OsmSourceClient,
+        dgis: DgisSourceClient,
         profile_resolver: Callable[[str, str], CollectionProfile] = (
             get_collection_profile
         ),
@@ -94,6 +111,7 @@ class AcquisitionPipeline:
         self.store = store
         self.nspd = nspd
         self.osm = osm
+        self.dgis = dgis
         self.profile_resolver = profile_resolver
         self.clock = clock
 
@@ -115,6 +133,7 @@ class AcquisitionPipeline:
         self.store.begin_run(request, run_id)
         nspd_snapshot_id: str | None = None
         osm_snapshot_id: str | None = None
+        dgis_snapshot_id: str | None = None
         aoi_id: str | None = None
         all_features: list[GeoFeature] = []
         warnings: list[str] = []
@@ -160,13 +179,32 @@ class AcquisitionPipeline:
                     "nspd_get_land_parcel_info(detail='full') returned no parcel "
                     "GeoJSON"
                 )
+
             parcel_geometry, geometry_warnings = prepare_parcel_geometry(
                 parcel["geojson"]
             )
             normalized_geometry = dict(mapping(parcel_geometry))
             warnings.extend(geometry_warnings)
+            margin_m = (
+                request.margin_m
+                if request.margin_m is not None
+                else profile.margin_m
+            )
+            provisional_aoi = build_area_of_interest(
+                case_id=request.case_id,
+                source_snapshot_id="pending",
+                parcel_geojson=normalized_geometry,
+                margin_m=margin_m,
+            )
+            longitude, latitude = provisional_aoi.representative_point
+            radius_m = math.ceil(provisional_aoi.search_radius_m)
 
-            layer_result, osm_result = await asyncio.gather(
+            (
+                layer_result,
+                osm_result,
+                social_result,
+                transport_result,
+            ) = await asyncio.gather(
                 self.nspd.analyze_land_parcel_layers(
                     request.cadastral_number,
                     blocks=profile.nspd_blocks,
@@ -177,37 +215,35 @@ class AcquisitionPipeline:
                 self.osm.analyze_area(
                     normalized_geometry,
                     source_crs="EPSG:4326",
-                    margin_m=profile.osm_margin_m,
+                    margin_m=margin_m,
                     blocks=profile.osm_blocks,
                     limit_per_block=profile.osm_limit_per_block,
                     include_geometry=True,
                 ),
+                self.dgis.analyze_social_infrastructure(
+                    latitude=latitude,
+                    longitude=longitude,
+                    radius_m=radius_m,
+                    mode=profile.dgis_mode,
+                    limit_per_category=profile.dgis_limit_per_category,
+                ),
+                self.dgis.analyze_transport_infrastructure(
+                    latitude=latitude,
+                    longitude=longitude,
+                    radius_m=radius_m,
+                    mode=profile.dgis_mode,
+                    limit_per_category=profile.dgis_limit_per_category,
+                ),
                 return_exceptions=True,
             )
 
-            layer_envelope: dict[str, Any] | None
-            if isinstance(layer_result, BaseException):
-                layer_envelope = None
-                errors.append(
-                    "nspd_analyze_land_parcel_layers: "
-                    f"{type(layer_result).__name__}: {layer_result}"
-                )
-                stored_layer_result: Any = {
-                    "transport_error": str(layer_result),
-                    "exception_type": type(layer_result).__name__,
-                }
-            else:
-                layer_envelope = dict(layer_result)
-                stored_layer_result = layer_envelope
-                if layer_envelope.get("ok") is not True:
-                    errors.append(
-                        _tool_error(
-                            layer_envelope, "nspd_analyze_land_parcel_layers"
-                        )
-                    )
-                elif _coverage_is_partial(layer_envelope):
-                    warnings.append("NSPD layer coverage is partial")
-
+            layer_envelope, stored_layer_result = self._source_result(
+                layer_result,
+                tool="nspd_analyze_land_parcel_layers",
+                partial_warning="NSPD restriction coverage is partial",
+                warnings=warnings,
+                errors=errors,
+            )
             nspd_snapshot = self.store.save_snapshot(
                 case_id=request.case_id,
                 run_id=run_id,
@@ -215,7 +251,7 @@ class AcquisitionPipeline:
                 payload=_json_bytes(
                     {
                         "parcel_info": parcel_info,
-                        "layer_analysis": stored_layer_result,
+                        "restriction_analysis": stored_layer_result,
                     }
                 ),
                 adapter_version=_adapter_version(parcel_info),
@@ -224,43 +260,18 @@ class AcquisitionPipeline:
                         "nspd_get_land_parcel_info",
                         "nspd_analyze_land_parcel_layers",
                     ],
+                    "blocks": list(profile.nspd_blocks),
                     "profile": profile.name,
                     "profile_version": profile.version,
                 },
             )
             nspd_snapshot_id = nspd_snapshot.id
-            aoi = build_area_of_interest(
-                case_id=request.case_id,
-                source_snapshot_id=nspd_snapshot.id,
-                parcel_geojson=normalized_geometry,
+            aoi = provisional_aoi.model_copy(
+                update={"source_snapshot_id": nspd_snapshot.id}
             )
-            if not isinstance(osm_result, BaseException):
-                osm_data = osm_result.get("data")
-                search_area = (
-                    osm_data.get("search_area")
-                    if isinstance(osm_data, Mapping)
-                    else None
-                )
-                query_geojson = (
-                    search_area.get("geojson")
-                    if isinstance(search_area, Mapping)
-                    else None
-                )
-                if isinstance(query_geojson, dict):
-                    query_geometry, query_warnings = prepare_parcel_geometry(
-                        query_geojson
-                    )
-                    aoi = aoi.model_copy(
-                        update={
-                            "query_geometry": dict(mapping(query_geometry)),
-                            "validation_warnings": [
-                                *aoi.validation_warnings,
-                                *query_warnings,
-                            ],
-                        }
-                    )
             self.store.save_area_of_interest(aoi)
             aoi_id = aoi.id
+
             all_features.append(
                 parcel_feature(
                     case_id=request.case_id,
@@ -277,14 +288,14 @@ class AcquisitionPipeline:
                 )
             )
 
-            osm_envelope: dict[str, Any] | None
-            if isinstance(osm_result, BaseException):
-                osm_envelope = None
-                errors.append(
-                    f"osm_analyze_area: {type(osm_result).__name__}: {osm_result}"
-                )
-            else:
-                osm_envelope = dict(osm_result)
+            osm_envelope, _stored_osm = self._source_result(
+                osm_result,
+                tool="osm_analyze_area",
+                partial_warning="OSM collection reached a completeness limit",
+                warnings=warnings,
+                errors=errors,
+            )
+            if osm_envelope is not None:
                 osm_snapshot = self.store.save_snapshot(
                     case_id=request.case_id,
                     run_id=run_id,
@@ -294,24 +305,67 @@ class AcquisitionPipeline:
                     metadata={
                         "tools": ["osm_analyze_area"],
                         "geometry_hash": aoi.geometry_hash,
-                        "margin_m": profile.osm_margin_m,
+                        "margin_m": margin_m,
+                        "search_radius_m": aoi.search_radius_m,
+                        "blocks": list(profile.osm_blocks),
                         "profile": profile.name,
                         "profile_version": profile.version,
                     },
                 )
                 osm_snapshot_id = osm_snapshot.id
-                if osm_envelope.get("ok") is not True:
-                    errors.append(_tool_error(osm_envelope, "osm_analyze_area"))
-                else:
-                    if _coverage_is_partial(osm_envelope):
-                        warnings.append("OSM collection reached a completeness limit")
-                    all_features.extend(
-                        osm_features(
-                            case_id=request.case_id,
-                            snapshot_id=osm_snapshot.id,
-                            envelope=osm_envelope,
-                        )
+                all_features.extend(
+                    osm_features(
+                        case_id=request.case_id,
+                        snapshot_id=osm_snapshot.id,
+                        envelope=osm_envelope,
                     )
+                )
+
+            social_envelope, stored_social_result = self._source_result(
+                social_result,
+                tool="dgis_analyze_social_infrastructure",
+                partial_warning="2GIS social infrastructure coverage is partial",
+                warnings=warnings,
+                errors=errors,
+            )
+            transport_envelope, stored_transport_result = self._source_result(
+                transport_result,
+                tool="dgis_analyze_transport_infrastructure",
+                partial_warning="2GIS transport infrastructure coverage is partial",
+                warnings=warnings,
+                errors=errors,
+            )
+            dgis_payload = {
+                "social_infrastructure": stored_social_result,
+                "transport_infrastructure": stored_transport_result,
+            }
+            dgis_adapter_payload = social_envelope or transport_envelope or {}
+            dgis_snapshot = self.store.save_snapshot(
+                case_id=request.case_id,
+                run_id=run_id,
+                source="dgis",
+                payload=_json_bytes(dgis_payload),
+                adapter_version=_adapter_version(dgis_adapter_payload),
+                metadata={
+                    "tools": [
+                        "dgis_analyze_social_infrastructure",
+                        "dgis_analyze_transport_infrastructure",
+                    ],
+                    "center": {"latitude": latitude, "longitude": longitude},
+                    "radius_m": radius_m,
+                    "mode": profile.dgis_mode,
+                    "profile": profile.name,
+                    "profile_version": profile.version,
+                },
+            )
+            dgis_snapshot_id = dgis_snapshot.id
+            all_features.extend(
+                dgis_features(
+                    case_id=request.case_id,
+                    snapshot_id=dgis_snapshot.id,
+                    envelopes=[social_envelope, transport_envelope],
+                )
+            )
 
             self.store.save_features(request.case_id, all_features)
             status = self._result_status(
@@ -326,6 +380,7 @@ class AcquisitionPipeline:
                 started_at=started_at,
                 nspd_snapshot_id=nspd_snapshot_id,
                 osm_snapshot_id=osm_snapshot_id,
+                dgis_snapshot_id=dgis_snapshot_id,
                 aoi_id=aoi_id,
                 features=all_features,
                 warnings=warnings,
@@ -340,11 +395,32 @@ class AcquisitionPipeline:
                 started_at=started_at,
                 nspd_snapshot_id=nspd_snapshot_id,
                 osm_snapshot_id=osm_snapshot_id,
+                dgis_snapshot_id=dgis_snapshot_id,
                 aoi_id=aoi_id,
                 features=all_features,
                 warnings=warnings,
                 errors=errors,
             )
+
+    @staticmethod
+    def _source_result(
+        result: Any,
+        *,
+        tool: str,
+        partial_warning: str,
+        warnings: list[str],
+        errors: list[str],
+    ) -> tuple[dict[str, Any] | None, Any]:
+        if isinstance(result, BaseException):
+            errors.append(f"{tool}: {type(result).__name__}: {result}")
+            payload = _exception_payload(result)
+            return None, payload
+        envelope = dict(result)
+        if envelope.get("ok") is not True:
+            errors.append(_tool_error(envelope, tool))
+        elif _coverage_is_partial(envelope):
+            warnings.append(partial_warning)
+        return envelope, envelope
 
     def _reusable_receipt(
         self, request: CollectionRequest, profile: CollectionProfile
@@ -353,6 +429,17 @@ class AcquisitionPipeline:
             return None
         latest = self.store.get_latest_collection_receipt(request.case_id)
         if latest is None or latest.status not in {"complete", "partial"}:
+            return None
+        requested_margin = (
+            request.margin_m
+            if request.margin_m is not None
+            else profile.margin_m
+        )
+        if (
+            latest.profile != request.profile
+            or latest.profile_version != request.profile_version
+            or latest.margin_m != requested_margin
+        ):
             return None
         if request.refresh_policy == "never":
             return latest.model_copy(update={"reused": True})
@@ -380,6 +467,7 @@ class AcquisitionPipeline:
         started_at: datetime,
         nspd_snapshot_id: str | None = None,
         osm_snapshot_id: str | None = None,
+        dgis_snapshot_id: str | None = None,
         aoi_id: str | None = None,
         features: list[GeoFeature] | None = None,
         warnings: list[str] | None = None,
@@ -389,8 +477,18 @@ class AcquisitionPipeline:
             case_id=request.case_id,
             run_id=run_id,
             status=status,
+            profile=request.profile,
+            profile_version=request.profile_version,
+            margin_m=(
+                request.margin_m
+                if request.margin_m is not None
+                else self.profile_resolver(
+                    request.profile, request.profile_version
+                ).margin_m
+            ),
             nspd_snapshot_id=nspd_snapshot_id,
             osm_snapshot_id=osm_snapshot_id,
+            dgis_snapshot_id=dgis_snapshot_id,
             aoi_id=aoi_id,
             feature_counts=count_features(features or []),
             warnings=warnings or [],

@@ -16,27 +16,22 @@ class CollectionProfile(BaseModel):
     osm_blocks: tuple[str, ...]
     nspd_limit_per_layer: int = Field(default=100, ge=1, le=100)
     osm_limit_per_block: int = Field(default=100, ge=1, le=500)
-    osm_margin_m: int = Field(default=1000, ge=0, le=10_000)
+    margin_m: int = Field(default=1000, ge=0, le=10_000)
+    dgis_mode: str = "minimal"
+    dgis_limit_per_category: int = Field(default=10, ge=1, le=20)
     stale_after_seconds: int = Field(default=86_400, ge=0)
 
 
 STANDARD_LAND_REPORT = CollectionProfile(
     name="standard_land_report",
-    version="1.0",
-    nspd_blocks=(
-        "zouit",
-        "urban_planning",
-        "environmental_and_special",
-        "egrn_objects",
-        "cadastral_division",
-        "cadastral_value",
-    ),
+    version="2.0",
+    nspd_blocks=("zouit",),
     osm_blocks=(
-        "buildings",
-        "transport",
-        "landuse",
-        "infrastructure",
-        "poi",
+        "forests",
+        "lakes",
+        "rivers",
+        "streams",
+        "roads",
     ),
 )
 

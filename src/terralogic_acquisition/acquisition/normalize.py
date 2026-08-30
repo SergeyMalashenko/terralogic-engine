@@ -123,30 +123,17 @@ def nspd_layer_features(
     return result
 
 
-def _osm_feature_class(block: str, tags: dict[str, Any]) -> str:
-    if block == "buildings":
-        return "building"
-    if block == "transport":
-        if "railway" in tags:
-            return "railway"
-        if "waterway" in tags:
-            return "waterway"
-        return "road"
-    if block == "infrastructure":
-        if "pipeline" in tags or tags.get("man_made") == "pipeline":
-            return "pipeline"
-        if tags.get("power") == "line":
-            return "power_line"
-        if tags.get("power") in {"substation", "plant"}:
-            return "power_substation"
-        return "infrastructure"
-    if block == "landuse":
-        if tags.get("natural") == "water":
-            return "waterbody"
-        if tags.get("landuse") == "forest" or tags.get("natural") == "wood":
-            return "forest"
-        return "landuse"
-    return "social_object" if block == "poi" else block
+OSM_FEATURE_CLASSES = {
+    "forests": "forest",
+    "lakes": "lake",
+    "rivers": "river",
+    "streams": "stream",
+    "roads": "road",
+}
+
+
+def _osm_feature_class(block: str, _tags: dict[str, Any]) -> str:
+    return OSM_FEATURE_CLASSES.get(block, block)
 
 
 def osm_features(
@@ -202,6 +189,91 @@ def osm_features(
                 properties=properties,
             )
     return list(by_identity.values())
+
+
+def dgis_features(
+    *,
+    case_id: str,
+    snapshot_id: str,
+    envelopes: list[dict[str, Any] | None],
+) -> list[GeoFeature]:
+    """Normalize both focused 2GIS reports into category-specific points."""
+
+    result: list[GeoFeature] = []
+    seen: set[tuple[str, str]] = set()
+    for envelope in envelopes:
+        if not envelope or envelope.get("ok") is not True:
+            continue
+        data = envelope.get("data")
+        groups = data.get("groups") if isinstance(data, dict) else None
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            group_key = str(group.get("key") or "infrastructure")
+            group_name = group.get("name")
+            categories = group.get("categories")
+            if not isinstance(categories, list):
+                continue
+            for category in categories:
+                if not isinstance(category, dict):
+                    continue
+                category_key = str(category.get("key") or "object")
+                category_name = category.get("name")
+                objects = category.get("objects")
+                if not isinstance(objects, list):
+                    continue
+                for index, value in enumerate(objects):
+                    if not isinstance(value, dict):
+                        continue
+                    source_id = str(value.get("id") or f"{category_key}:{index}")
+                    identity = (category_key, source_id)
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    latitude = value.get("latitude")
+                    longitude = value.get("longitude")
+                    geometry = None
+                    try:
+                        latitude_value = float(latitude)
+                        longitude_value = float(longitude)
+                        if (
+                            -90 <= latitude_value <= 90
+                            and -180 <= longitude_value <= 180
+                        ):
+                            geometry = {
+                                "type": "Point",
+                                "coordinates": [longitude_value, latitude_value],
+                            }
+                    except (TypeError, ValueError):
+                        pass
+                    properties = dict(value)
+                    properties.update(
+                        {
+                            "group": group_key,
+                            "group_name": group_name,
+                            "category": category_key,
+                            "category_name": category_name,
+                        }
+                    )
+                    result.append(
+                        GeoFeature(
+                            id=_feature_id(
+                                snapshot_id,
+                                f"dgis:{category_key}:{source_id}",
+                            ),
+                            case_id=case_id,
+                            snapshot_id=snapshot_id,
+                            source="dgis",
+                            source_type=str(value.get("type") or "place"),
+                            source_id=source_id,
+                            feature_class=category_key,
+                            geometry=geometry,
+                            properties=properties,
+                        )
+                    )
+    return result
 
 
 def count_features(features: list[GeoFeature]) -> dict[str, int]:

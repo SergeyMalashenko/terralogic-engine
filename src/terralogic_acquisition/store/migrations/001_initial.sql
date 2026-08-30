@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS areas_of_interest (
     max_y REAL NOT NULL,
     representative_x REAL NOT NULL,
     representative_y REAL NOT NULL,
+    metrics_json TEXT NOT NULL DEFAULT '{}',
     warnings_json TEXT NOT NULL,
     FOREIGN KEY (case_id) REFERENCES case_info(case_id),
     FOREIGN KEY (source_snapshot_id) REFERENCES snapshots(id)

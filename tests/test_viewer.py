@@ -9,6 +9,7 @@ from terralogic_acquisition.viewer.data import (
     feature_label,
     feature_table_rows,
     group_features,
+    source_summary_rows,
 )
 
 from .fakes import PARCEL_GEOMETRY
@@ -60,13 +61,35 @@ def test_viewer_groups_and_summarizes_features() -> None:
         feature_class="osm.building",
         properties={"name": "Склад"},
     )
+    dgis = _feature(
+        "dgis-1",
+        source="dgis",
+        feature_class="education",
+        properties={
+            "name": "Школа",
+            "distance_to_search_point_m": 420.0,
+            "category_name": "Образование",
+        },
+    )
 
-    groups = group_features([osm, nspd])
-    rows = feature_table_rows([osm, nspd])
+    groups = group_features([osm, nspd, dgis])
+    rows = feature_table_rows([osm, nspd, dgis])
+    summary = source_summary_rows([osm, nspd, dgis])
 
-    assert list(groups) == [("nspd", "nspd.parcel"), ("osm", "osm.building")]
+    assert list(groups) == [
+        ("dgis", "education"),
+        ("nspd", "nspd.parcel"),
+        ("osm", "osm.building"),
+    ]
     assert rows[0]["label"] == "Склад"
     assert rows[0]["has_geometry"] is False
+    assert rows[2]["distance_m"] == 420.0
+    assert summary[0] == {
+        "source": "dgis",
+        "class": "education",
+        "objects": 1,
+        "with_geometry": 0,
+    }
 
 
 def test_viewer_cli_defaults_to_localhost() -> None:

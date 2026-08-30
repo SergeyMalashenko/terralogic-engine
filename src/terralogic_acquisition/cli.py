@@ -6,6 +6,7 @@ import argparse
 import asyncio
 
 from terralogic_acquisition.acquisition.clients import (
+    McpDgisClient,
     McpNspdClient,
     McpOsmClient,
     StreamableHttpMcpTransport,
@@ -18,13 +19,19 @@ from terralogic_acquisition.store.local import LocalCaseStore
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="terralogic-collect",
-        description="Collect NSPD and OSM data into a local TerraLogic case",
+        description="Collect NSPD, OSM, and 2GIS data into a TerraLogic case",
     )
     parser.add_argument("cadastral_number")
     parser.add_argument("--case-id")
     parser.add_argument("--store", default="./case-store")
     parser.add_argument("--nspd-url", default="http://127.0.0.1:8001/mcp")
     parser.add_argument("--osm-url", default="http://127.0.0.1:8002/mcp")
+    parser.add_argument("--dgis-url", default="http://127.0.0.1:8003/mcp")
+    parser.add_argument(
+        "--margin-m",
+        type=int,
+        help="Metres added to the parcel minimum enclosing radius",
+    )
     parser.add_argument(
         "--refresh-policy",
         choices=("never", "if_stale", "always"),
@@ -44,6 +51,7 @@ async def _run(args: argparse.Namespace) -> int:
         store=LocalCaseStore(args.store),
         nspd=McpNspdClient(StreamableHttpMcpTransport(args.nspd_url)),
         osm=McpOsmClient(StreamableHttpMcpTransport(args.osm_url)),
+        dgis=McpDgisClient(StreamableHttpMcpTransport(args.dgis_url)),
     )
     receipt = await pipeline.collect(
         CollectionRequest(
@@ -51,6 +59,7 @@ async def _run(args: argparse.Namespace) -> int:
             cadastral_number=args.cadastral_number,
             refresh_policy=args.refresh_policy,
             allow_partial=not args.strict,
+            margin_m=args.margin_m,
         )
     )
     print(receipt.model_dump_json(indent=2))

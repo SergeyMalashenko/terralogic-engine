@@ -30,17 +30,60 @@ ZONE_GEOMETRY = {
     ],
 }
 
-BUILDING_GEOMETRY = {
+FOREST_GEOMETRY = {
     "type": "Polygon",
     "coordinates": [
         [
             [43.6120, 56.0620],
-            [43.6130, 56.0620],
-            [43.6130, 56.0630],
-            [43.6120, 56.0630],
+            [43.6160, 56.0620],
+            [43.6160, 56.0660],
+            [43.6120, 56.0660],
             [43.6120, 56.0620],
+        ],
+        [
+            [43.6130, 56.0630],
+            [43.6140, 56.0630],
+            [43.6140, 56.0640],
+            [43.6130, 56.0640],
+            [43.6130, 56.0630],
+        ],
+    ],
+}
+
+LAKE_GEOMETRY = {
+    "type": "Polygon",
+    "coordinates": [
+        [
+            [43.5920, 56.0620],
+            [43.5940, 56.0620],
+            [43.5940, 56.0640],
+            [43.5920, 56.0640],
+            [43.5920, 56.0620],
         ]
     ],
+}
+
+RIVER_GEOMETRY = {
+    "type": "Polygon",
+    "coordinates": [
+        [
+            [43.5960, 56.0500],
+            [43.5980, 56.0500],
+            [43.5980, 56.0800],
+            [43.5960, 56.0800],
+            [43.5960, 56.0500],
+        ]
+    ],
+}
+
+STREAM_GEOMETRY = {
+    "type": "LineString",
+    "coordinates": [[43.5900, 56.0650], [43.6200, 56.0650]],
+}
+
+ROAD_GEOMETRY = {
+    "type": "LineString",
+    "coordinates": [[43.6050, 56.0500], [43.6050, 56.0800]],
 }
 
 SEARCH_AREA_GEOMETRY = {
@@ -109,13 +152,37 @@ def layer_result() -> dict[str, Any]:
 
 
 def osm_result() -> dict[str, Any]:
-    feature = {
-        "element_type": "way",
-        "osm_id": 7001,
-        "name": "Склад",
-        "tags": {"building": "warehouse"},
-        "distance_to_parcel_m": 200.0,
-        "geojson": deepcopy(BUILDING_GEOMETRY),
+    block_features = {
+        "forests": (
+            7001,
+            "Тестовый лес",
+            {"landuse": "forest"},
+            FOREST_GEOMETRY,
+        ),
+        "lakes": (
+            7002,
+            "Тестовое озеро",
+            {"natural": "water", "water": "lake"},
+            LAKE_GEOMETRY,
+        ),
+        "rivers": (
+            7003,
+            "Тестовая река",
+            {"natural": "water", "water": "river"},
+            RIVER_GEOMETRY,
+        ),
+        "streams": (
+            7004,
+            "Тестовый ручей",
+            {"waterway": "stream"},
+            STREAM_GEOMETRY,
+        ),
+        "roads": (
+            7005,
+            "Тестовая дорога",
+            {"highway": "service"},
+            ROAD_GEOMETRY,
+        ),
     }
     return {
         "ok": True,
@@ -129,15 +196,20 @@ def osm_result() -> dict[str, Any]:
             "global_limit_reached": False,
             "blocks": [
                 {
-                    "block": "buildings",
+                    "block": block,
                     "returned_count": 1,
-                    "features": [feature],
-                },
-                {
-                    "block": "poi",
-                    "returned_count": 1,
-                    "features": [feature],
-                },
+                    "features": [
+                        {
+                            "element_type": "way",
+                            "osm_id": values[0],
+                            "name": values[1],
+                            "tags": values[2],
+                            "distance_to_parcel_m": 200.0,
+                            "geojson": deepcopy(values[3]),
+                        }
+                    ],
+                }
+                for block, values in block_features.items()
             ],
             "warnings": [],
         },
@@ -207,3 +279,79 @@ class FakeOsmClient:
         if self.failure is not None:
             raise self.failure
         return deepcopy(osm_result())
+
+
+def dgis_result(
+    *, analysis_type: str, group: str, category: str, object_id: str
+) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "data": {
+            "analysis_type": analysis_type,
+            "source_complete": True,
+            "response_limited": False,
+            "groups": [
+                {
+                    "key": group,
+                    "name": f"Группа {group}",
+                    "categories": [
+                        {
+                            "key": category,
+                            "name": f"Категория {category}",
+                            "objects": [
+                                {
+                                    "id": object_id,
+                                    "name": f"Объект {object_id}",
+                                    "type": "branch",
+                                    "latitude": 56.066,
+                                    "longitude": 43.606,
+                                    "distance_to_search_point_m": 350.0,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+        "error": None,
+        "metadata": {"adapter_version": "py2gis-agents-test"},
+    }
+
+
+class FakeDgisClient:
+    def __init__(self, *, failure: Exception | None = None) -> None:
+        self.failure = failure
+        self.social_calls = 0
+        self.transport_calls = 0
+        self.social_arguments: dict[str, Any] = {}
+        self.transport_arguments: dict[str, Any] = {}
+
+    async def analyze_social_infrastructure(self, **kwargs: Any) -> Mapping[str, Any]:
+        self.social_calls += 1
+        self.social_arguments = deepcopy(kwargs)
+        if self.failure is not None:
+            raise self.failure
+        return deepcopy(
+            dgis_result(
+                analysis_type="social",
+                group="mandatory_services",
+                category="education",
+                object_id="school-1",
+            )
+        )
+
+    async def analyze_transport_infrastructure(
+        self, **kwargs: Any
+    ) -> Mapping[str, Any]:
+        self.transport_calls += 1
+        self.transport_arguments = deepcopy(kwargs)
+        if self.failure is not None:
+            raise self.failure
+        return deepcopy(
+            dgis_result(
+                analysis_type="transport",
+                group="public_transport",
+                category="public_transport_stops",
+                object_id="stop-1",
+            )
+        )

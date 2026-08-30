@@ -118,3 +118,50 @@ class McpOsmClient:
                 "include_geometry": include_geometry,
             },
         )
+
+
+class McpDgisClient:
+    """Map the focused two-tool 2GIS contract to the acquisition boundary."""
+
+    def __init__(self, transport: StreamableHttpMcpTransport) -> None:
+        self.transport = transport
+
+    async def analyze_social_infrastructure(
+        self,
+        *,
+        latitude: float,
+        longitude: float,
+        radius_m: int,
+        mode: str,
+        limit_per_category: int,
+    ) -> dict[str, Any]:
+        return await self.transport.call_tool(
+            "dgis_analyze_social_infrastructure",
+            {
+                "latitude": latitude,
+                "longitude": longitude,
+                "radius_m": radius_m,
+                "mode": mode,
+                "limit_per_category": limit_per_category,
+            },
+        )
+
+    async def analyze_transport_infrastructure(
+        self,
+        *,
+        latitude: float,
+        longitude: float,
+        radius_m: int,
+        mode: str,
+        limit_per_category: int,
+    ) -> dict[str, Any]:
+        return await self.transport.call_tool(
+            "dgis_analyze_transport_infrastructure",
+            {
+                "latitude": latitude,
+                "longitude": longitude,
+                "radius_m": radius_m,
+                "mode": mode,
+                "limit_per_category": limit_per_category,
+            },
+        )

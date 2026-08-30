@@ -18,18 +18,25 @@ The sidebar selects:
 
 - case;
 - collection run;
-- source (`nspd` or `osm`);
+- source (`nspd`, `osm`, or `dgis`);
 - functional block or canonical feature class;
 - visible map layers. The source snapshots belonging to the run are shown in
   the provenance tab.
 
 The main area contains:
 
-1. an interactive map with the parcel, NSPD objects, OSM features, and the OSM
-   search area;
-2. a feature table and an attribute panel for the selected geometry;
-3. snapshot provenance, adapter versions, warnings, errors, and feature counts;
-4. a run timeline showing `complete`, `partial`, and `failed` collections.
+1. a summary by source and canonical feature class;
+2. an interactive map with the parcel, shared analysis circle, NSPD
+   restrictions, OSM contours/lines, and 2GIS infrastructure points;
+3. a filtered feature table with distance, relation, category, and an attribute
+   panel for the selected object;
+4. snapshot provenance, adapter versions, warnings, errors, and feature counts;
+5. a run timeline showing `complete`, `partial`, and `failed` collections.
+
+The map uses separate switchable layers for forests, lakes, rivers, streams,
+roads, restrictions, and each 2GIS category. Polygon holes stored in forest,
+lake, and river contours remain visible because geometry is passed to Folium as
+full GeoJSON rather than reduced to bounding boxes or centroids.
 
 ## Data access
 

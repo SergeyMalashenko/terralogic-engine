@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 CollectionStatus = Literal["running", "complete", "partial", "failed"]
 ReceiptStatus = Literal["complete", "partial", "failed"]
 RefreshPolicy = Literal["never", "if_stale", "always"]
-SourceName = Literal["nspd", "osm"]
+SourceName = Literal["nspd", "osm", "dgis"]
 
 CADASTRAL_NUMBER_PATTERN = re.compile(r"^\d+:\d+:\d+:\d+$")
 CASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -31,9 +31,10 @@ class CollectionRequest(BaseModel):
     case_id: str
     cadastral_number: str
     profile: str = "standard_land_report"
-    profile_version: str = "1.0"
+    profile_version: str = "2.0"
     refresh_policy: RefreshPolicy = "if_stale"
     allow_partial: bool = True
+    margin_m: int | None = Field(default=None, ge=0, le=10_000)
 
     @field_validator("case_id")
     @classmethod
@@ -84,7 +85,7 @@ class SourceSnapshot(BaseModel):
 
 
 class AreaOfInterest(BaseModel):
-    """Validated parcel contour passed to the contour-based OSM service."""
+    """Canonical circular area shared by OSM and 2GIS collection."""
 
     id: str
     case_id: str
@@ -92,6 +93,9 @@ class AreaOfInterest(BaseModel):
     query_geometry: dict[str, Any]
     bbox: tuple[float, float, float, float]
     representative_point: tuple[float, float]
+    parcel_minimum_radius_m: float
+    margin_m: int
+    search_radius_m: float
     source_snapshot_id: str
     geometry_hash: str
     source_crs: str = "EPSG:4326"
@@ -120,8 +124,12 @@ class CollectionReceipt(BaseModel):
     case_id: str
     run_id: str
     status: ReceiptStatus
+    profile: str = "standard_land_report"
+    profile_version: str = "1.0"
+    margin_m: int = Field(default=1000, ge=0, le=10_000)
     nspd_snapshot_id: str | None = None
     osm_snapshot_id: str | None = None
+    dgis_snapshot_id: str | None = None
     aoi_id: str | None = None
     feature_counts: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)

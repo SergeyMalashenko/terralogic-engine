@@ -10,6 +10,7 @@ class NspdSourceClient(Protocol):
     async def get_land_parcel_info(
         self, cadastral_number: str, *, detail: str = "full"
     ) -> Mapping[str, Any]: ...
+
     async def analyze_land_parcel_layers(
         self,
         cadastral_number: str,
@@ -31,4 +32,26 @@ class OsmSourceClient(Protocol):
         blocks: Sequence[str],
         limit_per_block: int,
         include_geometry: bool,
+    ) -> Mapping[str, Any]: ...
+
+
+class DgisSourceClient(Protocol):
+    async def analyze_social_infrastructure(
+        self,
+        *,
+        latitude: float,
+        longitude: float,
+        radius_m: int,
+        mode: str,
+        limit_per_category: int,
+    ) -> Mapping[str, Any]: ...
+
+    async def analyze_transport_infrastructure(
+        self,
+        *,
+        latitude: float,
+        longitude: float,
+        radius_m: int,
+        mode: str,
+        limit_per_category: int,
     ) -> Mapping[str, Any]: ...
