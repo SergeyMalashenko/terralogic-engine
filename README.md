@@ -102,6 +102,8 @@ It provides:
 - parcel, analysis circle, NSPD, OSM, and 2GIS layers on an interactive map;
 - filters by source and feature class, source/class summaries, distances,
   feature attributes, collection warnings, and run history;
+- dedicated forest, lake, and river contour styles with polygon-hole rendering,
+  a map legend, natural-contour counters, and full-screen map mode;
 - direct reading through the `CaseStore` interface rather than raw SQL.
 
 The application binds to localhost by default. For a remote server, create an

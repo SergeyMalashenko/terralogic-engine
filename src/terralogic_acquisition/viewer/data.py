@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from terralogic_acquisition.domain.models import (
@@ -11,6 +11,32 @@ from terralogic_acquisition.domain.models import (
     GeoFeature,
 )
 from terralogic_acquisition.store.base import CaseStore
+
+NATURAL_CONTOUR_CLASSES = ("forest", "lake", "river")
+NATURAL_CONTOUR_LABELS = {
+    "forest": "Леса",
+    "lake": "Озёра",
+    "river": "Реки",
+}
+
+
+def interior_ring_count(geometry: dict[str, Any] | None) -> int:
+    """Count holes in Polygon and MultiPolygon GeoJSON without altering it."""
+
+    if not isinstance(geometry, dict):
+        return 0
+    coordinates = geometry.get("coordinates")
+    if not isinstance(coordinates, Sequence):
+        return 0
+    if geometry.get("type") == "Polygon":
+        return max(0, len(coordinates) - 1)
+    if geometry.get("type") == "MultiPolygon":
+        return sum(
+            max(0, len(polygon) - 1)
+            for polygon in coordinates
+            if isinstance(polygon, Sequence)
+        )
+    return 0
 
 
 def feature_label(feature: GeoFeature) -> str:
@@ -56,6 +82,8 @@ def feature_to_geojson(feature: GeoFeature) -> dict[str, Any] | None:
             "distance_m": distance,
             "relation": relation_kind,
             "category": feature.properties.get("category_name"),
+            "geometry_type": feature.geometry.get("type"),
+            "interior_rings": interior_ring_count(feature.geometry),
         },
     }
 
@@ -129,6 +157,12 @@ def feature_table_rows(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
                 "relation": (
                     relation.get("kind") if isinstance(relation, dict) else None
                 ),
+                "geometry_type": (
+                    feature.geometry.get("type")
+                    if isinstance(feature.geometry, dict)
+                    else None
+                ),
+                "interior_rings": interior_ring_count(feature.geometry),
                 "source_type": feature.source_type,
                 "source_id": feature.source_id,
                 "has_geometry": feature.geometry is not None,
@@ -157,3 +191,34 @@ def source_summary_rows(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
         }
         for (source, feature_class), count in sorted(counts.items())
     ]
+
+
+def natural_contour_summary(
+    features: Iterable[GeoFeature],
+) -> list[dict[str, Any]]:
+    """Summarize renderable OSM forest, lake, and river contours."""
+
+    result = {
+        feature_class: {
+            "class": feature_class,
+            "label": NATURAL_CONTOUR_LABELS[feature_class],
+            "objects": 0,
+            "contours": 0,
+            "interior_rings": 0,
+        }
+        for feature_class in NATURAL_CONTOUR_CLASSES
+    }
+    for feature in features:
+        if feature.source != "osm" or feature.feature_class not in result:
+            continue
+        row = result[feature.feature_class]
+        row["objects"] += 1
+        geometry_type = (
+            feature.geometry.get("type")
+            if isinstance(feature.geometry, dict)
+            else None
+        )
+        if geometry_type in {"Polygon", "MultiPolygon"}:
+            row["contours"] += 1
+            row["interior_rings"] += interior_ring_count(feature.geometry)
+    return [result[feature_class] for feature_class in NATURAL_CONTOUR_CLASSES]

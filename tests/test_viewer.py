@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from shapely.geometry import mapping, shape
+
 from terralogic_acquisition.domain.models import GeoFeature, SourceName
 from terralogic_acquisition.viewer.cli import build_parser
 from terralogic_acquisition.viewer.data import (
@@ -9,10 +11,12 @@ from terralogic_acquisition.viewer.data import (
     feature_label,
     feature_table_rows,
     group_features,
+    interior_ring_count,
+    natural_contour_summary,
     source_summary_rows,
 )
 
-from .fakes import PARCEL_GEOMETRY
+from .fakes import FOREST_GEOMETRY, PARCEL_GEOMETRY
 
 
 def _feature(
@@ -90,6 +94,59 @@ def test_viewer_groups_and_summarizes_features() -> None:
         "objects": 1,
         "with_geometry": 0,
     }
+
+
+def test_viewer_summarizes_natural_contours_and_polygon_holes() -> None:
+    forest = _feature(
+        "forest-1",
+        source="osm",
+        feature_class="forest",
+        geometry=FOREST_GEOMETRY,
+        properties={"name": "Лес с поляной"},
+    )
+    lake = _feature(
+        "lake-1",
+        source="osm",
+        feature_class="lake",
+        geometry=PARCEL_GEOMETRY,
+    )
+    river_without_geometry = _feature(
+        "river-1",
+        source="osm",
+        feature_class="river",
+    )
+
+    collection = build_feature_collection([forest])
+    summary = natural_contour_summary(
+        [forest, lake, river_without_geometry]
+    )
+
+    assert interior_ring_count(FOREST_GEOMETRY) == 1
+    assert interior_ring_count(dict(mapping(shape(FOREST_GEOMETRY)))) == 1
+    assert collection["features"][0]["properties"]["interior_rings"] == 1
+    assert summary == [
+        {
+            "class": "forest",
+            "label": "Леса",
+            "objects": 1,
+            "contours": 1,
+            "interior_rings": 1,
+        },
+        {
+            "class": "lake",
+            "label": "Озёра",
+            "objects": 1,
+            "contours": 1,
+            "interior_rings": 0,
+        },
+        {
+            "class": "river",
+            "label": "Реки",
+            "objects": 1,
+            "contours": 0,
+            "interior_rings": 0,
+        },
+    ]
 
 
 def test_viewer_cli_defaults_to_localhost() -> None:

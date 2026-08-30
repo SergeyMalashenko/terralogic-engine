@@ -9,6 +9,8 @@ from typing import Any
 
 import folium
 import streamlit as st
+from branca.element import Element
+from folium.plugins import Fullscreen
 from shapely.geometry import shape
 from streamlit_folium import st_folium
 
@@ -20,6 +22,7 @@ from terralogic_acquisition.viewer.data import (
     feature_table_rows,
     group_features,
     load_receipt_features,
+    natural_contour_summary,
     source_summary_rows,
 )
 
@@ -28,14 +31,60 @@ SOURCE_COLORS = {
     "osm": "#047857",
     "dgis": "#2563eb",
 }
-CLASS_COLORS = {
-    "parcel": "#dc2626",
-    "restriction_zone": "#9333ea",
-    "forest": "#15803d",
-    "lake": "#2563eb",
-    "river": "#0891b2",
-    "stream": "#38bdf8",
-    "road": "#ea580c",
+FEATURE_CLASS_LABELS = {
+    "parcel": "Земельный участок",
+    "restriction_zone": "Ограничения ЗОУИТ",
+    "forest": "Леса",
+    "lake": "Озёра",
+    "river": "Реки",
+    "stream": "Ручьи",
+    "road": "Дороги",
+}
+CLASS_STYLES: dict[str, dict[str, Any]] = {
+    "parcel": {
+        "color": "#dc2626",
+        "fillColor": "#dc2626",
+        "weight": 3,
+        "fillOpacity": 0.08,
+    },
+    "restriction_zone": {
+        "color": "#7e22ce",
+        "fillColor": "#a855f7",
+        "weight": 2,
+        "fillOpacity": 0.28,
+    },
+    "forest": {
+        "color": "#166534",
+        "fillColor": "#22c55e",
+        "weight": 2,
+        "fillOpacity": 0.38,
+        "fillRule": "evenodd",
+    },
+    "lake": {
+        "color": "#1d4ed8",
+        "fillColor": "#60a5fa",
+        "weight": 2,
+        "fillOpacity": 0.46,
+        "fillRule": "evenodd",
+    },
+    "river": {
+        "color": "#0e7490",
+        "fillColor": "#22d3ee",
+        "weight": 2,
+        "fillOpacity": 0.46,
+        "fillRule": "evenodd",
+    },
+    "stream": {
+        "color": "#0284c7",
+        "weight": 4,
+        "fillOpacity": 0,
+        "dashArray": "7 5",
+    },
+    "road": {
+        "color": "#ea580c",
+        "weight": 4,
+        "fillOpacity": 0,
+    },
 }
 
 
@@ -88,22 +137,32 @@ def _add_feature_layers(
         geometry_count = len(collection["features"])
         if geometry_count == 0:
             continue
-        color = CLASS_COLORS.get(
+        fallback_color = SOURCE_COLORS.get(source, "#334155")
+        style = CLASS_STYLES.get(
             feature_class,
-            SOURCE_COLORS.get(source, "#334155"),
+            {
+                "color": fallback_color,
+                "fillColor": fallback_color,
+                "weight": 2,
+                "fillOpacity": 0.3,
+            },
         )
-        is_linear = feature_class in {"stream", "road"}
+        color = str(style["color"])
+        class_label = FEATURE_CLASS_LABELS.get(feature_class, feature_class)
         layer = folium.FeatureGroup(
-            name=f"{source.upper()} · {feature_class} ({geometry_count})",
+            name=f"{source.upper()} · {class_label} ({geometry_count})",
             show=True,
         )
         folium.GeoJson(
             collection,
-            style_function=lambda _feature, color=color, is_linear=is_linear: {
-                "color": color,
-                "weight": 4 if is_linear else 2,
-                "fillColor": color,
-                "fillOpacity": 0.3,
+            style_function=lambda _feature, style=style: dict(style),
+            highlight_function=lambda _feature, style=style: {
+                **style,
+                "weight": int(style.get("weight", 2)) + 2,
+                "fillOpacity": min(
+                    0.65,
+                    float(style.get("fillOpacity", 0)) + 0.12,
+                ),
             },
             marker=folium.CircleMarker(
                 radius=5,
@@ -118,6 +177,8 @@ def _add_feature_layers(
                     "source",
                     "feature_class",
                     "category",
+                    "geometry_type",
+                    "interior_rings",
                     "distance_m",
                     "relation",
                 ],
@@ -126,6 +187,8 @@ def _add_feature_layers(
                     "Источник",
                     "Класс",
                     "Категория",
+                    "Геометрия",
+                    "Внутренних контуров",
                     "Расстояние, м",
                     "Отношение к участку",
                 ],
@@ -133,6 +196,84 @@ def _add_feature_layers(
             ),
         ).add_to(layer)
         layer.add_to(map_object)
+
+
+def _add_map_legend(
+    map_object: folium.Map,
+    features: list[GeoFeature],
+) -> None:
+    visible_classes = {feature.feature_class for feature in features}
+    entries: list[tuple[str, str, bool]] = [
+        ("Участок", "#dc2626", False),
+        ("Область анализа", "#d97706", True),
+    ]
+    for feature_class in (
+        "restriction_zone",
+        "forest",
+        "lake",
+        "river",
+        "stream",
+        "road",
+    ):
+        if feature_class not in visible_classes:
+            continue
+        style = CLASS_STYLES[feature_class]
+        entries.append(
+            (
+                FEATURE_CLASS_LABELS[feature_class],
+                str(style["color"]),
+                feature_class in {"stream", "road"},
+            )
+        )
+    if any(feature.source == "dgis" for feature in features):
+        entries.append(("Объекты 2GIS", SOURCE_COLORS["dgis"], False))
+
+    rows = []
+    for label, color, is_line in entries:
+        symbol_style = (
+            f"border-top:4px solid {color};height:0;margin-top:8px;"
+            if is_line
+            else f"background:{color};height:12px;border:1px solid {color};"
+        )
+        rows.append(
+            "<div style='display:flex;align-items:center;gap:8px;margin:4px 0;'>"
+            f"<span style='display:inline-block;width:22px;{symbol_style}'></span>"
+            f"<span>{label}</span></div>"
+        )
+    legend = (
+        "<div style='position:fixed;bottom:28px;left:28px;z-index:9999;"
+        "background:rgba(255,255,255,.94);border:1px solid #cbd5e1;"
+        "border-radius:6px;padding:10px 12px;font-size:13px;"
+        "box-shadow:0 1px 4px rgba(0,0,0,.25);'>"
+        "<strong>Слои карты</strong>"
+        + "".join(rows)
+        + "</div>"
+    )
+    map_object.get_root().html.add_child(Element(legend))
+
+
+def _render_natural_contour_summary(features: list[GeoFeature]) -> None:
+    summary = natural_contour_summary(features)
+    columns = st.columns(3)
+    for column, row in zip(columns, summary, strict=True):
+        column.metric(
+            str(row["label"]),
+            int(row["contours"]),
+            help=(
+                "Количество Polygon/MultiPolygon GeoJSON, доступных для "
+                "отрисовки"
+            ),
+        )
+    missing = sum(int(row["objects"]) - int(row["contours"]) for row in summary)
+    holes = sum(int(row["interior_rings"]) for row in summary)
+    st.caption(
+        f"Внутренних контуров сохранено: {holes}. "
+        "Они отображаются как вырезы в полигонах."
+    )
+    if missing:
+        st.warning(
+            f"Для {missing} природных объектов отсутствует полигональная геометрия."
+        )
 
 
 def _render_map(
@@ -147,6 +288,7 @@ def _render_map(
         )
         return
     aoi = store.get_area_of_interest(receipt.case_id, receipt.aoi_id)
+    _render_natural_contour_summary(features)
     longitude, latitude = aoi.representative_point
     map_object = folium.Map(
         location=[latitude, longitude],
@@ -154,6 +296,12 @@ def _render_map(
         control_scale=True,
         tiles="OpenStreetMap",
     )
+    Fullscreen(
+        position="topleft",
+        title="Развернуть карту",
+        title_cancel="Выйти из полноэкранного режима",
+        force_separate_button=True,
+    ).add_to(map_object)
 
     _add_reference_geometry(
         map_object,
@@ -171,6 +319,7 @@ def _render_map(
         dash_array="8 6",
     )
     _add_feature_layers(map_object, features)
+    _add_map_legend(map_object, features)
     min_x, min_y, max_x, max_y = shape(aoi.query_geometry).bounds
     map_object.fit_bounds([[min_y, min_x], [max_y, max_x]])
     folium.LayerControl(collapsed=False).add_to(map_object)

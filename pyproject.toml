@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "terralogic-acquisition"
-version = "0.3.0"
+version = "0.3.1"
 description = "Deterministic acquisition and local case storage for land-parcel analysis"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 mcp = ["mcp>=1.27,<2"]
 viewer = [
+    "branca>=0.7",
     "folium>=0.19",
     "streamlit>=1.40",
     "streamlit-folium>=0.24",

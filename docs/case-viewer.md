@@ -38,6 +38,12 @@ roads, restrictions, and each 2GIS category. Polygon holes stored in forest,
 lake, and river contours remain visible because geometry is passed to Folium as
 full GeoJSON rather than reduced to bounding boxes or centroids.
 
+Natural contours use dedicated fill styles and an even-odd fill rule: forests
+are green, lakes blue, and river polygons cyan. The map tab also shows contour
+counts, the number of preserved interior rings, a legend, hover highlighting,
+and a full-screen control. Streams and roads remain visually distinct line
+layers.
+
 ## Data access
 
 The viewer depends on the `CaseStore` interface and uses methods such as
