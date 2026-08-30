@@ -25,8 +25,8 @@ The current iteration provides:
 - a read-only map viewer for every normalized feature and raw snapshot.
 
 The source repositories remain independent. `terralogic_acquisition` imports neither
-`pynspd`, `pyosm-agents`, nor `py2gis_agents`; it relies only on their MCP
-contracts.
+`pynspd`, `pyosm-agents`, nor the `py2gis-agents` repository (whose Python
+module is named `py2gis_agents`); it relies only on their MCP contracts.
 
 ## Installation
 
