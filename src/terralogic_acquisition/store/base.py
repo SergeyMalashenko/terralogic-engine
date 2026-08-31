@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
+from terralogic_acquisition.analytics.models import AnalysisResult
 from terralogic_acquisition.domain.models import (
     AreaOfInterest,
     CaseInfo,
@@ -78,3 +79,15 @@ class CaseStore(Protocol):
         snapshot_id: str | None = None,
         feature_classes: Sequence[str] | None = None,
     ) -> list[GeoFeature]: ...
+
+    def save_analysis_result(self, result: AnalysisResult) -> None: ...
+
+    def get_analysis_result(
+        self,
+        case_id: str,
+        collection_run_id: str,
+        *,
+        analytics_version: str | None = None,
+    ) -> AnalysisResult | None: ...
+
+    def list_analysis_results(self, case_id: str) -> list[AnalysisResult]: ...

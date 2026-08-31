@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "terralogic-acquisition"
-version = "0.3.5"
+version = "0.4.0"
 description = "Deterministic acquisition and local case storage for land-parcel analysis"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,6 +25,7 @@ viewer = [
 
 [project.scripts]
 terralogic-collect = "terralogic_acquisition.cli:main"
+terralogic-analyze = "terralogic_acquisition.analytics.cli:main"
 terralogic-view = "terralogic_acquisition.viewer.cli:main"
 
 [dependency-groups]

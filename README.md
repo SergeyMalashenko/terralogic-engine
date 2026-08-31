@@ -21,6 +21,8 @@ The current iteration provides:
 - `LocalCaseStore`, backed by one SQLite database and raw gzip files per case;
 - `AcquisitionPipeline`, which obtains the parcel and NSPD restrictions, builds
   one circular analysis area, and collects OSM and 2GIS concurrently;
+- `AnalysisPipeline`, which calculates reproducible intersections and shortest
+  distances for one immutable collection run and stores the result in CaseStore;
 - HTTP MCP clients for all three source services;
 - a read-only map viewer for every normalized feature and raw snapshot.
 
@@ -62,6 +64,44 @@ The parcel's minimum enclosing radius plus `--margin-m` defines the shared
 analysis circle. The margin defaults to 1000 metres. OSM receives the parcel
 contour and this margin; 2GIS receives the calculated centre and final radius.
 
+## Analytics
+
+Run analytics after collection. By default, the newest collection receipt is
+used:
+
+```bash
+terralogic-analyze case-52-26-0040002-3823 \
+  --store ./case-store
+```
+
+To calculate metrics for a specific immutable source set, pass its collection
+run identifier:
+
+```bash
+terralogic-analyze case-52-26-0040002-3823 \
+  --run-id run-a5d215d9dd464441b4d8fb7e7ce381b1 \
+  --store ./case-store
+```
+
+The persisted result contains:
+
+- each ZOUIT intersection area, its percentage of the parcel, and its
+  percentage of the zone; the combined coverage uses a polygon union and does
+  not double-count overlapping zones;
+- non-double-counted parcel intersection area for OSM forests, waterbodies,
+  and river polygons, including an aggregate union for all areal water
+  resources;
+- the length of linear OSM streams inside the parcel (a line has no area);
+- the shortest distance from the parcel boundary or interior to every social
+  infrastructure category found by 2GIS;
+- the shortest distance to each OSM natural-resource class and to the nearest
+  water resource overall.
+
+All calculations use the local metric CRS stored with the acquisition AOI.
+Distances are measured from the parcel geometry, not from the search-circle
+centre. A missing nearest object means only that no candidate was collected
+inside the configured search circle.
+
 ## Stored case
 
 ```text
@@ -102,6 +142,8 @@ It provides:
 - parcel, analysis circle, NSPD, OSM, and 2GIS layers on an interactive map;
 - filters by source and feature class, source/class summaries, distances,
   feature attributes, collection warnings, and run history;
+- a dedicated analytics tab with tables for ZOUIT coverage, natural-resource
+  intersections, nearest social infrastructure, and nearest natural objects;
 - dedicated forest, waterbody, and river contour styles with polygon-hole rendering,
   a map legend, natural-contour counters, and full-screen map mode;
 - separate road layers and colors for every collected OSM `highway` class,

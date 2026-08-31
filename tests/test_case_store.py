@@ -93,6 +93,7 @@ def test_local_case_store_survives_reopen_and_preserves_raw_snapshot(tmp_path) -
         "facts",
         "entity_links",
         "metrics",
+        "analysis_results",
         "findings",
         "report_sections",
         "artifacts",

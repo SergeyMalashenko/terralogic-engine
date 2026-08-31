@@ -26,12 +26,26 @@ The sidebar selects:
 The main area contains:
 
 1. a summary by source and canonical feature class;
-2. an interactive map with the parcel, shared analysis circle, NSPD
+2. four analytics tables tied to the selected collection run;
+3. an interactive map with the parcel, shared analysis circle, NSPD
    restrictions, OSM contours/lines, and 2GIS infrastructure points;
-3. a filtered feature table with distance, relation, category, and an attribute
+4. a filtered feature table with distance, relation, category, and an attribute
    panel for the selected object;
-4. snapshot provenance, adapter versions, warnings, errors, and feature counts;
-5. a run timeline showing `complete`, `partial`, and `failed` collections.
+5. snapshot provenance, adapter versions, warnings, errors, and feature counts;
+6. a run timeline showing `complete`, `partial`, and `failed` collections.
+
+The analytics tab is read-only and displays a result previously created with:
+
+```bash
+terralogic-analyze <case_id> --run-id <run_id> --store ./case-store
+```
+
+Its tables show per-zone ZOUIT intersection area and relative coverage,
+non-double-counted forest/water intersection summaries, shortest distances to
+2GIS social categories, and shortest distances to OSM forests and water
+resources. Stream geometry is linear, so its table cell contains length inside
+the parcel rather than a misleading area. Every absent nearest object is shown
+explicitly as `Не найден в области поиска`.
 
 The map uses separate switchable layers for forests, waterbodies, rivers,
 streams, roads, restrictions, and each 2GIS category. Polygon holes stored in
@@ -68,9 +82,9 @@ switchable category layer as its point, so hiding the layer also hides its text.
 ## Data access
 
 The viewer depends on the `CaseStore` interface and uses methods such as
-`list_cases`, `list_snapshots`, `get_area_of_interest`, and `load_features`.
-It does not issue source requests, edit SQLite directly, or write analytics
-results.
+`list_cases`, `list_snapshots`, `get_area_of_interest`, `load_features`, and
+`get_analysis_result`. It does not issue source requests, edit SQLite directly,
+or calculate/write analytics results.
 
 Geometry is converted from stored WKB by `LocalCaseStore` and passed to Folium
 as GeoJSON. The current MVP loads the geometries referenced by the selected

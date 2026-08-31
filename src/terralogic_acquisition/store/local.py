@@ -18,6 +18,7 @@ from uuid import uuid4
 from shapely.geometry import mapping, shape
 from shapely.wkb import loads as load_wkb
 
+from terralogic_acquisition.analytics.models import AnalysisResult
 from terralogic_acquisition.domain.models import (
     AreaOfInterest,
     CaseInfo,
@@ -67,7 +68,7 @@ class LocalCaseStore:
 
     @staticmethod
     def _ensure_schema(connection: sqlite3.Connection) -> None:
-        """Apply small additive migrations to CaseStores created by v0.2."""
+        """Apply additive migrations to previously created CaseStores."""
 
         tables = {
             str(row[0])
@@ -81,11 +82,35 @@ class LocalCaseStore:
             str(row[1])
             for row in connection.execute("PRAGMA table_info(areas_of_interest)")
         }
+        changed = False
         if "metrics_json" not in columns:
             connection.execute(
                 "ALTER TABLE areas_of_interest "
                 "ADD COLUMN metrics_json TEXT NOT NULL DEFAULT '{}'"
             )
+            changed = True
+        if "analysis_results" not in tables:
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS analysis_results (
+                    id TEXT PRIMARY KEY,
+                    case_id TEXT NOT NULL,
+                    collection_run_id TEXT NOT NULL,
+                    analytics_version TEXT NOT NULL,
+                    calculated_at TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    FOREIGN KEY (case_id) REFERENCES case_info(case_id),
+                    FOREIGN KEY (collection_run_id) REFERENCES runs(id),
+                    UNIQUE (case_id, collection_run_id, analytics_version)
+                );
+                CREATE INDEX IF NOT EXISTS idx_analysis_results_case_run
+                    ON analysis_results(
+                        case_id, collection_run_id, calculated_at DESC
+                    );
+                """
+            )
+            changed = True
+        if changed:
             connection.commit()
 
     @contextmanager
@@ -557,3 +582,70 @@ class LocalCaseStore:
             crs=row["crs"],
             properties=json.loads(row["properties_json"]),
         )
+
+    def save_analysis_result(self, result: AnalysisResult) -> None:
+        """Persist one replaceable result for a collection run and version."""
+
+        with self._connection(result.case_id) as connection:
+            connection.execute(
+                """
+                INSERT INTO analysis_results(
+                    id, case_id, collection_run_id, analytics_version,
+                    calculated_at, result_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(case_id, collection_run_id, analytics_version)
+                DO UPDATE SET
+                    id = excluded.id,
+                    calculated_at = excluded.calculated_at,
+                    result_json = excluded.result_json
+                """,
+                (
+                    result.id,
+                    result.case_id,
+                    result.collection_run_id,
+                    result.analytics_version,
+                    result.calculated_at.isoformat(),
+                    result.model_dump_json(),
+                ),
+            )
+
+    def get_analysis_result(
+        self,
+        case_id: str,
+        collection_run_id: str,
+        *,
+        analytics_version: str | None = None,
+    ) -> AnalysisResult | None:
+        """Load the newest matching analytics result for one collection run."""
+
+        sql = (
+            "SELECT result_json FROM analysis_results "
+            "WHERE case_id = ? AND collection_run_id = ?"
+        )
+        parameters: list[object] = [case_id, collection_run_id]
+        if analytics_version is not None:
+            sql += " AND analytics_version = ?"
+            parameters.append(analytics_version)
+        sql += " ORDER BY calculated_at DESC LIMIT 1"
+        with self._connection(case_id) as connection:
+            row = connection.execute(sql, parameters).fetchone()
+        if row is None:
+            return None
+        return AnalysisResult.model_validate_json(row["result_json"])
+
+    def list_analysis_results(self, case_id: str) -> list[AnalysisResult]:
+        """Return all persisted analytics results, newest first."""
+
+        with self._connection(case_id) as connection:
+            rows = connection.execute(
+                """
+                SELECT result_json FROM analysis_results
+                WHERE case_id = ?
+                ORDER BY calculated_at DESC
+                """,
+                (case_id,),
+            ).fetchall()
+        return [
+            AnalysisResult.model_validate_json(row["result_json"])
+            for row in rows
+        ]

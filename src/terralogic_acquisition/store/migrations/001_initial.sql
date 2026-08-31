@@ -128,6 +128,21 @@ CREATE TABLE IF NOT EXISTS metrics (
     FOREIGN KEY (case_id) REFERENCES case_info(case_id)
 );
 
+CREATE TABLE IF NOT EXISTS analysis_results (
+    id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL,
+    collection_run_id TEXT NOT NULL,
+    analytics_version TEXT NOT NULL,
+    calculated_at TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    FOREIGN KEY (case_id) REFERENCES case_info(case_id),
+    FOREIGN KEY (collection_run_id) REFERENCES runs(id),
+    UNIQUE (case_id, collection_run_id, analytics_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_analysis_results_case_run
+    ON analysis_results(case_id, collection_run_id, calculated_at DESC);
+
 CREATE TABLE IF NOT EXISTS findings (
     id TEXT PRIMARY KEY,
     case_id TEXT NOT NULL,

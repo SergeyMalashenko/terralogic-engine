@@ -6,6 +6,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from typing import Any
 
+from terralogic_acquisition.analytics.models import AnalysisResult
 from terralogic_acquisition.domain.models import (
     CollectionReceipt,
     GeoFeature,
@@ -17,6 +18,10 @@ NATURAL_CONTOUR_LABELS = {
     "forest": "Леса",
     "lake": "Водоёмы",
     "river": "Реки",
+}
+NATURAL_RESOURCE_LABELS = {
+    **NATURAL_CONTOUR_LABELS,
+    "stream": "Ручьи",
 }
 WATERBODY_TYPE_LABELS = {
     "unspecified": "Не уточнён (natural=water)",
@@ -57,6 +62,12 @@ ROAD_REFERENCE_TAGS = ("ref", "official_ref", "nat_ref", "int_ref")
 ROAD_LABEL_CLASSES = frozenset(
     {"motorway", "trunk", "primary", "secondary", "tertiary"}
 )
+RELATION_LABELS = {
+    "disjoint": "Не пересекается",
+    "intersects": "Пересекается",
+    "object_inside_parcel": "Объект внутри участка",
+    "parcel_inside_object": "Участок внутри объекта",
+}
 
 
 def interior_ring_count(geometry: dict[str, Any] | None) -> int:
@@ -412,4 +423,102 @@ def road_class_summary(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
             ),
         }
         for road_class, values in grouped.items()
+    ]
+
+
+def zouit_analysis_rows(result: AnalysisResult) -> list[dict[str, Any]]:
+    """Build the per-zone relative-intersection table."""
+
+    return [
+        {
+            "Зона": item.name,
+            "Отношение": RELATION_LABELS[item.relation],
+            "Площадь пересечения, м²": item.intersection_area_m2,
+            "Доля площади участка, %": item.parcel_coverage_percent,
+            "Доля площади зоны, %": item.object_coverage_percent,
+            "ID объекта": item.feature_id,
+        }
+        for item in result.zouit_intersections
+    ]
+
+
+def natural_intersection_rows(result: AnalysisResult) -> list[dict[str, Any]]:
+    """Build non-double-counted intersection rows by natural-resource class."""
+
+    return [
+        {
+            "Ресурс": item.name,
+            "Объектов в области поиска": item.candidate_count,
+            "Пересекают участок": item.intersecting_count,
+            "Площадь пересечения, м²": (
+                item.union_intersection_area_m2
+            ),
+            "Доля площади участка, %": item.parcel_coverage_percent,
+            "Длина внутри участка, м": (
+                item.union_intersection_length_m
+            ),
+        }
+        for item in result.natural_summaries
+    ]
+
+
+def natural_intersection_detail_rows(
+    result: AnalysisResult,
+) -> list[dict[str, Any]]:
+    """Build per-object natural-resource intersection rows."""
+
+    return [
+        {
+            "Ресурс": NATURAL_RESOURCE_LABELS.get(
+                item.feature_class,
+                item.feature_class,
+            ),
+            "Объект": item.name,
+            "Отношение": RELATION_LABELS[item.relation],
+            "Площадь пересечения, м²": item.intersection_area_m2,
+            "Доля площади участка, %": item.parcel_coverage_percent,
+            "Доля площади объекта, %": item.object_coverage_percent,
+            "Длина внутри участка, м": item.intersection_length_m,
+            "ID объекта": item.feature_id,
+        }
+        for item in result.natural_intersections
+    ]
+
+
+def social_nearest_rows(result: AnalysisResult) -> list[dict[str, Any]]:
+    """Build nearest-social-object rows for all configured 2GIS categories."""
+
+    return [
+        {
+            "Блок": item.group_name,
+            "Категория": item.category_name,
+            "Ближайший объект": item.object_name,
+            "Расстояние от участка, м": item.distance_m,
+            "Кандидатов в области поиска": item.candidate_count,
+            "Статус": (
+                "Найден"
+                if item.status == "found"
+                else "Не найден в области поиска"
+            ),
+        }
+        for item in result.social_nearest
+    ]
+
+
+def natural_nearest_rows(result: AnalysisResult) -> list[dict[str, Any]]:
+    """Build nearest-forest and nearest-water-resource rows."""
+
+    return [
+        {
+            "Ресурс": item.category_name,
+            "Ближайший объект": item.object_name,
+            "Расстояние от участка, м": item.distance_m,
+            "Кандидатов в области поиска": item.candidate_count,
+            "Статус": (
+                "Найден"
+                if item.status == "found"
+                else "Не найден в области поиска"
+            ),
+        }
+        for item in result.natural_nearest
     ]

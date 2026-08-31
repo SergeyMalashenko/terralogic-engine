@@ -4,7 +4,13 @@ from typing import Any
 
 from shapely.geometry import mapping, shape
 
-from terralogic_acquisition.domain.models import GeoFeature, SourceName
+from terralogic_acquisition.analytics.models import (
+    AnalysisResult,
+    IntersectionItem,
+    IntersectionSummary,
+    NearestObject,
+)
+from terralogic_acquisition.domain.models import GeoFeature, SourceName, utc_now
 from terralogic_acquisition.viewer.cli import build_parser
 from terralogic_acquisition.viewer.data import (
     build_feature_collection,
@@ -15,12 +21,17 @@ from terralogic_acquisition.viewer.data import (
     group_road_features,
     interior_ring_count,
     natural_contour_summary,
+    natural_intersection_detail_rows,
+    natural_intersection_rows,
+    natural_nearest_rows,
     osm_road_class,
     osm_road_map_label,
     osm_road_reference,
     osm_waterbody_type,
     road_class_summary,
     source_summary_rows,
+    social_nearest_rows,
+    zouit_analysis_rows,
 )
 
 from .fakes import FOREST_GEOMETRY, PARCEL_GEOMETRY, ROAD_GEOMETRY
@@ -307,3 +318,105 @@ def test_viewer_cli_defaults_to_localhost() -> None:
     assert args.store == "./case-store"
     assert args.host == "127.0.0.1"
     assert args.port == 8501
+
+
+def test_viewer_builds_four_analytics_tables() -> None:
+    result = AnalysisResult(
+        id="analysis-1",
+        case_id="case-viewer",
+        collection_run_id="run-1",
+        aoi_id="aoi-1",
+        analytics_version="1.0.0",
+        calculated_at=utc_now(),
+        parcel_feature_id="parcel-1",
+        parcel_area_m2=1000,
+        metric_crs="EPSG:32638",
+        search_radius_m=1500,
+        zouit_summary=IntersectionSummary(
+            key="zouit",
+            name="ЗОУИТ",
+            candidate_count=1,
+            intersecting_count=1,
+            union_intersection_area_m2=100,
+            parcel_coverage_percent=10,
+        ),
+        zouit_intersections=[
+            IntersectionItem(
+                feature_id="zone-1",
+                source="nspd",
+                feature_class="restriction_zone",
+                name="Охранная зона",
+                geometry_type="Polygon",
+                relation="intersects",
+                intersection_area_m2=100,
+                parcel_coverage_percent=10,
+                object_coverage_percent=25,
+            )
+        ],
+        natural_summaries=[
+            IntersectionSummary(
+                key="forest",
+                name="Леса",
+                candidate_count=2,
+                intersecting_count=1,
+                union_intersection_area_m2=50,
+                parcel_coverage_percent=5,
+            )
+        ],
+        natural_intersections=[
+            IntersectionItem(
+                feature_id="forest-1",
+                source="osm",
+                feature_class="forest",
+                name="Тестовый лес",
+                geometry_type="Polygon",
+                relation="intersects",
+                intersection_area_m2=50,
+                parcel_coverage_percent=5,
+                object_coverage_percent=20,
+            )
+        ],
+        social_nearest=[
+            NearestObject(
+                group="mandatory",
+                group_name="Обязательные услуги",
+                category="education",
+                category_name="Образование",
+                source="dgis",
+                status="found",
+                candidate_count=3,
+                feature_id="school-1",
+                object_name="Школа № 1",
+                distance_m=420,
+            )
+        ],
+        natural_nearest=[
+            NearestObject(
+                group="natural",
+                group_name="Природные объекты",
+                category="forest",
+                category_name="Леса",
+                source="osm",
+                status="not_found_within_aoi",
+                candidate_count=0,
+            )
+        ],
+    )
+
+    assert (
+        zouit_analysis_rows(result)[0]["Отношение"]
+        == "Пересекается"
+    )
+    assert natural_intersection_rows(result)[0][
+        "Площадь пересечения, м²"
+    ] == 50
+    assert natural_intersection_detail_rows(result)[0]["Объект"] == (
+        "Тестовый лес"
+    )
+    assert (
+        social_nearest_rows(result)[0]["Расстояние от участка, м"]
+        == 420
+    )
+    assert natural_nearest_rows(result)[0]["Статус"] == (
+        "Не найден в области поиска"
+    )

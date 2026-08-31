@@ -27,9 +27,14 @@ from terralogic_acquisition.viewer.data import (
     group_road_features,
     load_receipt_features,
     natural_contour_summary,
+    natural_intersection_detail_rows,
+    natural_intersection_rows,
+    natural_nearest_rows,
     osm_road_map_label,
     road_class_summary,
     source_summary_rows,
+    social_nearest_rows,
+    zouit_analysis_rows,
 )
 
 SOURCE_COLORS = {
@@ -535,6 +540,106 @@ def _snapshot_rows(
     ]
 
 
+def _render_analytics(
+    store: LocalCaseStore,
+    receipt: CollectionReceipt,
+) -> None:
+    result = store.get_analysis_result(receipt.case_id, receipt.run_id)
+    if result is None:
+        st.info(
+            "Для выбранного запуска аналитика ещё не рассчитана. "
+            "Выполните: "
+            f"`terralogic-analyze {receipt.case_id} --run-id {receipt.run_id} "
+            "--store <путь-к-case-store>`"
+        )
+        return
+
+    area_column, radius_column, version_column = st.columns(3)
+    area_column.metric(
+        "Геометрическая площадь участка",
+        f"{result.parcel_area_m2:,.1f} м²",
+    )
+    radius_column.metric(
+        "Радиус поиска",
+        f"{result.search_radius_m:,.1f} м",
+    )
+    version_column.metric("Версия аналитики", result.analytics_version)
+    st.caption(
+        "Расстояния рассчитаны от контура участка. Площади классов "
+        "получены после объединения их полигонов, поэтому перекрытия "
+        "не считаются дважды."
+    )
+    if result.warnings:
+        st.warning("\n".join(result.warnings))
+
+    st.subheader("1. Пересечение с ЗОУИТ")
+    zone_summary = result.zouit_summary
+    zone_columns = st.columns(3)
+    zone_columns[0].metric(
+        "Зон в области поиска",
+        zone_summary.candidate_count,
+    )
+    zone_columns[1].metric(
+        "Пересекают участок",
+        zone_summary.intersecting_count,
+    )
+    zone_columns[2].metric(
+        "Покрытие участка",
+        f"{zone_summary.parcel_coverage_percent or 0:,.4f} %",
+        help=(
+            "Доля объединённой площади всех пересечений "
+            "без двойного счёта"
+        ),
+    )
+    zone_rows = zouit_analysis_rows(result)
+    if zone_rows:
+        st.dataframe(zone_rows, use_container_width=True, hide_index=True)
+    else:
+        st.info(
+            "Зоны ЗОУИТ в выбранном снимке не найдены."
+        )
+
+    st.subheader(
+        "2. Пересечение с лесами и водными ресурсами"
+    )
+    st.dataframe(
+        natural_intersection_rows(result),
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.caption(
+        "Для лесов, озёр/водоёмов и рек рассчитывается площадь. "
+        "Для линейных ручьёв рассчитывается длина внутри "
+        "участка."
+    )
+    natural_detail_rows = natural_intersection_detail_rows(result)
+    if natural_detail_rows:
+        with st.expander("Детализация по природным объектам"):
+            st.dataframe(
+                natural_detail_rows,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    st.subheader("3. Ближайшая социальная инфраструктура")
+    st.dataframe(
+        social_nearest_rows(result),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.subheader("4. Ближайшие леса и водные ресурсы")
+    st.dataframe(
+        natural_nearest_rows(result),
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.caption(
+        "Результат «не найден» означает только отсутствие объекта "
+        "в собранных данных внутри текущей окружности поиска."
+    )
+
+
 def run() -> None:
     st.set_page_config(
         page_title="TerraLogic Case Explorer",
@@ -622,9 +727,17 @@ def run() -> None:
     if receipt.errors:
         st.error("\n".join(receipt.errors))
 
-    summary_tab, map_tab, objects_tab, provenance_tab, history_tab = st.tabs(
+    (
+        summary_tab,
+        analytics_tab,
+        map_tab,
+        objects_tab,
+        provenance_tab,
+        history_tab,
+    ) = st.tabs(
         [
             "Сводка",
+            "Аналитика",
             "Карта",
             "Объекты",
             "Источники",
@@ -643,6 +756,9 @@ def run() -> None:
             "ручьи и дороги · 2GIS: социальная и транспортная "
             "инфраструктура"
         )
+
+    with analytics_tab:
+        _render_analytics(store, receipt)
 
     with map_tab:
         _render_map(
