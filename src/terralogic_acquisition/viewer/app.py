@@ -41,7 +41,7 @@ FEATURE_CLASS_LABELS = {
     "parcel": "Земельный участок",
     "restriction_zone": "Ограничения ЗОУИТ",
     "forest": "Леса",
-    "lake": "Озёра",
+    "lake": "Водоёмы",
     "river": "Реки",
     "stream": "Ручьи",
     "road": "Дороги",
@@ -159,6 +159,7 @@ def _add_geojson_feature_layer(
     values: list[GeoFeature],
     style: dict[str, Any],
     show_road_class: bool = False,
+    show_waterbody_type: bool = False,
     show_dgis_labels: bool = False,
 ) -> None:
     collection = build_feature_collection(values)
@@ -179,6 +180,9 @@ def _add_geojson_feature_layer(
         tooltip_aliases.extend(
             ["Номер дороги", "Класс дороги", "Тег highway"]
         )
+    if show_waterbody_type:
+        tooltip_fields.extend(["waterbody_type_label", "waterbody_type"])
+        tooltip_aliases.extend(["Тип водоёма", "Тег water"])
     tooltip_fields.extend(
         [
             "category",
@@ -321,6 +325,7 @@ def _add_feature_layers(
             name=f"{source.upper()} · {class_label}",
             values=values,
             style=style,
+            show_waterbody_type=(source == "osm" and feature_class == "lake"),
             show_dgis_labels=(source == "dgis" and show_dgis_labels),
         )
 
@@ -408,7 +413,8 @@ def _render_natural_contour_summary(features: list[GeoFeature]) -> None:
     )
     if missing:
         st.warning(
-            f"Для {missing} природных объектов отсутствует полигональная геометрия."
+            f"Для {missing} природных объектов отсутствует "
+            "полигональная геометрия."
         )
 
 
@@ -633,7 +639,7 @@ def run() -> None:
             hide_index=True,
         )
         st.caption(
-            "НСПД: участок и ограничения · OSM: леса, озёра, реки, "
+            "НСПД: участок и ограничения · OSM: леса, водоёмы, реки, "
             "ручьи и дороги · 2GIS: социальная и транспортная "
             "инфраструктура"
         )

@@ -161,8 +161,8 @@ def osm_result() -> dict[str, Any]:
         ),
         "lakes": (
             7002,
-            "Тестовое озеро",
-            {"natural": "water", "water": "lake"},
+            "Дракинский карьер",
+            {"natural": "water"},
             LAKE_GEOMETRY,
         ),
         "rivers": (

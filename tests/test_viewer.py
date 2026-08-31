@@ -18,6 +18,7 @@ from terralogic_acquisition.viewer.data import (
     osm_road_class,
     osm_road_map_label,
     osm_road_reference,
+    osm_waterbody_type,
     road_class_summary,
     source_summary_rows,
 )
@@ -144,6 +145,10 @@ def test_viewer_summarizes_natural_contours_and_polygon_holes() -> None:
         source="osm",
         feature_class="lake",
         geometry=PARCEL_GEOMETRY,
+        properties={
+            "name": "Дракинский карьер",
+            "tags": {"natural": "water"},
+        },
     )
     river_without_geometry = _feature(
         "river-1",
@@ -151,7 +156,7 @@ def test_viewer_summarizes_natural_contours_and_polygon_holes() -> None:
         feature_class="river",
     )
 
-    collection = build_feature_collection([forest])
+    collection = build_feature_collection([forest, lake])
     summary = natural_contour_summary(
         [forest, lake, river_without_geometry]
     )
@@ -159,6 +164,13 @@ def test_viewer_summarizes_natural_contours_and_polygon_holes() -> None:
     assert interior_ring_count(FOREST_GEOMETRY) == 1
     assert interior_ring_count(dict(mapping(shape(FOREST_GEOMETRY)))) == 1
     assert collection["features"][0]["properties"]["interior_rings"] == 1
+    assert osm_waterbody_type(lake) == "unspecified"
+    assert collection["features"][1]["properties"]["waterbody_type"] == (
+        "unspecified"
+    )
+    assert collection["features"][1]["properties"]["waterbody_type_label"] == (
+        "Не уточнён (natural=water)"
+    )
     assert summary == [
         {
             "class": "forest",
@@ -169,7 +181,7 @@ def test_viewer_summarizes_natural_contours_and_polygon_holes() -> None:
         },
         {
             "class": "lake",
-            "label": "Озёра",
+            "label": "Водоёмы",
             "objects": 1,
             "contours": 1,
             "interior_rings": 0,

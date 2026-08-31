@@ -33,16 +33,18 @@ The main area contains:
 4. snapshot provenance, adapter versions, warnings, errors, and feature counts;
 5. a run timeline showing `complete`, `partial`, and `failed` collections.
 
-The map uses separate switchable layers for forests, lakes, rivers, streams,
-roads, restrictions, and each 2GIS category. Polygon holes stored in forest,
-lake, and river contours remain visible because geometry is passed to Folium as
-full GeoJSON rather than reduced to bounding boxes or centroids.
+The map uses separate switchable layers for forests, waterbodies, rivers,
+streams, roads, restrictions, and each 2GIS category. Polygon holes stored in
+forest, waterbody, and river contours remain visible because geometry is passed
+to Folium as full GeoJSON rather than reduced to bounding boxes or centroids.
 
 Natural contours use dedicated fill styles and an even-odd fill rule: forests
-are green, lakes blue, and river polygons cyan. The map tab also shows contour
-counts, the number of preserved interior rings, a legend, hover highlighting,
-and a full-screen control. Streams and roads remain visually distinct line
-layers.
+are green, waterbodies blue, and river polygons cyan. Untyped OSM water areas
+(`natural=water` without `water=*`) are retained and shown as an unspecified
+waterbody; a known `water=*` subtype is included in the tooltip and object
+table. The map tab also shows contour counts, the number of preserved interior
+rings, a legend, hover highlighting, and a full-screen control. Streams and
+roads remain visually distinct line layers.
 
 Roads are split into switchable layers by their exact OSM `highway` value.
 Motorways, trunk, primary, secondary, tertiary, unclassified, residential,

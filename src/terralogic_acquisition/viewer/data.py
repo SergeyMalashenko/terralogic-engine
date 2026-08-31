@@ -15,8 +15,17 @@ from terralogic_acquisition.store.base import CaseStore
 NATURAL_CONTOUR_CLASSES = ("forest", "lake", "river")
 NATURAL_CONTOUR_LABELS = {
     "forest": "Леса",
-    "lake": "Озёра",
+    "lake": "Водоёмы",
     "river": "Реки",
+}
+WATERBODY_TYPE_LABELS = {
+    "unspecified": "Не уточнён (natural=water)",
+    "basin": "Бассейн",
+    "lagoon": "Лагуна",
+    "lake": "Озеро",
+    "oxbow": "Старица",
+    "pond": "Пруд",
+    "reservoir": "Водохранилище",
 }
 ROAD_CLASS_ORDER = (
     "motorway",
@@ -97,6 +106,20 @@ def osm_road_reference(feature: GeoFeature) -> str | None:
     return None
 
 
+def osm_waterbody_type(feature: GeoFeature) -> str | None:
+    """Return the OSM water subtype, retaining valid untyped water areas."""
+
+    if feature.source != "osm" or feature.feature_class != "lake":
+        return None
+    tags = feature.properties.get("tags")
+    if not isinstance(tags, dict) or tags.get("natural") != "water":
+        return None
+    value = tags.get("water")
+    if not isinstance(value, str) or not value.strip():
+        return "unspecified"
+    return value.strip().lower()
+
+
 def osm_road_map_label(
     feature: GeoFeature,
     *,
@@ -166,6 +189,7 @@ def feature_to_geojson(feature: GeoFeature) -> dict[str, Any] | None:
     road_class = osm_road_class(feature)
     road_reference = osm_road_reference(feature)
     road_map_label = osm_road_map_label(feature)
+    waterbody_type = osm_waterbody_type(feature)
     map_label = dgis_map_label(feature)
     return {
         "type": "Feature",
@@ -189,6 +213,12 @@ def feature_to_geojson(feature: GeoFeature) -> dict[str, Any] | None:
             ),
             "road_reference": road_reference,
             "road_map_label": road_map_label,
+            "waterbody_type": waterbody_type,
+            "waterbody_type_label": (
+                WATERBODY_TYPE_LABELS.get(waterbody_type, waterbody_type)
+                if waterbody_type
+                else None
+            ),
             "map_label": map_label,
         },
     }
@@ -272,6 +302,7 @@ def feature_table_rows(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
         road_class = osm_road_class(feature)
         road_reference = osm_road_reference(feature)
         road_map_label = osm_road_map_label(feature)
+        waterbody_type = osm_waterbody_type(feature)
         map_label = dgis_map_label(feature)
         result.append(
             {
@@ -296,6 +327,12 @@ def feature_table_rows(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
                 ),
                 "road_reference": road_reference,
                 "road_map_label": road_map_label,
+                "waterbody_type": waterbody_type,
+                "waterbody_type_label": (
+                    WATERBODY_TYPE_LABELS.get(waterbody_type, waterbody_type)
+                    if waterbody_type
+                    else None
+                ),
                 "map_label": map_label,
                 "source_type": feature.source_type,
                 "source_id": feature.source_id,
@@ -330,7 +367,7 @@ def source_summary_rows(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
 def natural_contour_summary(
     features: Iterable[GeoFeature],
 ) -> list[dict[str, Any]]:
-    """Summarize renderable OSM forest, lake, and river contours."""
+    """Summarize renderable OSM forest, waterbody, and river contours."""
 
     result = {
         feature_class: {

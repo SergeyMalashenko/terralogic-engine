@@ -55,7 +55,7 @@ terralogic-collect 52:26:0040002:3823 \
 The fixed collection profile stores:
 
 - NSPD: parcel information, its contour, and ZOUIT restrictions;
-- OSM: forest, lake, and river contours plus stream and road lines;
+- OSM: forest, waterbody, and river contours plus stream and road lines;
 - 2GIS: social infrastructure and public-transport/transport-hub objects.
 
 The parcel's minimum enclosing radius plus `--margin-m` defines the shared
@@ -102,7 +102,7 @@ It provides:
 - parcel, analysis circle, NSPD, OSM, and 2GIS layers on an interactive map;
 - filters by source and feature class, source/class summaries, distances,
   feature attributes, collection warnings, and run history;
-- dedicated forest, lake, and river contour styles with polygon-hole rendering,
+- dedicated forest, waterbody, and river contour styles with polygon-hole rendering,
   a map legend, natural-contour counters, and full-screen map mode;
 - separate road layers and colors for every collected OSM `highway` class,
   including a neutral fallback for unknown values;
