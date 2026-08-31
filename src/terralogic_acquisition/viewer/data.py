@@ -18,6 +18,32 @@ NATURAL_CONTOUR_LABELS = {
     "lake": "Озёра",
     "river": "Реки",
 }
+ROAD_CLASS_ORDER = (
+    "motorway",
+    "trunk",
+    "primary",
+    "secondary",
+    "tertiary",
+    "unclassified",
+    "residential",
+    "living_street",
+    "service",
+    "track",
+    "unknown",
+)
+ROAD_CLASS_LABELS = {
+    "motorway": "Автомагистраль",
+    "trunk": "Магистральная дорога",
+    "primary": "Основная дорога",
+    "secondary": "Второстепенная дорога",
+    "tertiary": "Дорога третьего класса",
+    "unclassified": "Неклассифицированная дорога",
+    "residential": "Жилая улица",
+    "living_street": "Жилая зона",
+    "service": "Подъездная/служебная дорога",
+    "track": "Грунтовая или лесная дорога",
+    "unknown": "Неизвестный класс",
+}
 
 
 def interior_ring_count(geometry: dict[str, Any] | None) -> int:
@@ -37,6 +63,19 @@ def interior_ring_count(geometry: dict[str, Any] | None) -> int:
             if isinstance(polygon, Sequence)
         )
     return 0
+
+
+def osm_road_class(feature: GeoFeature) -> str | None:
+    """Return the exact OSM highway class for one normalized road."""
+
+    if feature.source != "osm" or feature.feature_class != "road":
+        return None
+    tags = feature.properties.get("tags")
+    value = tags.get("highway") if isinstance(tags, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        return "unknown"
+    normalized = value.strip().lower()
+    return normalized if normalized in ROAD_CLASS_LABELS else "unknown"
 
 
 def feature_label(feature: GeoFeature) -> str:
@@ -68,6 +107,7 @@ def feature_to_geojson(feature: GeoFeature) -> dict[str, Any] | None:
         distance = feature.properties.get("distance_to_search_point_m")
     relation = feature.properties.get("relation")
     relation_kind = relation.get("kind") if isinstance(relation, dict) else None
+    road_class = osm_road_class(feature)
     return {
         "type": "Feature",
         "id": feature.id,
@@ -84,6 +124,10 @@ def feature_to_geojson(feature: GeoFeature) -> dict[str, Any] | None:
             "category": feature.properties.get("category_name"),
             "geometry_type": feature.geometry.get("type"),
             "interior_rings": interior_ring_count(feature.geometry),
+            "road_class": road_class,
+            "road_class_label": (
+                ROAD_CLASS_LABELS.get(road_class) if road_class else None
+            ),
         },
     }
 
@@ -110,6 +154,23 @@ def group_features(
     return {
         key: sorted(values, key=lambda item: item.id)
         for key, values in sorted(groups.items())
+    }
+
+
+def group_road_features(
+    features: Iterable[GeoFeature],
+) -> dict[str, list[GeoFeature]]:
+    """Group OSM roads by their exact highway value in a stable order."""
+
+    groups: defaultdict[str, list[GeoFeature]] = defaultdict(list)
+    for feature in features:
+        road_class = osm_road_class(feature)
+        if road_class is not None:
+            groups[road_class].append(feature)
+    return {
+        road_class: sorted(groups[road_class], key=lambda item: item.id)
+        for road_class in ROAD_CLASS_ORDER
+        if road_class in groups
     }
 
 
@@ -146,6 +207,7 @@ def feature_table_rows(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
             distance = feature.properties.get("distance_to_search_point_m")
             distance_basis = "до центра поиска"
         relation = feature.properties.get("relation")
+        road_class = osm_road_class(feature)
         result.append(
             {
                 "label": feature_label(feature),
@@ -163,6 +225,10 @@ def feature_table_rows(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
                     else None
                 ),
                 "interior_rings": interior_ring_count(feature.geometry),
+                "road_class": road_class,
+                "road_class_label": (
+                    ROAD_CLASS_LABELS.get(road_class) if road_class else None
+                ),
                 "source_type": feature.source_type,
                 "source_id": feature.source_id,
                 "has_geometry": feature.geometry is not None,
@@ -222,3 +288,20 @@ def natural_contour_summary(
             row["contours"] += 1
             row["interior_rings"] += interior_ring_count(feature.geometry)
     return [result[feature_class] for feature_class in NATURAL_CONTOUR_CLASSES]
+
+
+def road_class_summary(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
+    """Count roads by OSM highway class and geometry availability."""
+
+    grouped = group_road_features(features)
+    return [
+        {
+            "road_class": road_class,
+            "label": ROAD_CLASS_LABELS[road_class],
+            "objects": len(values),
+            "with_geometry": sum(
+                feature.geometry is not None for feature in values
+            ),
+        }
+        for road_class, values in grouped.items()
+    ]

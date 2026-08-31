@@ -44,6 +44,13 @@ counts, the number of preserved interior rings, a legend, hover highlighting,
 and a full-screen control. Streams and roads remain visually distinct line
 layers.
 
+Roads are split into switchable layers by their exact OSM `highway` value.
+Motorways, trunk, primary, secondary, tertiary, unclassified, residential,
+living-street, service, and track roads have dedicated colors and widths; track
+roads are dashed. Unknown values use a neutral fallback instead of being
+discarded. The legend, tooltip, object table, and road summary show both the
+localized class name and the original `highway` value.
+
 ## Data access
 
 The viewer depends on the `CaseStore` interface and uses methods such as

@@ -11,12 +11,15 @@ from terralogic_acquisition.viewer.data import (
     feature_label,
     feature_table_rows,
     group_features,
+    group_road_features,
     interior_ring_count,
     natural_contour_summary,
+    osm_road_class,
+    road_class_summary,
     source_summary_rows,
 )
 
-from .fakes import FOREST_GEOMETRY, PARCEL_GEOMETRY
+from .fakes import FOREST_GEOMETRY, PARCEL_GEOMETRY, ROAD_GEOMETRY
 
 
 def _feature(
@@ -145,6 +148,60 @@ def test_viewer_summarizes_natural_contours_and_polygon_holes() -> None:
             "objects": 1,
             "contours": 0,
             "interior_rings": 0,
+        },
+    ]
+
+
+def test_viewer_groups_and_labels_roads_by_highway_class() -> None:
+    motorway = _feature(
+        "road-motorway",
+        source="osm",
+        feature_class="road",
+        geometry=ROAD_GEOMETRY,
+        properties={"name": "М-7", "tags": {"highway": "motorway"}},
+    )
+    residential = _feature(
+        "road-residential",
+        source="osm",
+        feature_class="road",
+        geometry=ROAD_GEOMETRY,
+        properties={"tags": {"highway": "residential"}},
+    )
+    unknown = _feature(
+        "road-unknown",
+        source="osm",
+        feature_class="road",
+        geometry=ROAD_GEOMETRY,
+        properties={"tags": {"highway": "future_road_class"}},
+    )
+    grouped = group_road_features([unknown, residential, motorway])
+    summary = road_class_summary([unknown, residential, motorway])
+    geojson = build_feature_collection([motorway])
+
+    assert osm_road_class(motorway) == "motorway"
+    assert list(grouped) == ["motorway", "residential", "unknown"]
+    assert geojson["features"][0]["properties"]["road_class"] == "motorway"
+    assert geojson["features"][0]["properties"]["road_class_label"] == (
+        "Автомагистраль"
+    )
+    assert summary == [
+        {
+            "road_class": "motorway",
+            "label": "Автомагистраль",
+            "objects": 1,
+            "with_geometry": 1,
+        },
+        {
+            "road_class": "residential",
+            "label": "Жилая улица",
+            "objects": 1,
+            "with_geometry": 1,
+        },
+        {
+            "road_class": "unknown",
+            "label": "Неизвестный класс",
+            "objects": 1,
+            "with_geometry": 1,
         },
     ]
 

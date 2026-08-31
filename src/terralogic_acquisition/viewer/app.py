@@ -17,12 +17,15 @@ from streamlit_folium import st_folium
 from terralogic_acquisition.domain.models import CollectionReceipt, GeoFeature
 from terralogic_acquisition.store.local import LocalCaseStore
 from terralogic_acquisition.viewer.data import (
+    ROAD_CLASS_LABELS,
     build_feature_collection,
     feature_label,
     feature_table_rows,
     group_features,
+    group_road_features,
     load_receipt_features,
     natural_contour_summary,
+    road_class_summary,
     source_summary_rows,
 )
 
@@ -80,10 +83,28 @@ CLASS_STYLES: dict[str, dict[str, Any]] = {
         "fillOpacity": 0,
         "dashArray": "7 5",
     },
-    "road": {
-        "color": "#ea580c",
-        "weight": 4,
+}
+ROAD_CLASS_STYLES: dict[str, dict[str, Any]] = {
+    "motorway": {"color": "#991b1b", "weight": 7, "fillOpacity": 0},
+    "trunk": {"color": "#dc2626", "weight": 7, "fillOpacity": 0},
+    "primary": {"color": "#ea580c", "weight": 6, "fillOpacity": 0},
+    "secondary": {"color": "#f59e0b", "weight": 6, "fillOpacity": 0},
+    "tertiary": {"color": "#eab308", "weight": 5, "fillOpacity": 0},
+    "unclassified": {"color": "#64748b", "weight": 4, "fillOpacity": 0},
+    "residential": {"color": "#2563eb", "weight": 4, "fillOpacity": 0},
+    "living_street": {"color": "#7c3aed", "weight": 4, "fillOpacity": 0},
+    "service": {"color": "#6b7280", "weight": 3, "fillOpacity": 0},
+    "track": {
+        "color": "#92400e",
+        "weight": 3,
         "fillOpacity": 0,
+        "dashArray": "8 5",
+    },
+    "unknown": {
+        "color": "#111827",
+        "weight": 3,
+        "fillOpacity": 0,
+        "dashArray": "3 5",
     },
 }
 
@@ -128,14 +149,90 @@ def _add_reference_geometry(
     ).add_to(map_object)
 
 
+def _add_geojson_feature_layer(
+    map_object: folium.Map,
+    *,
+    name: str,
+    values: list[GeoFeature],
+    style: dict[str, Any],
+    show_road_class: bool = False,
+) -> None:
+    collection = build_feature_collection(values)
+    geometry_count = len(collection["features"])
+    if geometry_count == 0:
+        return
+    color = str(style["color"])
+    layer = folium.FeatureGroup(
+        name=f"{name} ({geometry_count})",
+        show=True,
+    )
+    tooltip_fields = ["label", "source", "feature_class"]
+    tooltip_aliases = ["Объект", "Источник", "Класс объекта"]
+    if show_road_class:
+        tooltip_fields.extend(["road_class_label", "road_class"])
+        tooltip_aliases.extend(["Класс дороги", "Тег highway"])
+    tooltip_fields.extend(
+        [
+            "category",
+            "geometry_type",
+            "interior_rings",
+            "distance_m",
+            "relation",
+        ]
+    )
+    tooltip_aliases.extend(
+        [
+            "Категория",
+            "Геометрия",
+            "Внутренних контуров",
+            "Расстояние, м",
+            "Отношение к участку",
+        ]
+    )
+    folium.GeoJson(
+        collection,
+        style_function=lambda _feature, style=style: dict(style),
+        highlight_function=lambda _feature, style=style: {
+            **style,
+            "weight": int(style.get("weight", 2)) + 2,
+            "fillOpacity": min(
+                0.65,
+                float(style.get("fillOpacity", 0)) + 0.12,
+            ),
+        },
+        marker=folium.CircleMarker(
+            radius=5,
+            color=color,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.8,
+        ),
+        tooltip=folium.GeoJsonTooltip(
+            fields=tooltip_fields,
+            aliases=tooltip_aliases,
+            localize=True,
+        ),
+    ).add_to(layer)
+    layer.add_to(map_object)
+
+
 def _add_feature_layers(
     map_object: folium.Map,
     features: list[GeoFeature],
 ) -> None:
     for (source, feature_class), values in group_features(features).items():
-        collection = build_feature_collection(values)
-        geometry_count = len(collection["features"])
-        if geometry_count == 0:
+        if source == "osm" and feature_class == "road":
+            for road_class, road_values in group_road_features(values).items():
+                _add_geojson_feature_layer(
+                    map_object,
+                    name=(
+                        "OSM · Дороги · "
+                        f"{ROAD_CLASS_LABELS[road_class]} [{road_class}]"
+                    ),
+                    values=road_values,
+                    style=ROAD_CLASS_STYLES[road_class],
+                    show_road_class=True,
+                )
             continue
         fallback_color = SOURCE_COLORS.get(source, "#334155")
         style = CLASS_STYLES.get(
@@ -147,55 +244,13 @@ def _add_feature_layers(
                 "fillOpacity": 0.3,
             },
         )
-        color = str(style["color"])
         class_label = FEATURE_CLASS_LABELS.get(feature_class, feature_class)
-        layer = folium.FeatureGroup(
-            name=f"{source.upper()} · {class_label} ({geometry_count})",
-            show=True,
+        _add_geojson_feature_layer(
+            map_object,
+            name=f"{source.upper()} · {class_label}",
+            values=values,
+            style=style,
         )
-        folium.GeoJson(
-            collection,
-            style_function=lambda _feature, style=style: dict(style),
-            highlight_function=lambda _feature, style=style: {
-                **style,
-                "weight": int(style.get("weight", 2)) + 2,
-                "fillOpacity": min(
-                    0.65,
-                    float(style.get("fillOpacity", 0)) + 0.12,
-                ),
-            },
-            marker=folium.CircleMarker(
-                radius=5,
-                color=color,
-                fill=True,
-                fill_color=color,
-                fill_opacity=0.8,
-            ),
-            tooltip=folium.GeoJsonTooltip(
-                fields=[
-                    "label",
-                    "source",
-                    "feature_class",
-                    "category",
-                    "geometry_type",
-                    "interior_rings",
-                    "distance_m",
-                    "relation",
-                ],
-                aliases=[
-                    "Объект",
-                    "Источник",
-                    "Класс",
-                    "Категория",
-                    "Геометрия",
-                    "Внутренних контуров",
-                    "Расстояние, м",
-                    "Отношение к участку",
-                ],
-                localize=True,
-            ),
-        ).add_to(layer)
-        layer.add_to(map_object)
 
 
 def _add_map_legend(
@@ -213,7 +268,6 @@ def _add_map_legend(
         "lake",
         "river",
         "stream",
-        "road",
     ):
         if feature_class not in visible_classes:
             continue
@@ -222,7 +276,16 @@ def _add_map_legend(
             (
                 FEATURE_CLASS_LABELS[feature_class],
                 str(style["color"]),
-                feature_class in {"stream", "road"},
+                feature_class == "stream",
+            )
+        )
+    for row in road_class_summary(features):
+        road_class = str(row["road_class"])
+        entries.append(
+            (
+                f"Дороги · {row['label']}",
+                str(ROAD_CLASS_STYLES[road_class]["color"]),
+                True,
             )
         )
     if any(feature.source == "dgis" for feature in features):
@@ -244,6 +307,7 @@ def _add_map_legend(
         "<div style='position:fixed;bottom:28px;left:28px;z-index:9999;"
         "background:rgba(255,255,255,.94);border:1px solid #cbd5e1;"
         "border-radius:6px;padding:10px 12px;font-size:13px;"
+        "max-height:55vh;overflow-y:auto;"
         "box-shadow:0 1px 4px rgba(0,0,0,.25);'>"
         "<strong>Слои карты</strong>"
         + "".join(rows)
@@ -276,6 +340,27 @@ def _render_natural_contour_summary(features: list[GeoFeature]) -> None:
         )
 
 
+def _render_road_class_summary(features: list[GeoFeature]) -> None:
+    summary = road_class_summary(features)
+    if not summary:
+        return
+    with st.expander("Классы дорог OSM", expanded=False):
+        st.dataframe(
+            [
+                {
+                    "Класс": row["label"],
+                    "highway": row["road_class"],
+                    "Объектов": row["objects"],
+                    "С геометрией": row["with_geometry"],
+                    "Цвет": ROAD_CLASS_STYLES[str(row["road_class"])]["color"],
+                }
+                for row in summary
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
 def _render_map(
     store: LocalCaseStore,
     receipt: CollectionReceipt,
@@ -289,6 +374,7 @@ def _render_map(
         return
     aoi = store.get_area_of_interest(receipt.case_id, receipt.aoi_id)
     _render_natural_contour_summary(features)
+    _render_road_class_summary(features)
     longitude, latitude = aoi.representative_point
     map_object = folium.Map(
         location=[latitude, longitude],

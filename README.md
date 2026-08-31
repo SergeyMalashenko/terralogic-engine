@@ -104,6 +104,8 @@ It provides:
   feature attributes, collection warnings, and run history;
 - dedicated forest, lake, and river contour styles with polygon-hole rendering,
   a map legend, natural-contour counters, and full-screen map mode;
+- separate road layers and colors for every collected OSM `highway` class,
+  including a neutral fallback for unknown values;
 - direct reading through the `CaseStore` interface rather than raw SQL.
 
 The application binds to localhost by default. For a remote server, create an
