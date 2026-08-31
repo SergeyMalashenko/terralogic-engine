@@ -45,6 +45,9 @@ ROAD_CLASS_LABELS = {
     "unknown": "Неизвестный класс",
 }
 ROAD_REFERENCE_TAGS = ("ref", "official_ref", "nat_ref", "int_ref")
+ROAD_LABEL_CLASSES = frozenset(
+    {"motorway", "trunk", "primary", "secondary", "tertiary"}
+)
 
 
 def interior_ring_count(geometry: dict[str, Any] | None) -> int:
@@ -94,6 +97,43 @@ def osm_road_reference(feature: GeoFeature) -> str | None:
     return None
 
 
+def osm_road_map_label(
+    feature: GeoFeature,
+    *,
+    max_length: int = 80,
+) -> str | None:
+    """Build a label only for major OSM road classes."""
+
+    if osm_road_class(feature) not in ROAD_LABEL_CLASSES or max_length < 2:
+        return None
+    value = feature.properties.get("name")
+    name = " ".join(value.split()) if isinstance(value, str) else ""
+    reference = osm_road_reference(feature)
+    if name and reference and reference.casefold() not in name.casefold():
+        label = f"{name} · {reference}"
+    else:
+        label = name or reference
+    if not label:
+        return None
+    if len(label) <= max_length:
+        return label
+    return f"{label[: max_length - 1].rstrip()}…"
+
+
+def dgis_map_label(feature: GeoFeature, *, max_length: int = 60) -> str | None:
+    """Build a bounded permanent-map label for one normalized 2GIS object."""
+
+    if feature.source != "dgis" or max_length < 2:
+        return None
+    value = feature.properties.get("name")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = " ".join(value.split())
+    if len(normalized) <= max_length:
+        return normalized
+    return f"{normalized[: max_length - 1].rstrip()}…"
+
+
 def feature_label(feature: GeoFeature) -> str:
     """Build a compact human-readable label without assuming one source schema."""
 
@@ -125,6 +165,8 @@ def feature_to_geojson(feature: GeoFeature) -> dict[str, Any] | None:
     relation_kind = relation.get("kind") if isinstance(relation, dict) else None
     road_class = osm_road_class(feature)
     road_reference = osm_road_reference(feature)
+    road_map_label = osm_road_map_label(feature)
+    map_label = dgis_map_label(feature)
     return {
         "type": "Feature",
         "id": feature.id,
@@ -146,6 +188,8 @@ def feature_to_geojson(feature: GeoFeature) -> dict[str, Any] | None:
                 ROAD_CLASS_LABELS.get(road_class) if road_class else None
             ),
             "road_reference": road_reference,
+            "road_map_label": road_map_label,
+            "map_label": map_label,
         },
     }
 
@@ -227,6 +271,8 @@ def feature_table_rows(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
         relation = feature.properties.get("relation")
         road_class = osm_road_class(feature)
         road_reference = osm_road_reference(feature)
+        road_map_label = osm_road_map_label(feature)
+        map_label = dgis_map_label(feature)
         result.append(
             {
                 "label": feature_label(feature),
@@ -249,6 +295,8 @@ def feature_table_rows(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
                     ROAD_CLASS_LABELS.get(road_class) if road_class else None
                 ),
                 "road_reference": road_reference,
+                "road_map_label": road_map_label,
+                "map_label": map_label,
                 "source_type": feature.source_type,
                 "source_id": feature.source_id,
                 "has_geometry": feature.geometry is not None,

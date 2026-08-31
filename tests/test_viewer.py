@@ -8,6 +8,7 @@ from terralogic_acquisition.domain.models import GeoFeature, SourceName
 from terralogic_acquisition.viewer.cli import build_parser
 from terralogic_acquisition.viewer.data import (
     build_feature_collection,
+    dgis_map_label,
     feature_label,
     feature_table_rows,
     group_features,
@@ -15,6 +16,7 @@ from terralogic_acquisition.viewer.data import (
     interior_ring_count,
     natural_contour_summary,
     osm_road_class,
+    osm_road_map_label,
     osm_road_reference,
     road_class_summary,
     source_summary_rows,
@@ -92,12 +94,41 @@ def test_viewer_groups_and_summarizes_features() -> None:
     assert rows[0]["label"] == "Склад"
     assert rows[0]["has_geometry"] is False
     assert rows[2]["distance_m"] == 420.0
+    assert rows[2]["map_label"] == "Школа"
     assert summary[0] == {
         "source": "dgis",
         "class": "education",
         "objects": 1,
         "with_geometry": 0,
     }
+
+
+def test_viewer_builds_bounded_dgis_text_labels() -> None:
+    named = _feature(
+        "dgis-named",
+        source="dgis",
+        feature_class="education",
+        geometry={"type": "Point", "coordinates": [43.6, 56.06]},
+        properties={
+            "name": "Средняя общеобразовательная школа № 1",
+            "category_name": "Образование",
+        },
+    )
+    address_only = _feature(
+        "dgis-address",
+        source="dgis",
+        feature_class="shops",
+        properties={"address_name": "улица Ленина, 10"},
+    )
+
+    collection = build_feature_collection([named])
+
+    assert dgis_map_label(named) == "Средняя общеобразовательная школа № 1"
+    assert dgis_map_label(named, max_length=12) == "Средняя общ…"
+    assert dgis_map_label(address_only) is None
+    assert collection["features"][0]["properties"]["map_label"] == (
+        "Средняя общеобразовательная школа № 1"
+    )
 
 
 def test_viewer_summarizes_natural_contours_and_polygon_holes() -> None:
@@ -160,7 +191,7 @@ def test_viewer_groups_and_labels_roads_by_highway_class() -> None:
         feature_class="road",
         geometry=ROAD_GEOMETRY,
         properties={
-            "name": "М-7",
+            "name": "Волга",
             "tags": {"highway": "motorway", "ref": "М-7"},
         },
     )
@@ -190,12 +221,17 @@ def test_viewer_groups_and_labels_roads_by_highway_class() -> None:
     assert osm_road_class(motorway) == "motorway"
     assert osm_road_reference(motorway) == "М-7"
     assert osm_road_reference(residential) == "52К-123"
+    assert osm_road_map_label(motorway) == "Волга · М-7"
+    assert osm_road_map_label(residential) is None
     assert list(grouped) == ["motorway", "residential", "unknown"]
     assert geojson["features"][0]["properties"]["road_class"] == "motorway"
     assert geojson["features"][0]["properties"]["road_class_label"] == (
         "Автомагистраль"
     )
     assert geojson["features"][0]["properties"]["road_reference"] == "М-7"
+    assert geojson["features"][0]["properties"]["road_map_label"] == (
+        "Волга · М-7"
+    )
     assert summary == [
         {
             "road_class": "motorway",
@@ -219,6 +255,38 @@ def test_viewer_groups_and_labels_roads_by_highway_class() -> None:
             "with_reference": 0,
         },
     ]
+
+
+def test_permanent_road_labels_are_limited_to_major_classes() -> None:
+    for road_class in (
+        "motorway",
+        "trunk",
+        "primary",
+        "secondary",
+        "tertiary",
+    ):
+        feature = _feature(
+            f"road-{road_class}",
+            source="osm",
+            feature_class="road",
+            properties={
+                "name": "Тестовая дорога",
+                "tags": {"highway": road_class},
+            },
+        )
+        assert osm_road_map_label(feature) == "Тестовая дорога"
+
+    for road_class in ("unclassified", "residential", "service", "track"):
+        feature = _feature(
+            f"road-{road_class}",
+            source="osm",
+            feature_class="road",
+            properties={
+                "name": "Местная дорога",
+                "tags": {"highway": road_class, "ref": "52Н-1"},
+            },
+        )
+        assert osm_road_map_label(feature) is None
 
 
 def test_viewer_cli_defaults_to_localhost() -> None:

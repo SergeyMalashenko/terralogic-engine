@@ -20,13 +20,14 @@ from terralogic_acquisition.store.local import LocalCaseStore
 from terralogic_acquisition.viewer.data import (
     ROAD_CLASS_LABELS,
     build_feature_collection,
+    dgis_map_label,
     feature_label,
     feature_table_rows,
     group_features,
     group_road_features,
     load_receipt_features,
     natural_contour_summary,
-    osm_road_reference,
+    osm_road_map_label,
     road_class_summary,
     source_summary_rows,
 )
@@ -158,6 +159,7 @@ def _add_geojson_feature_layer(
     values: list[GeoFeature],
     style: dict[str, Any],
     show_road_class: bool = False,
+    show_dgis_labels: bool = False,
 ) -> None:
     collection = build_feature_collection(values)
     geometry_count = len(collection["features"])
@@ -221,21 +223,21 @@ def _add_geojson_feature_layer(
     ).add_to(layer)
     if show_road_class:
         for feature in values:
-            road_reference = osm_road_reference(feature)
-            if road_reference is None or feature.geometry is None:
+            road_label = osm_road_map_label(feature)
+            if road_label is None or feature.geometry is None:
                 continue
             try:
                 label_point = shape(feature.geometry).representative_point()
             except (KeyError, TypeError, ValueError):
                 continue
-            safe_reference = escape(road_reference)
+            safe_label = escape(road_label)
             label_html = (
                 "<div style='display:inline-block;transform:translateX(-50%);"
                 "white-space:nowrap;background:rgba(255,255,255,.92);"
                 f"border:2px solid {color};border-radius:4px;padding:1px 4px;"
                 "color:#111827;font-size:11px;font-weight:700;line-height:14px;"
                 "box-shadow:0 1px 2px rgba(0,0,0,.25);'>"
-                f"{safe_reference}</div>"
+                f"{safe_label}</div>"
             )
             folium.Marker(
                 location=[float(label_point.y), float(label_point.x)],
@@ -245,7 +247,40 @@ def _add_geojson_feature_layer(
                     icon_anchor=(0, 0),
                     class_name="terralogic-road-reference",
                 ),
-                tooltip=f"Номер дороги: {safe_reference}",
+                tooltip=f"Дорога: {safe_label}",
+            ).add_to(layer)
+    if show_dgis_labels:
+        for feature in values:
+            map_label = dgis_map_label(feature)
+            if map_label is None or feature.geometry is None:
+                continue
+            try:
+                label_point = shape(feature.geometry).representative_point()
+            except (KeyError, TypeError, ValueError):
+                continue
+            safe_label = escape(map_label)
+            category = feature.properties.get("category_name")
+            safe_category = escape(str(category)) if category else "Объект 2GIS"
+            label_html = (
+                "<div title='"
+                f"{safe_category}' style='display:inline-block;"
+                "transform:translate(8px,-50%);white-space:nowrap;"
+                "max-width:220px;overflow:hidden;text-overflow:ellipsis;"
+                "background:rgba(255,255,255,.94);border:1px solid #2563eb;"
+                "border-radius:4px;padding:2px 5px;color:#1e3a8a;"
+                "font-size:11px;font-weight:600;line-height:15px;"
+                "box-shadow:0 1px 2px rgba(0,0,0,.2);'>"
+                f"{safe_label}</div>"
+            )
+            folium.Marker(
+                location=[float(label_point.y), float(label_point.x)],
+                icon=folium.DivIcon(
+                    html=label_html,
+                    icon_size=(0, 0),
+                    icon_anchor=(0, 0),
+                    class_name="terralogic-dgis-label",
+                ),
+                tooltip=f"2GIS: {safe_label}",
             ).add_to(layer)
     layer.add_to(map_object)
 
@@ -253,6 +288,8 @@ def _add_geojson_feature_layer(
 def _add_feature_layers(
     map_object: folium.Map,
     features: list[GeoFeature],
+    *,
+    show_dgis_labels: bool,
 ) -> None:
     for (source, feature_class), values in group_features(features).items():
         if source == "osm" and feature_class == "road":
@@ -284,6 +321,7 @@ def _add_feature_layers(
             name=f"{source.upper()} · {class_label}",
             values=values,
             style=style,
+            show_dgis_labels=(source == "dgis" and show_dgis_labels),
         )
 
 
@@ -400,6 +438,8 @@ def _render_map(
     store: LocalCaseStore,
     receipt: CollectionReceipt,
     features: list[GeoFeature],
+    *,
+    show_dgis_labels: bool,
 ) -> None:
     if receipt.aoi_id is None:
         st.warning(
@@ -439,7 +479,11 @@ def _render_map(
         fill_opacity=0.03,
         dash_array="8 6",
     )
-    _add_feature_layers(map_object, features)
+    _add_feature_layers(
+        map_object,
+        features,
+        show_dgis_labels=show_dgis_labels,
+    )
     _add_map_legend(map_object, features)
     min_x, min_y, max_x, max_y = shape(aoi.query_geometry).bounds
     map_object.fit_bounds([[min_y, min_x], [max_y, max_x]])
@@ -545,6 +589,12 @@ def run() -> None:
         options=classes,
         default=classes,
     )
+    show_dgis_labels = st.sidebar.checkbox(
+        "Подписи объектов 2GIS",
+        value=True,
+        help="Показывать постоянные текстовые подписи рядом с точками 2GIS",
+        disabled="dgis" not in selected_sources,
+    )
     visible_features = [
         feature
         for feature in all_features
@@ -589,7 +639,12 @@ def run() -> None:
         )
 
     with map_tab:
-        _render_map(store, receipt, visible_features)
+        _render_map(
+            store,
+            receipt,
+            visible_features,
+            show_dgis_labels=show_dgis_labels,
+        )
 
     with objects_tab:
         st.dataframe(

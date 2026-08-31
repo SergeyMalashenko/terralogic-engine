@@ -51,10 +51,17 @@ roads are dashed. Unknown values use a neutral fallback instead of being
 discarded. The legend, tooltip, object table, and road summary show both the
 localized class name and the original `highway` value.
 
-When a road has an OSM reference, the viewer places a compact permanent number
-label on a representative point of its line. Reference tags are checked in the
-order `ref`, `official_ref`, `nat_ref`, `int_ref`. The selected value is also
-available in the road tooltip, object table, and the per-class summary counts.
+Permanent road labels are limited to `motorway`, `trunk`, `primary`,
+`secondary`, and `tertiary`. The label shows the OSM road name and reference;
+if only the reference is available, it is shown alone. Reference tags are
+checked in the order `ref`, `official_ref`, `nat_ref`, `int_ref`. Lower road
+classes keep their colors and tooltips but do not receive permanent text.
+
+2GIS points can display permanent text labels controlled by the sidebar option
+`Подписи объектов 2GIS`. A label is created only when the object has a non-empty
+`name`; addresses, categories, and other fields are not substituted. Text is
+normalized and limited to 60 characters. The label stays in the same
+switchable category layer as its point, so hiding the layer also hides its text.
 
 ## Data access
 
