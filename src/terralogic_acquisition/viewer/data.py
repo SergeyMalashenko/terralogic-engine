@@ -44,6 +44,7 @@ ROAD_CLASS_LABELS = {
     "track": "Грунтовая или лесная дорога",
     "unknown": "Неизвестный класс",
 }
+ROAD_REFERENCE_TAGS = ("ref", "official_ref", "nat_ref", "int_ref")
 
 
 def interior_ring_count(geometry: dict[str, Any] | None) -> int:
@@ -78,6 +79,21 @@ def osm_road_class(feature: GeoFeature) -> str | None:
     return normalized if normalized in ROAD_CLASS_LABELS else "unknown"
 
 
+def osm_road_reference(feature: GeoFeature) -> str | None:
+    """Return a displayable road number from standard OSM reference tags."""
+
+    if feature.source != "osm" or feature.feature_class != "road":
+        return None
+    tags = feature.properties.get("tags")
+    if not isinstance(tags, dict):
+        return None
+    for key in ROAD_REFERENCE_TAGS:
+        value = tags.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def feature_label(feature: GeoFeature) -> str:
     """Build a compact human-readable label without assuming one source schema."""
 
@@ -108,6 +124,7 @@ def feature_to_geojson(feature: GeoFeature) -> dict[str, Any] | None:
     relation = feature.properties.get("relation")
     relation_kind = relation.get("kind") if isinstance(relation, dict) else None
     road_class = osm_road_class(feature)
+    road_reference = osm_road_reference(feature)
     return {
         "type": "Feature",
         "id": feature.id,
@@ -128,6 +145,7 @@ def feature_to_geojson(feature: GeoFeature) -> dict[str, Any] | None:
             "road_class_label": (
                 ROAD_CLASS_LABELS.get(road_class) if road_class else None
             ),
+            "road_reference": road_reference,
         },
     }
 
@@ -208,6 +226,7 @@ def feature_table_rows(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
             distance_basis = "до центра поиска"
         relation = feature.properties.get("relation")
         road_class = osm_road_class(feature)
+        road_reference = osm_road_reference(feature)
         result.append(
             {
                 "label": feature_label(feature),
@@ -229,6 +248,7 @@ def feature_table_rows(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
                 "road_class_label": (
                     ROAD_CLASS_LABELS.get(road_class) if road_class else None
                 ),
+                "road_reference": road_reference,
                 "source_type": feature.source_type,
                 "source_id": feature.source_id,
                 "has_geometry": feature.geometry is not None,
@@ -301,6 +321,9 @@ def road_class_summary(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
             "objects": len(values),
             "with_geometry": sum(
                 feature.geometry is not None for feature in values
+            ),
+            "with_reference": sum(
+                osm_road_reference(feature) is not None for feature in values
             ),
         }
         for road_class, values in grouped.items()

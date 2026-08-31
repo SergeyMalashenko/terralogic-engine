@@ -106,6 +106,8 @@ It provides:
   a map legend, natural-contour counters, and full-screen map mode;
 - separate road layers and colors for every collected OSM `highway` class,
   including a neutral fallback for unknown values;
+- permanent road-number labels when OSM provides `ref`, `official_ref`,
+  `nat_ref`, or `int_ref`;
 - direct reading through the `CaseStore` interface rather than raw SQL.
 
 The application binds to localhost by default. For a remote server, create an

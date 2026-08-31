@@ -51,6 +51,11 @@ roads are dashed. Unknown values use a neutral fallback instead of being
 discarded. The legend, tooltip, object table, and road summary show both the
 localized class name and the original `highway` value.
 
+When a road has an OSM reference, the viewer places a compact permanent number
+label on a representative point of its line. Reference tags are checked in the
+order `ref`, `official_ref`, `nat_ref`, `int_ref`. The selected value is also
+available in the road tooltip, object table, and the per-class summary counts.
+
 ## Data access
 
 The viewer depends on the `CaseStore` interface and uses methods such as

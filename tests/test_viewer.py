@@ -15,6 +15,7 @@ from terralogic_acquisition.viewer.data import (
     interior_ring_count,
     natural_contour_summary,
     osm_road_class,
+    osm_road_reference,
     road_class_summary,
     source_summary_rows,
 )
@@ -158,14 +159,22 @@ def test_viewer_groups_and_labels_roads_by_highway_class() -> None:
         source="osm",
         feature_class="road",
         geometry=ROAD_GEOMETRY,
-        properties={"name": "М-7", "tags": {"highway": "motorway"}},
+        properties={
+            "name": "М-7",
+            "tags": {"highway": "motorway", "ref": "М-7"},
+        },
     )
     residential = _feature(
         "road-residential",
         source="osm",
         feature_class="road",
         geometry=ROAD_GEOMETRY,
-        properties={"tags": {"highway": "residential"}},
+        properties={
+            "tags": {
+                "highway": "residential",
+                "official_ref": "52К-123",
+            }
+        },
     )
     unknown = _feature(
         "road-unknown",
@@ -179,29 +188,35 @@ def test_viewer_groups_and_labels_roads_by_highway_class() -> None:
     geojson = build_feature_collection([motorway])
 
     assert osm_road_class(motorway) == "motorway"
+    assert osm_road_reference(motorway) == "М-7"
+    assert osm_road_reference(residential) == "52К-123"
     assert list(grouped) == ["motorway", "residential", "unknown"]
     assert geojson["features"][0]["properties"]["road_class"] == "motorway"
     assert geojson["features"][0]["properties"]["road_class_label"] == (
         "Автомагистраль"
     )
+    assert geojson["features"][0]["properties"]["road_reference"] == "М-7"
     assert summary == [
         {
             "road_class": "motorway",
             "label": "Автомагистраль",
             "objects": 1,
             "with_geometry": 1,
+            "with_reference": 1,
         },
         {
             "road_class": "residential",
             "label": "Жилая улица",
             "objects": 1,
             "with_geometry": 1,
+            "with_reference": 1,
         },
         {
             "road_class": "unknown",
             "label": "Неизвестный класс",
             "objects": 1,
             "with_geometry": 1,
+            "with_reference": 0,
         },
     ]
 

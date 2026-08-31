@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from terralogic_acquisition.viewer.data import (
     group_road_features,
     load_receipt_features,
     natural_contour_summary,
+    osm_road_reference,
     road_class_summary,
     source_summary_rows,
 )
@@ -169,8 +171,12 @@ def _add_geojson_feature_layer(
     tooltip_fields = ["label", "source", "feature_class"]
     tooltip_aliases = ["Объект", "Источник", "Класс объекта"]
     if show_road_class:
-        tooltip_fields.extend(["road_class_label", "road_class"])
-        tooltip_aliases.extend(["Класс дороги", "Тег highway"])
+        tooltip_fields.extend(
+            ["road_reference", "road_class_label", "road_class"]
+        )
+        tooltip_aliases.extend(
+            ["Номер дороги", "Класс дороги", "Тег highway"]
+        )
     tooltip_fields.extend(
         [
             "category",
@@ -213,6 +219,34 @@ def _add_geojson_feature_layer(
             localize=True,
         ),
     ).add_to(layer)
+    if show_road_class:
+        for feature in values:
+            road_reference = osm_road_reference(feature)
+            if road_reference is None or feature.geometry is None:
+                continue
+            try:
+                label_point = shape(feature.geometry).representative_point()
+            except (KeyError, TypeError, ValueError):
+                continue
+            safe_reference = escape(road_reference)
+            label_html = (
+                "<div style='display:inline-block;transform:translateX(-50%);"
+                "white-space:nowrap;background:rgba(255,255,255,.92);"
+                f"border:2px solid {color};border-radius:4px;padding:1px 4px;"
+                "color:#111827;font-size:11px;font-weight:700;line-height:14px;"
+                "box-shadow:0 1px 2px rgba(0,0,0,.25);'>"
+                f"{safe_reference}</div>"
+            )
+            folium.Marker(
+                location=[float(label_point.y), float(label_point.x)],
+                icon=folium.DivIcon(
+                    html=label_html,
+                    icon_size=(0, 0),
+                    icon_anchor=(0, 0),
+                    class_name="terralogic-road-reference",
+                ),
+                tooltip=f"Номер дороги: {safe_reference}",
+            ).add_to(layer)
     layer.add_to(map_object)
 
 
@@ -352,6 +386,7 @@ def _render_road_class_summary(features: list[GeoFeature]) -> None:
                     "highway": row["road_class"],
                     "Объектов": row["objects"],
                     "С геометрией": row["with_geometry"],
+                    "С номером": row["with_reference"],
                     "Цвет": ROAD_CLASS_STYLES[str(row["road_class"])]["color"],
                 }
                 for row in summary
