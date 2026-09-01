@@ -5,7 +5,7 @@ from __future__ import annotations
 from hashlib import sha256
 from typing import Any
 
-from terralogic_acquisition.domain.models import GeoFeature
+from terralogic_engine.domain.models import GeoFeature
 
 NSPD_FEATURE_CLASSES = {
     "zouit": "restriction_zone",

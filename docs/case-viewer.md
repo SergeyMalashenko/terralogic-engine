@@ -98,7 +98,7 @@ require it.
   infrastructure.
 - Folium supports GeoJSON, layer controls, popups, styling, and raster tile
   backgrounds.
-- Both can remain optional dependencies, so the acquisition service stays
+- Both can remain optional dependencies, so the core engine stays
   lightweight.
 - The viewer can later be replaced by a separate API and web frontend without
   changing CaseStore.

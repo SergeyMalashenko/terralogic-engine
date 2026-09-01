@@ -6,12 +6,12 @@ from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from terralogic_acquisition.analytics.models import AnalysisResult
-from terralogic_acquisition.domain.models import (
+from terralogic_engine.analytics.models import AnalysisResult
+from terralogic_engine.domain.models import (
     CollectionReceipt,
     GeoFeature,
 )
-from terralogic_acquisition.store.base import CaseStore
+from terralogic_engine.store.base import CaseStore
 
 NATURAL_CONTOUR_CLASSES = ("forest", "lake", "river")
 NATURAL_CONTOUR_LABELS = {

@@ -30,7 +30,7 @@ class StreamableHttpMcpTransport:
         except ImportError as exc:
             raise McpDependencyError(
                 "Install the MCP client extra with: "
-                "pip install 'terralogic-acquisition[mcp]'"
+                "pip install 'terralogic-engine[mcp]'"
             ) from exc
 
         async with streamable_http_client(self.url) as streams:

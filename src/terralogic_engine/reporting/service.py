@@ -2,26 +2,26 @@
 
 from __future__ import annotations
 
-from terralogic_acquisition.acquisition.pipeline import AcquisitionPipeline
-from terralogic_acquisition.analytics.pipeline import AnalysisPipeline
-from terralogic_acquisition.domain.models import CollectionRequest, RefreshPolicy
-from terralogic_acquisition.reporting.context import (
+from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
+from terralogic_engine.analytics.pipeline import AnalysisPipeline
+from terralogic_engine.domain.models import CollectionRequest, RefreshPolicy
+from terralogic_engine.reporting.context import (
     build_report_context,
     collection_receipt_for_run,
 )
-from terralogic_acquisition.reporting.models import (
+from terralogic_engine.reporting.models import (
     GeneratedReport,
     PrepareCaseResult,
     ReportContext,
     ReportTemplate,
 )
-from terralogic_acquisition.reporting.template_registry import (
+from terralogic_engine.reporting.template_registry import (
     DEFAULT_TEMPLATE_ID,
     DEFAULT_TEMPLATE_VERSION,
     ReportTemplateRegistry,
     create_default_template_registry,
 )
-from terralogic_acquisition.store.base import CaseStore
+from terralogic_engine.store.base import CaseStore
 
 MAX_REPORT_CHARACTERS = 500_000
 MAX_REPORT_TITLE_CHARACTERS = 300

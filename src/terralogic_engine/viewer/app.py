@@ -15,9 +15,9 @@ from folium.plugins import Fullscreen
 from shapely.geometry import shape
 from streamlit_folium import st_folium
 
-from terralogic_acquisition.domain.models import CollectionReceipt, GeoFeature
-from terralogic_acquisition.store.local import LocalCaseStore
-from terralogic_acquisition.viewer.data import (
+from terralogic_engine.domain.models import CollectionReceipt, GeoFeature
+from terralogic_engine.store.local import LocalCaseStore
+from terralogic_engine.viewer.data import (
     ROAD_CLASS_LABELS,
     build_feature_collection,
     dgis_map_label,

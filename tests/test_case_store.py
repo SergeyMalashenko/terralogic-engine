@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from terralogic_acquisition.acquisition.geometry import build_area_of_interest
-from terralogic_acquisition.acquisition.normalize import parcel_feature
-from terralogic_acquisition.domain.models import (
+from terralogic_engine.acquisition.geometry import build_area_of_interest
+from terralogic_engine.acquisition.normalize import parcel_feature
+from terralogic_engine.domain.models import (
     CollectionReceipt,
     CollectionRequest,
     utc_now,
 )
-from terralogic_acquisition.store.local import LocalCaseStore
+from terralogic_engine.store.local import LocalCaseStore
 
 from .fakes import PARCEL_GEOMETRY
 

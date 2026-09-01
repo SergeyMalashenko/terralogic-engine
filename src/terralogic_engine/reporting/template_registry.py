@@ -6,7 +6,7 @@ import re
 from hashlib import sha256
 from importlib.resources import files
 
-from terralogic_acquisition.reporting.models import (
+from terralogic_engine.reporting.models import (
     ReportSectionTemplate,
     ReportTemplate,
 )
@@ -174,7 +174,7 @@ class ReportTemplateRegistry:
 
 
 def create_default_template_registry() -> ReportTemplateRegistry:
-    resource = files("terralogic_acquisition.reporting.templates").joinpath(
+    resource = files("terralogic_engine.reporting.templates").joinpath(
         "full_land_report_v1.md"
     )
     skeleton = resource.read_text(encoding="utf-8")

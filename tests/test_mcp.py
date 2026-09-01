@@ -6,13 +6,13 @@ from typing import Any
 import httpx
 import pytest
 
-from terralogic_acquisition.acquisition.pipeline import AcquisitionPipeline
-from terralogic_acquisition.mcp import (
+from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
+from terralogic_engine.mcp import (
     _build_parser,
     create_mcp_server,
 )
-from terralogic_acquisition.reporting.service import ReportingService
-from terralogic_acquisition.store.local import LocalCaseStore
+from terralogic_engine.reporting.service import ReportingService
+from terralogic_engine.store.local import LocalCaseStore
 
 from .fakes import FakeDgisClient, FakeNspdClient, FakeOsmClient
 
@@ -58,7 +58,7 @@ def test_mcp_registers_four_report_tools(
     tmp_path,
 ) -> None:
     monkeypatch.setattr(
-        "terralogic_acquisition.mcp._load_mcp_server_class",
+        "terralogic_engine.mcp._load_mcp_server_class",
         lambda: FakeFastMCP,
     )
 
@@ -129,7 +129,7 @@ async def test_mcp_supports_complete_hermes_report_workflow(
     tmp_path,
 ) -> None:
     monkeypatch.setattr(
-        "terralogic_acquisition.mcp._load_mcp_server_class",
+        "terralogic_engine.mcp._load_mcp_server_class",
         lambda: FakeFastMCP,
     )
     service = _service(tmp_path)
@@ -172,7 +172,7 @@ async def test_mcp_returns_structured_error_for_unknown_case(
     tmp_path,
 ) -> None:
     monkeypatch.setattr(
-        "terralogic_acquisition.mcp._load_mcp_server_class",
+        "terralogic_engine.mcp._load_mcp_server_class",
         lambda: FakeFastMCP,
     )
     server = create_mcp_server(_service(tmp_path))

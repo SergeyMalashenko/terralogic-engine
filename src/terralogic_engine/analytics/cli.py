@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import argparse
 
-from terralogic_acquisition.analytics.pipeline import (
+from terralogic_engine.analytics.pipeline import (
     AnalysisInputError,
     AnalysisPipeline,
 )
-from terralogic_acquisition.store.local import LocalCaseStore
+from terralogic_engine.store.local import LocalCaseStore
 
 
 def build_parser() -> argparse.ArgumentParser:

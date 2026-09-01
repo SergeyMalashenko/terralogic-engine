@@ -1,4 +1,4 @@
-"""TerraLogic Acquisition and local case-storage package."""
+"""TerraLogic Engine land-parcel processing package."""
 
 from .acquisition.pipeline import AcquisitionPipeline
 from .analytics.models import AnalysisResult

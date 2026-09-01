@@ -14,19 +14,19 @@ from shapely.geometry import GeometryCollection, MultiPolygon, Polygon, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform, unary_union
 
-from terralogic_acquisition.analytics.models import (
+from terralogic_engine.analytics.models import (
     AnalysisResult,
     IntersectionItem,
     IntersectionSummary,
     NearestObject,
     SpatialRelation,
 )
-from terralogic_acquisition.domain.models import (
+from terralogic_engine.domain.models import (
     CollectionReceipt,
     GeoFeature,
     utc_now,
 )
-from terralogic_acquisition.store.base import CaseStore
+from terralogic_engine.store.base import CaseStore
 
 ANALYTICS_VERSION = "1.0.0"
 

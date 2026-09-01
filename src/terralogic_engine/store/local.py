@@ -18,8 +18,8 @@ from uuid import uuid4
 from shapely.geometry import mapping, shape
 from shapely.wkb import loads as load_wkb
 
-from terralogic_acquisition.analytics.models import AnalysisResult
-from terralogic_acquisition.domain.models import (
+from terralogic_engine.analytics.models import AnalysisResult
+from terralogic_engine.domain.models import (
     AreaOfInterest,
     CaseInfo,
     CollectionReceipt,
@@ -29,7 +29,7 @@ from terralogic_acquisition.domain.models import (
     SourceSnapshot,
     utc_now,
 )
-from terralogic_acquisition.reporting.models import GeneratedReport
+from terralogic_engine.reporting.models import GeneratedReport
 
 
 def _json_dumps(value: Any) -> str:
@@ -149,7 +149,7 @@ class LocalCaseStore:
 
     @staticmethod
     def _migration_sql() -> str:
-        resource = files("terralogic_acquisition.store.migrations").joinpath(
+        resource = files("terralogic_engine.store.migrations").joinpath(
             "001_initial.sql"
         )
         return resource.read_text(encoding="utf-8")

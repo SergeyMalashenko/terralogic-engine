@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import hashlib
 
-from terralogic_acquisition.acquisition.pipeline import AcquisitionPipeline
-from terralogic_acquisition.analytics.pipeline import AnalysisPipeline
-from terralogic_acquisition.domain.models import CollectionRequest
-from terralogic_acquisition.reporting.context import build_report_context
-from terralogic_acquisition.reporting.service import ReportingService
-from terralogic_acquisition.reporting.template_registry import (
+from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
+from terralogic_engine.analytics.pipeline import AnalysisPipeline
+from terralogic_engine.domain.models import CollectionRequest
+from terralogic_engine.reporting.context import build_report_context
+from terralogic_engine.reporting.service import ReportingService
+from terralogic_engine.reporting.template_registry import (
     ReportStructureError,
 )
-from terralogic_acquisition.store.local import LocalCaseStore
+from terralogic_engine.store.local import LocalCaseStore
 
 from .fakes import FakeDgisClient, FakeNspdClient, FakeOsmClient
 

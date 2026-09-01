@@ -7,12 +7,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from terralogic_acquisition.analytics.models import (
+from terralogic_engine.analytics.models import (
     IntersectionSummary,
     NearestObject,
     SpatialRelation,
 )
-from terralogic_acquisition.domain.models import ReceiptStatus, SourceName
+from terralogic_engine.domain.models import ReceiptStatus, SourceName
 
 
 class ParcelReportContext(BaseModel):

@@ -4,15 +4,15 @@ from typing import Any
 
 from shapely.geometry import mapping, shape
 
-from terralogic_acquisition.analytics.models import (
+from terralogic_engine.analytics.models import (
     AnalysisResult,
     IntersectionItem,
     IntersectionSummary,
     NearestObject,
 )
-from terralogic_acquisition.domain.models import GeoFeature, SourceName, utc_now
-from terralogic_acquisition.viewer.cli import build_parser
-from terralogic_acquisition.viewer.data import (
+from terralogic_engine.domain.models import GeoFeature, SourceName, utc_now
+from terralogic_engine.viewer.cli import build_parser
+from terralogic_engine.viewer.data import (
     build_feature_collection,
     dgis_map_label,
     feature_label,

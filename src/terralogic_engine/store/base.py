@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-from terralogic_acquisition.analytics.models import AnalysisResult
-from terralogic_acquisition.domain.models import (
+from terralogic_engine.analytics.models import AnalysisResult
+from terralogic_engine.domain.models import (
     AreaOfInterest,
     CaseInfo,
     CollectionReceipt,
@@ -15,7 +15,7 @@ from terralogic_acquisition.domain.models import (
     SourceName,
     SourceSnapshot,
 )
-from terralogic_acquisition.reporting.models import GeneratedReport
+from terralogic_engine.reporting.models import GeneratedReport
 
 
 class CaseStore(Protocol):

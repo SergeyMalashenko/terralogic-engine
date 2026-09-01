@@ -1,7 +1,9 @@
-# TerraLogic Acquisition
+# TerraLogic Engine
 
-TerraLogic Acquisition coordinates deterministic collection and storage of land-parcel
-data. It keeps the source adapters independent:
+TerraLogic Engine is the central land-parcel processing service. It coordinates
+source acquisition, immutable case storage, deterministic spatial analytics,
+versioned report generation, and read-only visualization while keeping the
+source adapters independent:
 
 ```text
 cadastral number -> mcp-pynspd -> parcel contour -> minimum enclosing circle
@@ -28,7 +30,7 @@ The current iteration provides:
   factual report context, and persists the generated Markdown report;
 - a read-only map viewer for every normalized feature and raw snapshot.
 
-The source repositories remain independent. `terralogic_acquisition` imports neither
+The source repositories remain independent. `terralogic_engine` imports neither
 `pynspd`, `pyosm-agents`, nor the `py2gis-agents` repository (whose Python
 module is named `py2gis_agents`); it relies only on their MCP contracts.
 
@@ -37,8 +39,20 @@ module is named `py2gis_agents`); it relies only on their MCP contracts.
 For local development:
 
 ```bash
-python -m pip install -e '.[mcp]'
+python -m pip install -e '.[mcp,viewer]'
 ```
+
+When upgrading an environment that previously contained the distribution under
+its old name, remove its stale package metadata once before reinstalling:
+
+```bash
+python -m pip uninstall terralogic-acquisition
+python -m pip install -e '.[mcp,viewer]'
+```
+
+The public CLI commands remain `terralogic-collect`, `terralogic-analyze`,
+`terralogic-mcp`, and `terralogic-view`. Python imports now use the
+`terralogic_engine` namespace.
 
 ## Collection
 

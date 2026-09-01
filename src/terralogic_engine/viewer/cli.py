@@ -29,7 +29,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     except ImportError as exc:
         raise SystemExit(
             "Viewer dependencies are not installed. Install them with: "
-            "pip install 'terralogic-acquisition[viewer]'"
+            "pip install 'terralogic-engine[viewer]'"
         ) from exc
 
     application = Path(__file__).with_name("app.py")

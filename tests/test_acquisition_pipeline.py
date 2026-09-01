@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import math
 
-from terralogic_acquisition.acquisition.pipeline import AcquisitionPipeline
-from terralogic_acquisition.domain.models import CollectionRequest
-from terralogic_acquisition.store.local import LocalCaseStore
+from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
+from terralogic_engine.domain.models import CollectionRequest
+from terralogic_engine.store.local import LocalCaseStore
 
 from .fakes import FakeDgisClient, FakeNspdClient, FakeOsmClient
 

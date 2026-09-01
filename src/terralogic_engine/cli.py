@@ -5,15 +5,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from terralogic_acquisition.acquisition.clients import (
+from terralogic_engine.acquisition.clients import (
     McpDgisClient,
     McpNspdClient,
     McpOsmClient,
     StreamableHttpMcpTransport,
 )
-from terralogic_acquisition.acquisition.pipeline import AcquisitionPipeline
-from terralogic_acquisition.domain.models import CollectionRequest
-from terralogic_acquisition.store.local import LocalCaseStore
+from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
+from terralogic_engine.domain.models import CollectionRequest
+from terralogic_engine.store.local import LocalCaseStore
 
 
 def _parser() -> argparse.ArgumentParser:

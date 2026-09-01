@@ -23,7 +23,7 @@ from shapely.geometry import (
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform, unary_union
 
-from terralogic_acquisition.domain.models import AreaOfInterest
+from terralogic_engine.domain.models import AreaOfInterest
 
 
 class ParcelGeometryError(ValueError):

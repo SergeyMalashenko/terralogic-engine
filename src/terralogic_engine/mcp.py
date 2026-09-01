@@ -10,29 +10,29 @@ from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field
 
-from terralogic_acquisition.acquisition.clients import (
+from terralogic_engine.acquisition.clients import (
     McpDgisClient,
     McpNspdClient,
     McpOsmClient,
     StreamableHttpMcpTransport,
 )
-from terralogic_acquisition.acquisition.pipeline import AcquisitionPipeline
-from terralogic_acquisition.reporting.context import ReportContextError
-from terralogic_acquisition.reporting.models import (
+from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
+from terralogic_engine.reporting.context import ReportContextError
+from terralogic_engine.reporting.models import (
     PrepareCaseResult,
     ReportContext,
     ReportTemplate,
     SavedReportResult,
 )
-from terralogic_acquisition.reporting.service import (
+from terralogic_engine.reporting.service import (
     CasePreparationError,
     ReportingService,
 )
-from terralogic_acquisition.reporting.template_registry import (
+from terralogic_engine.reporting.template_registry import (
     DEFAULT_TEMPLATE_ID,
     DEFAULT_TEMPLATE_VERSION,
 )
-from terralogic_acquisition.store.local import LocalCaseStore
+from terralogic_engine.store.local import LocalCaseStore
 
 DEFAULT_INSTRUCTIONS = (
     "Use terralogic_prepare_case first when the user provides a cadastral number. "
@@ -88,7 +88,7 @@ def _load_mcp_server_class() -> type[Any]:
     except ImportError as exc:
         raise MCPDependencyError(
             "MCP support is not installed. Install it with "
-            "`pip install 'terralogic-acquisition[mcp]'`."
+            "`pip install 'terralogic-engine[mcp]'`."
         ) from exc
     return FastMCP
 
@@ -352,7 +352,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     except (ImportError, MCPDependencyError) as exc:
         raise SystemExit(
             "MCP support is not installed. Install it with "
-            "`pip install 'terralogic-acquisition[mcp]'`."
+            "`pip install 'terralogic-engine[mcp]'`."
         ) from exc
     anyio.run(_run_server, server, args.transport)
 

@@ -30,9 +30,10 @@ references to both the analysis and exact template version.
 Update and install the package in the Python environment used by the service:
 
 ```bash
-cd ~/TerraLogicX/terralogic-acquisition
+cd ~/TerraLogicX/terralogic-engine
 git switch main
 git pull --ff-only
+python -m pip uninstall terralogic-acquisition  # once, when migrating
 python -m pip install -e '.[mcp,viewer]'
 ```
 

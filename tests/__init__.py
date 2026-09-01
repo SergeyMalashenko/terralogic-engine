@@ -1,1 +1,1 @@
-"""TerraLogic Acquisition test suite."""
+"""TerraLogic Engine test suite."""

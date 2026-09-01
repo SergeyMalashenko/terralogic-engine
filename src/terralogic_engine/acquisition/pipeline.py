@@ -12,34 +12,34 @@ from uuid import uuid4
 
 from shapely.geometry import mapping
 
-from terralogic_acquisition.acquisition.clients.base import (
+from terralogic_engine.acquisition.clients.base import (
     DgisSourceClient,
     NspdSourceClient,
     OsmSourceClient,
 )
-from terralogic_acquisition.acquisition.geometry import (
+from terralogic_engine.acquisition.geometry import (
     build_area_of_interest,
     prepare_parcel_geometry,
 )
-from terralogic_acquisition.acquisition.normalize import (
+from terralogic_engine.acquisition.normalize import (
     count_features,
     dgis_features,
     nspd_layer_features,
     osm_features,
     parcel_feature,
 )
-from terralogic_acquisition.acquisition.profiles import (
+from terralogic_engine.acquisition.profiles import (
     CollectionProfile,
     get_collection_profile,
 )
-from terralogic_acquisition.domain.models import (
+from terralogic_engine.domain.models import (
     CollectionReceipt,
     CollectionRequest,
     GeoFeature,
     ReceiptStatus,
     utc_now,
 )
-from terralogic_acquisition.store.base import CaseStore
+from terralogic_engine.store.base import CaseStore
 
 
 def _json_bytes(value: Any) -> bytes:
