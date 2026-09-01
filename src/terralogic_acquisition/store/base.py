@@ -15,6 +15,7 @@ from terralogic_acquisition.domain.models import (
     SourceName,
     SourceSnapshot,
 )
+from terralogic_acquisition.reporting.models import GeneratedReport
 
 
 class CaseStore(Protocol):
@@ -91,3 +92,30 @@ class CaseStore(Protocol):
     ) -> AnalysisResult | None: ...
 
     def list_analysis_results(self, case_id: str) -> list[AnalysisResult]: ...
+
+    def save_generated_report(
+        self,
+        *,
+        case_id: str,
+        collection_run_id: str,
+        analysis_id: str,
+        title: str,
+        template_id: str,
+        template_version: str,
+        template_sha256: str,
+        markdown: str,
+        model_name: str | None = None,
+    ) -> GeneratedReport: ...
+
+    def get_latest_generated_report(
+        self,
+        case_id: str,
+        collection_run_id: str,
+    ) -> GeneratedReport | None: ...
+
+    def list_generated_reports(
+        self,
+        case_id: str,
+        *,
+        collection_run_id: str | None = None,
+    ) -> list[GeneratedReport]: ...

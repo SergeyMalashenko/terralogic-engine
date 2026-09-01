@@ -27,12 +27,13 @@ The main area contains:
 
 1. a summary by source and canonical feature class;
 2. four analytics tables tied to the selected collection run;
-3. an interactive map with the parcel, shared analysis circle, NSPD
+3. the newest Hermes-generated Markdown report with a download button;
+4. an interactive map with the parcel, shared analysis circle, NSPD
    restrictions, OSM contours/lines, and 2GIS infrastructure points;
-4. a filtered feature table with distance, relation, category, and an attribute
+5. a filtered feature table with distance, relation, category, and an attribute
    panel for the selected object;
-5. snapshot provenance, adapter versions, warnings, errors, and feature counts;
-6. a run timeline showing `complete`, `partial`, and `failed` collections.
+6. snapshot provenance, adapter versions, warnings, errors, and feature counts;
+7. a run timeline showing `complete`, `partial`, and `failed` collections.
 
 The analytics tab is read-only and displays a result previously created with:
 

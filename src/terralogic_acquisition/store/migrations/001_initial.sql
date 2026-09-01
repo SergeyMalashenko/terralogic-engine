@@ -169,10 +169,17 @@ CREATE TABLE IF NOT EXISTS report_sections (
 CREATE TABLE IF NOT EXISTS artifacts (
     id TEXT PRIMARY KEY,
     case_id TEXT NOT NULL,
+    collection_run_id TEXT,
     artifact_type TEXT NOT NULL,
     relative_path TEXT NOT NULL,
+    created_at TEXT,
+    content_sha256 TEXT,
     metadata_json TEXT NOT NULL,
-    FOREIGN KEY (case_id) REFERENCES case_info(case_id)
+    FOREIGN KEY (case_id) REFERENCES case_info(case_id),
+    FOREIGN KEY (collection_run_id) REFERENCES runs(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_case_run
+    ON artifacts(case_id, collection_run_id, artifact_type, created_at DESC);
 
 PRAGMA user_version = 1;

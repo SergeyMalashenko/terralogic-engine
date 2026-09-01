@@ -29,6 +29,7 @@ from terralogic_acquisition.domain.models import (
     SourceSnapshot,
     utc_now,
 )
+from terralogic_acquisition.reporting.models import GeneratedReport
 
 
 def _json_dumps(value: Any) -> str:
@@ -110,6 +111,30 @@ class LocalCaseStore:
                 """
             )
             changed = True
+        if "artifacts" in tables:
+            artifact_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(artifacts)")
+            }
+            for column, definition in (
+                ("collection_run_id", "TEXT"),
+                ("created_at", "TEXT"),
+                ("content_sha256", "TEXT"),
+            ):
+                if column not in artifact_columns:
+                    connection.execute(
+                        f"ALTER TABLE artifacts ADD COLUMN {column} {definition}"
+                    )
+                    changed = True
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_artifacts_case_run
+                    ON artifacts(
+                        case_id, collection_run_id, artifact_type,
+                        created_at DESC
+                    )
+                """
+            )
         if changed:
             connection.commit()
 
@@ -649,3 +674,138 @@ class LocalCaseStore:
             AnalysisResult.model_validate_json(row["result_json"])
             for row in rows
         ]
+
+    def save_generated_report(
+        self,
+        *,
+        case_id: str,
+        collection_run_id: str,
+        analysis_id: str,
+        title: str,
+        template_id: str,
+        template_version: str,
+        template_sha256: str,
+        markdown: str,
+        model_name: str | None = None,
+    ) -> GeneratedReport:
+        """Atomically save Markdown and register it as a CaseStore artifact."""
+
+        generated_at = utc_now()
+        report_id = f"report-{uuid4().hex}"
+        payload = markdown.encode("utf-8")
+        digest = hashlib.sha256(payload).hexdigest()
+        relative_path = Path("reports") / f"{report_id}.md"
+        target = self._case_dir(case_id) / relative_path
+        self._atomic_write(target, payload)
+        metadata = {
+            "analysis_id": analysis_id,
+            "title": title,
+            "template_id": template_id,
+            "template_version": template_version,
+            "template_sha256": template_sha256,
+            "model_name": model_name,
+        }
+        try:
+            with self._connection(case_id) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO artifacts(
+                        id, case_id, collection_run_id, artifact_type,
+                        relative_path, created_at, content_sha256,
+                        metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        report_id,
+                        case_id,
+                        collection_run_id,
+                        "land_report_markdown",
+                        relative_path.as_posix(),
+                        generated_at.isoformat(),
+                        digest,
+                        _json_dumps(metadata),
+                    ),
+                )
+        except BaseException:
+            target.unlink(missing_ok=True)
+            raise
+        return GeneratedReport(
+            id=report_id,
+            case_id=case_id,
+            collection_run_id=collection_run_id,
+            analysis_id=analysis_id,
+            title=title,
+            template_id=template_id,
+            template_version=template_version,
+            template_sha256=template_sha256,
+            generated_at=generated_at,
+            model_name=model_name,
+            relative_path=relative_path.as_posix(),
+            content_sha256=digest,
+            markdown=markdown,
+        )
+
+    def get_latest_generated_report(
+        self,
+        case_id: str,
+        collection_run_id: str,
+    ) -> GeneratedReport | None:
+        """Load the newest Markdown report associated with one source run."""
+
+        reports = self.list_generated_reports(
+            case_id,
+            collection_run_id=collection_run_id,
+        )
+        return reports[0] if reports else None
+
+    def list_generated_reports(
+        self,
+        case_id: str,
+        *,
+        collection_run_id: str | None = None,
+    ) -> list[GeneratedReport]:
+        """Return persisted Markdown artifacts, newest first."""
+
+        sql = (
+            "SELECT * FROM artifacts WHERE case_id = ? "
+            "AND artifact_type = 'land_report_markdown'"
+        )
+        parameters: list[object] = [case_id]
+        if collection_run_id is not None:
+            sql += " AND collection_run_id = ?"
+            parameters.append(collection_run_id)
+        sql += " ORDER BY created_at DESC, id DESC"
+        with self._connection(case_id) as connection:
+            rows = connection.execute(sql, parameters).fetchall()
+
+        result: list[GeneratedReport] = []
+        for row in rows:
+            metadata = json.loads(row["metadata_json"])
+            relative_path = str(row["relative_path"])
+            stored = self._case_dir(case_id) / relative_path
+            try:
+                markdown = stored.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                continue
+            result.append(
+                GeneratedReport(
+                    id=row["id"],
+                    case_id=row["case_id"],
+                    collection_run_id=row["collection_run_id"],
+                    analysis_id=str(metadata["analysis_id"]),
+                    title=str(metadata["title"]),
+                    template_id=str(
+                        metadata.get("template_id", "full_land_report")
+                    ),
+                    template_version=str(metadata["template_version"]),
+                    template_sha256=str(
+                        metadata.get("template_sha256", "unknown")
+                    ),
+                    generated_at=row["created_at"],
+                    model_name=metadata.get("model_name"),
+                    relative_path=relative_path,
+                    content_sha256=row["content_sha256"],
+                    markdown=markdown,
+                )
+            )
+        return result

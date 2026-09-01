@@ -4,6 +4,8 @@ from .acquisition.pipeline import AcquisitionPipeline
 from .analytics.models import AnalysisResult
 from .analytics.pipeline import AnalysisPipeline
 from .domain.models import CollectionReceipt, CollectionRequest
+from .reporting.models import ReportContext, ReportTemplate
+from .reporting.service import ReportingService
 from .store.local import LocalCaseStore
 
 __all__ = [
@@ -13,6 +15,9 @@ __all__ = [
     "CollectionReceipt",
     "CollectionRequest",
     "LocalCaseStore",
+    "ReportContext",
+    "ReportTemplate",
+    "ReportingService",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

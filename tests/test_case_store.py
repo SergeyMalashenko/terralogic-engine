@@ -84,6 +84,9 @@ def test_local_case_store_survives_reopen_and_preserves_raw_snapshot(tmp_path) -
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
+        artifact_columns = {
+            row[1] for row in database.execute("PRAGMA table_info(artifacts)")
+        }
     assert {
         "case_info",
         "runs",
@@ -98,6 +101,11 @@ def test_local_case_store_survives_reopen_and_preserves_raw_snapshot(tmp_path) -
         "report_sections",
         "artifacts",
     } <= tables
+    assert {
+        "collection_run_id",
+        "created_at",
+        "content_sha256",
+    } <= artifact_columns
 
 
 def test_create_case_is_idempotent_but_rejects_other_parcel(tmp_path) -> None:

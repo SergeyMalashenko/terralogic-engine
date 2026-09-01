@@ -640,6 +640,40 @@ def _render_analytics(
     )
 
 
+def _render_report(
+    store: LocalCaseStore,
+    receipt: CollectionReceipt,
+) -> None:
+    report = store.get_latest_generated_report(
+        receipt.case_id,
+        receipt.run_id,
+    )
+    if report is None:
+        st.info(
+            "Для выбранного запуска сохранённый отчёт отсутствует. "
+            "Попросите Hermes получить `terralogic_get_report_context`, "
+            "сформировать Markdown и вызвать `terralogic_save_report`."
+        )
+        return
+
+    st.subheader(report.title)
+    st.caption(
+        f"Отчёт: {report.id} · анализ: {report.analysis_id} · "
+        f"шаблон: {report.template_id}@{report.template_version} · "
+        f"модель: {report.model_name or 'не указана'} · "
+        f"создан: {report.generated_at.astimezone():%Y-%m-%d %H:%M:%S}"
+    )
+    st.caption(f"SHA-256 шаблона: {report.template_sha256}")
+    st.download_button(
+        "Скачать Markdown",
+        data=report.markdown.encode("utf-8"),
+        file_name=f"{receipt.case_id}-{receipt.run_id}-report.md",
+        mime="text/markdown",
+    )
+    st.divider()
+    st.markdown(report.markdown)
+
+
 def run() -> None:
     st.set_page_config(
         page_title="TerraLogic Case Explorer",
@@ -730,6 +764,7 @@ def run() -> None:
     (
         summary_tab,
         analytics_tab,
+        report_tab,
         map_tab,
         objects_tab,
         provenance_tab,
@@ -738,6 +773,7 @@ def run() -> None:
         [
             "Сводка",
             "Аналитика",
+            "Отчёт",
             "Карта",
             "Объекты",
             "Источники",
@@ -759,6 +795,9 @@ def run() -> None:
 
     with analytics_tab:
         _render_analytics(store, receipt)
+
+    with report_tab:
+        _render_report(store, receipt)
 
     with map_tab:
         _render_map(

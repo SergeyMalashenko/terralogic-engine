@@ -24,6 +24,8 @@ The current iteration provides:
 - `AnalysisPipeline`, which calculates reproducible intersections and shortest
   distances for one immutable collection run and stores the result in CaseStore;
 - HTTP MCP clients for all three source services;
+- a high-level MCP server for Hermes that prepares a case, returns a bounded
+  factual report context, and persists the generated Markdown report;
 - a read-only map viewer for every normalized feature and raw snapshot.
 
 The source repositories remain independent. `terralogic_acquisition` imports neither
@@ -102,6 +104,51 @@ Distances are measured from the parcel geometry, not from the search-circle
 centre. A missing nearest object means only that no candidate was collected
 inside the configured search circle.
 
+## Hermes report workflow
+
+Keep the three source MCP services running on ports 8001-8003, then start the
+high-level TerraLogic server:
+
+```bash
+terralogic-mcp \
+  --transport streamable-http \
+  --host 127.0.0.1 \
+  --port 8004 \
+  --store ~/TerraLogicX/case-store \
+  --nspd-url http://127.0.0.1:8001/mcp \
+  --osm-url http://127.0.0.1:8002/mcp \
+  --dgis-url http://127.0.0.1:8003/mcp
+```
+
+It exposes exactly four high-level tools:
+
+- `terralogic_prepare_case` collects source data and runs analytics;
+- `terralogic_get_report_context` returns compact facts without GeoJSON;
+- `terralogic_get_report_template` returns an independent, immutable report
+  structure identified by `template_id`, version, and SHA-256;
+- `terralogic_save_report` persists the complete model-generated Markdown.
+
+Configure Hermes to use `http://127.0.0.1:8004/mcp`. For this workflow, expose
+only the TerraLogic server to the model; the NSPD, OSM, and 2GIS servers remain
+running as internal dependencies but can be disabled in the Hermes MCP list.
+This prevents the model from bypassing CaseStore and the deterministic
+analytics stage.
+
+Suggested Hermes request:
+
+```text
+Подготовь полный отчёт по земельному участку 52:24:0000000:2216.
+Сначала вызови terralogic_prepare_case, затем получи report context и
+шаблон full_land_report версии 1.0.
+Используй только факты и числа из контекста, не выполняй вычисления сам.
+Заполни шаблон, не меняя обязательные заголовки, и сохрани его через
+terralogic_save_report с теми же template_id и template_version.
+Верни краткое резюме и идентификатор отчёта.
+```
+
+The exact report contract, Hermes configuration, and troubleshooting commands
+are documented in [`docs/hermes-reporting.md`](docs/hermes-reporting.md).
+
 ## Stored case
 
 ```text
@@ -144,6 +191,8 @@ It provides:
   feature attributes, collection warnings, and run history;
 - a dedicated analytics tab with tables for ZOUIT coverage, natural-resource
   intersections, nearest social infrastructure, and nearest natural objects;
+- a report tab that renders and downloads the newest Markdown artifact for the
+  selected collection run;
 - dedicated forest, waterbody, and river contour styles with polygon-hole rendering,
   a map legend, natural-contour counters, and full-screen map mode;
 - separate road layers and colors for every collected OSM `highway` class,
