@@ -165,3 +165,64 @@ class McpDgisClient:
                 "limit_per_category": limit_per_category,
             },
         )
+
+
+RGIS_ADAPTER_VERSION = "pyrgis-agents/0.3"
+RGIS_SOURCES = ["RGIS MO (Геопортал Подмосковья)"]
+
+
+class McpRgisClient:
+    """Map the pyrgis parcel_full tool to the acquisition boundary.
+
+    The pyrgis MCP server returns bare JSON payloads (no ok/data envelope),
+    so the envelope contract is built here. Objects outside Moscow Oblast
+    coverage degrade to ``data.applicable = False`` instead of an error.
+    """
+
+    def __init__(self, transport: StreamableHttpMcpTransport) -> None:
+        self.transport = transport
+
+    async def get_parcel_full(
+        self, cadastral_number: str, *, include_geometry: bool
+    ) -> dict[str, Any]:
+        metadata = {
+            "adapter_version": RGIS_ADAPTER_VERSION,
+            "sources": RGIS_SOURCES,
+        }
+        try:
+            payload = await self.transport.call_tool(
+                "parcel_full",
+                {
+                    "cadnum": cadastral_number,
+                    "include_geometry": include_geometry,
+                },
+            )
+        except McpResponseError as exc:
+            return {
+                "ok": True,
+                "data": {"applicable": False, "reason": str(exc)},
+                "metadata": metadata,
+            }
+        # pyrgis tools return a JSON string; the SDK then wraps it as
+        # structuredContent {"result": "<json>"} — unwrap to the data object
+        if (
+            isinstance(payload, dict)
+            and set(payload) == {"result"}
+            and isinstance(payload["result"], str)
+        ):
+            try:
+                payload = json.loads(payload["result"])
+            except json.JSONDecodeError:
+                payload = {}
+        info = payload.get("info") if isinstance(payload, dict) else None
+        if not isinstance(info, dict) or not info.get("cadnum"):
+            return {
+                "ok": True,
+                "data": {"applicable": False, "reason": "parcel not found"},
+                "metadata": metadata,
+            }
+        return {
+            "ok": True,
+            "data": {"applicable": True, "parcel_full": payload},
+            "metadata": metadata,
+        }

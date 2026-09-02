@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 CollectionStatus = Literal["running", "complete", "partial", "failed"]
 ReceiptStatus = Literal["complete", "partial", "failed"]
 RefreshPolicy = Literal["never", "if_stale", "always"]
-SourceName = Literal["nspd", "osm", "dgis"]
+SourceName = Literal["nspd", "osm", "dgis", "rgis"]
 
 CADASTRAL_NUMBER_PATTERN = re.compile(r"^\d+:\d+:\d+:\d+$")
 CASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -130,6 +130,7 @@ class CollectionReceipt(BaseModel):
     nspd_snapshot_id: str | None = None
     osm_snapshot_id: str | None = None
     dgis_snapshot_id: str | None = None
+    rgis_snapshot_id: str | None = None
     aoi_id: str | None = None
     feature_counts: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)

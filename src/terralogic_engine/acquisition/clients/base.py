@@ -55,3 +55,15 @@ class DgisSourceClient(Protocol):
         mode: str,
         limit_per_category: int,
     ) -> Mapping[str, Any]: ...
+
+
+class RgisSourceClient(Protocol):
+    """RGIS MO (Геопортал Подмосковья): агрегированные сведения об участке.
+
+    Источник покрывает только Московскую область; для объектов вне покрытия
+    клиент обязан вернуть конверт с ``data.applicable = False``, а не ошибку.
+    """
+
+    async def get_parcel_full(
+        self, cadastral_number: str, *, include_geometry: bool
+    ) -> Mapping[str, Any]: ...

@@ -9,6 +9,7 @@ from terralogic_engine.acquisition.clients import (
     McpDgisClient,
     McpNspdClient,
     McpOsmClient,
+    McpRgisClient,
     StreamableHttpMcpTransport,
 )
 from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
@@ -27,6 +28,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--nspd-url", default="http://127.0.0.1:8001/mcp")
     parser.add_argument("--osm-url", default="http://127.0.0.1:8002/mcp")
     parser.add_argument("--dgis-url", default="http://127.0.0.1:8003/mcp")
+    parser.add_argument("--rgis-url", default="http://127.0.0.1:8005/mcp")
     parser.add_argument(
         "--margin-m",
         type=int,
@@ -52,6 +54,7 @@ async def _run(args: argparse.Namespace) -> int:
         nspd=McpNspdClient(StreamableHttpMcpTransport(args.nspd_url)),
         osm=McpOsmClient(StreamableHttpMcpTransport(args.osm_url)),
         dgis=McpDgisClient(StreamableHttpMcpTransport(args.dgis_url)),
+        rgis=McpRgisClient(StreamableHttpMcpTransport(args.rgis_url)),
     )
     receipt = await pipeline.collect(
         CollectionRequest(

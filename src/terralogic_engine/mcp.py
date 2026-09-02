@@ -14,6 +14,7 @@ from terralogic_engine.acquisition.clients import (
     McpDgisClient,
     McpNspdClient,
     McpOsmClient,
+    McpRgisClient,
     StreamableHttpMcpTransport,
 )
 from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
@@ -36,7 +37,7 @@ from terralogic_engine.store.local import LocalCaseStore
 
 DEFAULT_INSTRUCTIONS = (
     "Use terralogic_prepare_case first when the user provides a cadastral number. "
-    "It collects NSPD, OSM, and 2GIS data, performs deterministic spatial "
+    "It collects NSPD, OSM, 2GIS, and RGIS MO data, performs deterministic spatial "
     "analytics, and returns case_id plus collection_run_id. Then call "
     "terralogic_get_report_context for facts and terralogic_get_report_template "
     "for the independent report structure. Write a Russian Markdown report "
@@ -65,7 +66,12 @@ class ToolMetadata(BaseModel):
 
     provider: str = "TerraLogicX"
     sources: list[str] = Field(
-        default_factory=lambda: ["NSPD", "OpenStreetMap", "2GIS"]
+        default_factory=lambda: [
+            "NSPD",
+            "OpenStreetMap",
+            "2GIS",
+            "RGIS MO (Геопортал Подмосковья)",
+        ]
     )
 
 
@@ -99,8 +105,9 @@ def create_reporting_service(
     nspd_url: str = "http://127.0.0.1:8001/mcp",
     osm_url: str = "http://127.0.0.1:8002/mcp",
     dgis_url: str = "http://127.0.0.1:8003/mcp",
+    rgis_url: str = "http://127.0.0.1:8005/mcp",
 ) -> ReportingService:
-    """Create the production service using the three upstream MCP servers."""
+    """Create the production service using the four upstream MCP servers."""
 
     store = LocalCaseStore(store_path)
     acquisition = AcquisitionPipeline(
@@ -108,6 +115,7 @@ def create_reporting_service(
         nspd=McpNspdClient(StreamableHttpMcpTransport(nspd_url)),
         osm=McpOsmClient(StreamableHttpMcpTransport(osm_url)),
         dgis=McpDgisClient(StreamableHttpMcpTransport(dgis_url)),
+        rgis=McpRgisClient(StreamableHttpMcpTransport(rgis_url)),
     )
     return ReportingService(store=store, acquisition=acquisition)
 
@@ -325,6 +333,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nspd-url", default="http://127.0.0.1:8001/mcp")
     parser.add_argument("--osm-url", default="http://127.0.0.1:8002/mcp")
     parser.add_argument("--dgis-url", default="http://127.0.0.1:8003/mcp")
+    parser.add_argument("--rgis-url", default="http://127.0.0.1:8005/mcp")
     parser.add_argument("--stateful-http", action="store_true")
     parser.add_argument("--sse-response", action="store_true")
     return parser
@@ -340,6 +349,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             nspd_url=args.nspd_url,
             osm_url=args.osm_url,
             dgis_url=args.dgis_url,
+            rgis_url=args.rgis_url,
         )
         server = create_mcp_server(
             service,

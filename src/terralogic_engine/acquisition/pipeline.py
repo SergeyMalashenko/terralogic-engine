@@ -16,6 +16,7 @@ from terralogic_engine.acquisition.clients.base import (
     DgisSourceClient,
     NspdSourceClient,
     OsmSourceClient,
+    RgisSourceClient,
 )
 from terralogic_engine.acquisition.geometry import (
     build_area_of_interest,
@@ -27,6 +28,7 @@ from terralogic_engine.acquisition.normalize import (
     nspd_layer_features,
     osm_features,
     parcel_feature,
+    rgis_features,
 )
 from terralogic_engine.acquisition.profiles import (
     CollectionProfile,
@@ -103,6 +105,7 @@ class AcquisitionPipeline:
         nspd: NspdSourceClient,
         osm: OsmSourceClient,
         dgis: DgisSourceClient,
+        rgis: RgisSourceClient | None = None,
         profile_resolver: Callable[[str, str], CollectionProfile] = (
             get_collection_profile
         ),
@@ -112,6 +115,7 @@ class AcquisitionPipeline:
         self.nspd = nspd
         self.osm = osm
         self.dgis = dgis
+        self.rgis = rgis
         self.profile_resolver = profile_resolver
         self.clock = clock
 
@@ -134,6 +138,7 @@ class AcquisitionPipeline:
         nspd_snapshot_id: str | None = None
         osm_snapshot_id: str | None = None
         dgis_snapshot_id: str | None = None
+        rgis_snapshot_id: str | None = None
         aoi_id: str | None = None
         all_features: list[GeoFeature] = []
         warnings: list[str] = []
@@ -199,11 +204,19 @@ class AcquisitionPipeline:
             longitude, latitude = provisional_aoi.representative_point
             radius_m = math.ceil(provisional_aoi.search_radius_m)
 
+            async def _collect_rgis() -> Any:
+                if self.rgis is None:
+                    return None
+                return await self.rgis.get_parcel_full(
+                    request.cadastral_number, include_geometry=True
+                )
+
             (
                 layer_result,
                 osm_result,
                 social_result,
                 transport_result,
+                rgis_result,
             ) = await asyncio.gather(
                 self.nspd.analyze_land_parcel_layers(
                     request.cadastral_number,
@@ -234,6 +247,7 @@ class AcquisitionPipeline:
                     mode=profile.dgis_mode,
                     limit_per_category=profile.dgis_limit_per_category,
                 ),
+                _collect_rgis(),
                 return_exceptions=True,
             )
 
@@ -367,6 +381,35 @@ class AcquisitionPipeline:
                 )
             )
 
+            if rgis_result is not None:
+                rgis_envelope, stored_rgis_result = self._source_result(
+                    rgis_result,
+                    tool="rgis_parcel_full",
+                    partial_warning="RGIS collection is partial",
+                    warnings=warnings,
+                    errors=errors,
+                )
+                rgis_snapshot = self.store.save_snapshot(
+                    case_id=request.case_id,
+                    run_id=run_id,
+                    source="rgis",
+                    payload=_json_bytes({"parcel_full": stored_rgis_result}),
+                    adapter_version=_adapter_version(rgis_envelope or {}),
+                    metadata={
+                        "tools": ["parcel_full"],
+                        "profile": profile.name,
+                        "profile_version": profile.version,
+                    },
+                )
+                rgis_snapshot_id = rgis_snapshot.id
+                all_features.extend(
+                    rgis_features(
+                        case_id=request.case_id,
+                        snapshot_id=rgis_snapshot.id,
+                        envelope=rgis_envelope,
+                    )
+                )
+
             self.store.save_features(request.case_id, all_features)
             status = self._result_status(
                 errors=errors,
@@ -381,6 +424,7 @@ class AcquisitionPipeline:
                 nspd_snapshot_id=nspd_snapshot_id,
                 osm_snapshot_id=osm_snapshot_id,
                 dgis_snapshot_id=dgis_snapshot_id,
+                rgis_snapshot_id=rgis_snapshot_id,
                 aoi_id=aoi_id,
                 features=all_features,
                 warnings=warnings,
@@ -396,6 +440,7 @@ class AcquisitionPipeline:
                 nspd_snapshot_id=nspd_snapshot_id,
                 osm_snapshot_id=osm_snapshot_id,
                 dgis_snapshot_id=dgis_snapshot_id,
+                rgis_snapshot_id=rgis_snapshot_id,
                 aoi_id=aoi_id,
                 features=all_features,
                 warnings=warnings,
@@ -468,6 +513,7 @@ class AcquisitionPipeline:
         nspd_snapshot_id: str | None = None,
         osm_snapshot_id: str | None = None,
         dgis_snapshot_id: str | None = None,
+        rgis_snapshot_id: str | None = None,
         aoi_id: str | None = None,
         features: list[GeoFeature] | None = None,
         warnings: list[str] | None = None,
@@ -489,6 +535,7 @@ class AcquisitionPipeline:
             nspd_snapshot_id=nspd_snapshot_id,
             osm_snapshot_id=osm_snapshot_id,
             dgis_snapshot_id=dgis_snapshot_id,
+            rgis_snapshot_id=rgis_snapshot_id,
             aoi_id=aoi_id,
             feature_counts=count_features(features or []),
             warnings=warnings or [],

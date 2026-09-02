@@ -218,6 +218,60 @@ def osm_result() -> dict[str, Any]:
     }
 
 
+def rgis_parcel_full_result() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "data": {
+            "applicable": True,
+            "parcel_full": {
+                "cadnum": "52:26:0040002:3823",
+                "info": {"cadnum": "52:26:0040002:3823"},
+                "zouit": {
+                    "rosreestr": [
+                        {
+                            "name": "Тестовая охранная зона",
+                            "code": "ТЗ-1",
+                            "area": 100.0,
+                            "percent": 0.02,
+                            "zone_code": 218020020006,
+                            "geometry": deepcopy(ZONE_GEOMETRY),
+                        }
+                    ]
+                },
+                "usage": [
+                    {
+                        "zone": "СХ-3",
+                        "name": "Зона сельскохозяйственного производства",
+                        "area": 650000.0,
+                        "percent": 100,
+                        "geometry": deepcopy(PARCEL_GEOMETRY),
+                    }
+                ],
+                "cadastral_value": {"value": 92.95, "is_valuable": "да"},
+            },
+        },
+        "error": None,
+        "metadata": {"adapter_version": "pyrgis-agents-test"},
+    }
+
+
+class FakeRgisClient:
+    def __init__(self, *, result: dict[str, Any] | None = None) -> None:
+        self.result = result or rgis_parcel_full_result()
+        self.calls = 0
+        self.arguments: dict[str, Any] = {}
+
+    async def get_parcel_full(
+        self, cadastral_number: str, *, include_geometry: bool
+    ) -> Mapping[str, Any]:
+        self.calls += 1
+        self.arguments = {
+            "cadastral_number": cadastral_number,
+            "include_geometry": include_geometry,
+        }
+        return deepcopy(self.result)
+
+
 class FakeNspdClient:
     def __init__(self, *, info: dict[str, Any] | None = None) -> None:
         self.info = info or parcel_info_result()

@@ -7,7 +7,7 @@ from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
 from terralogic_engine.domain.models import CollectionRequest
 from terralogic_engine.store.local import LocalCaseStore
 
-from .fakes import FakeDgisClient, FakeNspdClient, FakeOsmClient
+from .fakes import FakeDgisClient, FakeNspdClient, FakeOsmClient, FakeRgisClient
 
 
 async def test_pipeline_collects_sources_and_passes_exact_contour_to_osm(
@@ -214,3 +214,90 @@ async def test_if_stale_does_not_reuse_a_different_margin(tmp_path) -> None:
     assert nspd.info_calls == 2
     assert osm.calls == 2
     assert dgis.social_calls == 2
+
+
+async def test_pipeline_collects_rgis_source(tmp_path) -> None:
+    store = LocalCaseStore(tmp_path / "store")
+    rgis = FakeRgisClient()
+    pipeline = AcquisitionPipeline(
+        store=store,
+        nspd=FakeNspdClient(),
+        osm=FakeOsmClient(),
+        dgis=FakeDgisClient(),
+        rgis=rgis,
+    )
+    request = CollectionRequest(
+        case_id="case-rgis",
+        cadastral_number="52:26:0040002:3823",
+        refresh_policy="always",
+    )
+
+    receipt = await pipeline.collect(request)
+
+    assert receipt.status == "complete"
+    assert receipt.rgis_snapshot_id is not None
+    assert receipt.feature_counts["rgis.restriction_zone"] == 1
+    assert receipt.feature_counts["rgis.territorial_zone"] == 1
+    assert rgis.calls == 1
+    assert rgis.arguments["include_geometry"] is True
+
+    receipt2 = await pipeline.collect(
+        CollectionRequest(
+            case_id="case-rgis",
+            cadastral_number="52:26:0040002:3823",
+            refresh_policy="never",
+        )
+    )
+    assert receipt2.reused is True
+    assert receipt2.rgis_snapshot_id == receipt.rgis_snapshot_id
+
+
+async def test_pipeline_rgis_not_applicable_is_not_an_error(tmp_path) -> None:
+    store = LocalCaseStore(tmp_path / "store")
+    rgis = FakeRgisClient(
+        result={
+            "ok": True,
+            "data": {"applicable": False, "reason": "parcel not found"},
+            "error": None,
+            "metadata": {"adapter_version": "pyrgis-agents-test"},
+        }
+    )
+    pipeline = AcquisitionPipeline(
+        store=store,
+        nspd=FakeNspdClient(),
+        osm=FakeOsmClient(),
+        dgis=FakeDgisClient(),
+        rgis=rgis,
+    )
+    receipt = await pipeline.collect(
+        CollectionRequest(
+            case_id="case-rgis-na",
+            cadastral_number="52:26:0040002:3823",
+            refresh_policy="always",
+        )
+    )
+
+    assert receipt.status == "complete"
+    assert receipt.rgis_snapshot_id is not None
+    assert "rgis.restriction_zone" not in receipt.feature_counts
+
+
+async def test_pipeline_without_rgis_keeps_old_behaviour(tmp_path) -> None:
+    store = LocalCaseStore(tmp_path / "store")
+    pipeline = AcquisitionPipeline(
+        store=store,
+        nspd=FakeNspdClient(),
+        osm=FakeOsmClient(),
+        dgis=FakeDgisClient(),
+    )
+    receipt = await pipeline.collect(
+        CollectionRequest(
+            case_id="case-no-rgis",
+            cadastral_number="52:26:0040002:3823",
+            refresh_policy="always",
+        )
+    )
+
+    assert receipt.status == "complete"
+    assert receipt.rgis_snapshot_id is None
+    assert not any(k.startswith("rgis.") for k in receipt.feature_counts)

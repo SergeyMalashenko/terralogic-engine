@@ -276,6 +276,77 @@ def dgis_features(
     return result
 
 
+def rgis_features(
+    *,
+    case_id: str,
+    snapshot_id: str,
+    envelope: dict[str, Any] | None,
+) -> list[GeoFeature]:
+    """Normalize the RGIS parcel_full payload into zone GeoFeatures."""
+    if not envelope or envelope.get("ok") is not True:
+        return []
+    data = envelope.get("data")
+    if not isinstance(data, dict) or data.get("applicable") is not True:
+        return []
+    parcel = data.get("parcel_full")
+    if not isinstance(parcel, dict):
+        return []
+
+    result: list[GeoFeature] = []
+
+    zouit = parcel.get("zouit")
+    if isinstance(zouit, dict):
+        for group, items in zouit.items():
+            if not isinstance(items, list):
+                continue
+            for index, value in enumerate(items):
+                if not isinstance(value, dict):
+                    continue
+                source_id = str(
+                    value.get("zone_code") or value.get("code") or f"{group}:{index}"
+                )
+                properties = dict(value)
+                properties["group"] = str(group)
+                geometry = _geometry_from_geojson(properties.pop("geometry", None))
+                result.append(
+                    GeoFeature(
+                        id=_feature_id(snapshot_id, f"rgis:zouit:{source_id}:{index}"),
+                        case_id=case_id,
+                        snapshot_id=snapshot_id,
+                        source="rgis",
+                        source_type="zouit",
+                        source_id=source_id,
+                        feature_class="restriction_zone",
+                        geometry=geometry,
+                        properties=properties,
+                    )
+                )
+
+    usage = parcel.get("usage")
+    if isinstance(usage, list):
+        for index, value in enumerate(usage):
+            if not isinstance(value, dict):
+                continue
+            source_id = str(value.get("zone") or f"usage:{index}")
+            properties = dict(value)
+            properties.pop("usages", None)
+            geometry = _geometry_from_geojson(properties.pop("geometry", None))
+            result.append(
+                GeoFeature(
+                    id=_feature_id(snapshot_id, f"rgis:usage:{source_id}"),
+                    case_id=case_id,
+                    snapshot_id=snapshot_id,
+                    source="rgis",
+                    source_type="territorial_zone",
+                    source_id=source_id,
+                    feature_class="territorial_zone",
+                    geometry=geometry,
+                    properties=properties,
+                )
+            )
+    return result
+
+
 def count_features(features: list[GeoFeature]) -> dict[str, int]:
     result: dict[str, int] = {}
     for feature in features:
