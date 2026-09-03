@@ -11,7 +11,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --all-extras --group test --group lint
+        with:
+          python-version: "3.11"
+      # Keep optional runtime integrations out of static analysis. In
+      # particular, Streamlit pulls in NumPy stubs that use Python 3.12-only
+      # type-statement syntax while this project intentionally targets 3.11.
+      - run: uv sync --group lint
       - run: uv run ruff check src tests
       - run: uv run mypy src
 
