@@ -18,7 +18,7 @@ The sidebar selects:
 
 - case;
 - collection run;
-- source (`nspd`, `osm`, or `dgis`);
+- source (`nspd`, `osm`, `dgis`, or `rgis` when collected);
 - functional block or canonical feature class;
 - visible map layers. The source snapshots belonging to the run are shown in
   the provenance tab.
@@ -28,8 +28,8 @@ The main area contains:
 1. a summary by source and canonical feature class;
 2. four analytics tables tied to the selected collection run;
 3. the newest Hermes-generated Markdown report with a download button;
-4. an interactive map with the parcel, shared analysis circle, NSPD
-   restrictions, OSM contours/lines, and 2GIS infrastructure points;
+4. an interactive map with the parcel, shared analysis circle, NSPD and RGIS
+   restrictions/zones, OSM contours/lines, and 2GIS infrastructure points;
 5. a filtered feature table with distance, relation, category, and an attribute
    panel for the selected object;
 6. snapshot provenance, adapter versions, warnings, errors, and feature counts;

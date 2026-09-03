@@ -28,9 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     try:
-        result = AnalysisPipeline(
-            store=LocalCaseStore(args.store)
-        ).analyze(args.case_id, run_id=args.run_id)
+        result = AnalysisPipeline(store=LocalCaseStore(args.store)).analyze(
+            args.case_id, run_id=args.run_id
+        )
     except (AnalysisInputError, KeyError, ValueError) as exc:
         raise SystemExit(f"Analysis failed: {exc}") from exc
     print(result.model_dump_json(indent=2))

@@ -16,7 +16,7 @@ from terralogic_engine.domain.models import ReceiptStatus, SourceName
 
 
 class ParcelReportContext(BaseModel):
-    """Compact NSPD parcel passport without its heavy GeoJSON contour."""
+    """Compact federal parcel passport without its heavy GeoJSON contour."""
 
     cadastral_number: str
     address: str | None = None
@@ -50,6 +50,7 @@ class ZouitReportContext(BaseModel):
     """One ZOUIT with source attributes and deterministic intersection metrics."""
 
     feature_id: str
+    source: SourceName
     name: str
     registry_number: str | None = None
     zone_type: str | None = None
@@ -148,9 +149,7 @@ class ReportContext(BaseModel):
     natural_intersections: list[IntersectionSummary] = Field(default_factory=list)
     natural_nearest: list[NearestObject] = Field(default_factory=list)
     social_nearest: list[NearestObject] = Field(default_factory=list)
-    transport_inventory: list[TransportCategoryContext] = Field(
-        default_factory=list
-    )
+    transport_inventory: list[TransportCategoryContext] = Field(default_factory=list)
     road_inventory: list[RoadClassContext] = Field(default_factory=list)
     sources: list[SourceEvidenceContext] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

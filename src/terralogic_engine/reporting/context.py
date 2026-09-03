@@ -69,6 +69,8 @@ ROAD_CLASS_LABELS = {
     "track": "Грунтовая или лесная дорога",
     "unknown": "Неизвестный класс",
 }
+
+
 class ReportContextError(ValueError):
     """Raised when a selected run has no data required for a report."""
 
@@ -102,6 +104,7 @@ def _features_for_receipt(
         receipt.nspd_snapshot_id,
         receipt.osm_snapshot_id,
         receipt.dgis_snapshot_id,
+        receipt.rgis_snapshot_id,
     ):
         if snapshot_id is not None:
             result.extend(
@@ -151,7 +154,7 @@ def _parcel_context(
         raise ReportContextError("The selected run has no NSPD parcel feature")
     parcel = parcels[0]
     properties = parcel.properties
-    geometry_type = str(parcel.geometry.get("type", "unknown"))
+    geometry_type = str((parcel.geometry or {}).get("type", "unknown"))
     return ParcelReportContext(
         cadastral_number=str(properties.get("cadastral_number") or ""),
         address=(
@@ -176,9 +179,7 @@ def _parcel_context(
             if properties.get("permitted_use") not in (None, "")
             else None
         ),
-        cadastral_value_rub=_optional_float(
-            properties.get("cadastral_value_rub")
-        ),
+        cadastral_value_rub=_optional_float(properties.get("cadastral_value_rub")),
         geometry_type=geometry_type,
     )
 
@@ -199,6 +200,7 @@ def _zouit_context(
         result.append(
             ZouitReportContext(
                 feature_id=item.feature_id,
+                source=item.source,
                 name=item.name,
                 registry_number=(
                     str(properties["registry_number"])
@@ -248,13 +250,9 @@ def _transport_context(
         ordered = sorted(
             values,
             key=lambda feature: (
-                _optional_float(
-                    feature.properties.get("distance_to_search_point_m")
-                )
+                _optional_float(feature.properties.get("distance_to_search_point_m"))
                 is None,
-                _optional_float(
-                    feature.properties.get("distance_to_search_point_m")
-                )
+                _optional_float(feature.properties.get("distance_to_search_point_m"))
                 or 0.0,
                 feature.id,
             ),
@@ -271,9 +269,7 @@ def _transport_context(
                         feature_id=feature.id,
                         name=_feature_name(feature),
                         distance_to_search_point_m=_optional_float(
-                            feature.properties.get(
-                                "distance_to_search_point_m"
-                            )
+                            feature.properties.get("distance_to_search_point_m")
                         ),
                     )
                     for feature in ordered[:3]
@@ -334,6 +330,7 @@ def build_report_context(
             receipt.nspd_snapshot_id,
             receipt.osm_snapshot_id,
             receipt.dgis_snapshot_id,
+            receipt.rgis_snapshot_id,
         )
         if value is not None
     }

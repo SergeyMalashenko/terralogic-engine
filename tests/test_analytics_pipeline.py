@@ -52,9 +52,7 @@ async def test_analytics_calculates_and_persists_spatial_metrics(tmp_path) -> No
     assert natural["stream"].distance_m == 0
     assert natural["water_resources"].distance_m == 0
 
-    assert store.get_analysis_result(
-        "case-analytics", receipt.run_id
-    ) == result
+    assert store.get_analysis_result("case-analytics", receipt.run_id) == result
     rerun = AnalysisPipeline(store=store).analyze(
         "case-analytics", run_id=receipt.run_id
     )

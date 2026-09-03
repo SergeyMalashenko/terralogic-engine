@@ -23,6 +23,7 @@ def _heading_position(markdown: str, heading: str) -> int | None:
     )
     return match.start() if match is not None else None
 
+
 _FULL_LAND_REPORT_SECTIONS = (
     ReportSectionTemplate(
         key="executive_summary",
@@ -99,8 +100,7 @@ class ReportTemplateRegistry:
 
     def __init__(self, templates: tuple[ReportTemplate, ...]) -> None:
         self._templates = {
-            (template.template_id, template.version): template
-            for template in templates
+            (template.template_id, template.version): template for template in templates
         }
         if len(self._templates) != len(templates):
             raise ValueError("Report template identities must be unique")
@@ -118,9 +118,7 @@ class ReportTemplateRegistry:
                     raise ValueError(
                         f"Template skeleton is missing heading {section.heading!r}"
                     )
-            digest = sha256(
-                template.markdown_skeleton.encode("utf-8")
-            ).hexdigest()
+            digest = sha256(template.markdown_skeleton.encode("utf-8")).hexdigest()
             if digest != template.content_sha256:
                 raise ValueError(
                     f"Template {template.template_id!r} has an invalid SHA-256"
@@ -148,9 +146,7 @@ class ReportTemplateRegistry:
             if section.required
         ]
         missing = [
-            heading
-            for heading, position in required_positions
-            if position is None
+            heading for heading, position in required_positions if position is None
         ]
         if missing:
             raise ReportStructureError(

@@ -20,7 +20,7 @@ from terralogic_engine.store.local import LocalCaseStore
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="terralogic-collect",
-        description="Collect NSPD, OSM, and 2GIS data into a TerraLogic case",
+        description="Collect NSPD, OSM, 2GIS, and optional RGIS data",
     )
     parser.add_argument("cadastral_number")
     parser.add_argument("--case-id")
@@ -28,7 +28,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--nspd-url", default="http://127.0.0.1:8001/mcp")
     parser.add_argument("--osm-url", default="http://127.0.0.1:8002/mcp")
     parser.add_argument("--dgis-url", default="http://127.0.0.1:8003/mcp")
-    parser.add_argument("--rgis-url", default="http://127.0.0.1:8005/mcp")
+    parser.add_argument(
+        "--rgis-url",
+        help="Optional RGIS MO MCP URL; used only for cadastral region 50",
+    )
     parser.add_argument(
         "--margin-m",
         type=int,
@@ -54,7 +57,11 @@ async def _run(args: argparse.Namespace) -> int:
         nspd=McpNspdClient(StreamableHttpMcpTransport(args.nspd_url)),
         osm=McpOsmClient(StreamableHttpMcpTransport(args.osm_url)),
         dgis=McpDgisClient(StreamableHttpMcpTransport(args.dgis_url)),
-        rgis=McpRgisClient(StreamableHttpMcpTransport(args.rgis_url)),
+        rgis=(
+            McpRgisClient(StreamableHttpMcpTransport(args.rgis_url))
+            if args.rgis_url
+            else None
+        ),
     )
     receipt = await pipeline.collect(
         CollectionRequest(

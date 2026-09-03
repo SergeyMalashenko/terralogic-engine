@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "terralogic-engine"
-version = "0.7.0"
+version = "0.8.0"
 description = "Land-parcel acquisition, spatial analytics, reporting, and case visualization"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -57,3 +57,4 @@ line-length = 88
 [tool.mypy]
 python_version = "3.11"
 plugins = ["pydantic.mypy"]
+ignore_missing_imports = true

@@ -45,9 +45,7 @@ def parcel_feature(
     parcel: dict[str, Any],
     geometry: dict[str, Any],
 ) -> GeoFeature:
-    source_id = str(
-        parcel.get("nspd_id") or parcel.get("cadastral_number") or "parcel"
-    )
+    source_id = str(parcel.get("nspd_id") or parcel.get("cadastral_number") or "parcel")
     properties = dict(parcel)
     properties.pop("geojson", None)
     return GeoFeature(
@@ -105,9 +103,7 @@ def nspd_layer_features(
                 geometry = _geometry_from_geojson(properties.pop("geojson", None))
                 result.append(
                     GeoFeature(
-                        id=_feature_id(
-                            snapshot_id, f"nspd:{layer_name}:{source_id}"
-                        ),
+                        id=_feature_id(snapshot_id, f"nspd:{layer_name}:{source_id}"),
                         case_id=case_id,
                         snapshot_id=snapshot_id,
                         source="nspd",
@@ -176,7 +172,8 @@ def osm_features(
                 dict.fromkeys([*properties.get("blocks", []), block])
             )
             geometry = _geometry_from_geojson(properties.pop("geojson", None))
-            tags = value.get("tags") if isinstance(value.get("tags"), dict) else {}
+            raw_tags = value.get("tags")
+            tags: dict[str, Any] = raw_tags if isinstance(raw_tags, dict) else {}
             by_identity[identity] = GeoFeature(
                 id=_feature_id(snapshot_id, f"osm:{element_type}:{osm_id}"),
                 case_id=case_id,
@@ -236,6 +233,10 @@ def dgis_features(
                     longitude = value.get("longitude")
                     geometry = None
                     try:
+                        if not isinstance(latitude, (str, int, float)) or not isinstance(
+                            longitude, (str, int, float)
+                        ):
+                            raise TypeError("coordinates must be numeric")
                         latitude_value = float(latitude)
                         longitude_value = float(longitude)
                         if (
@@ -282,68 +283,84 @@ def rgis_features(
     snapshot_id: str,
     envelope: dict[str, Any] | None,
 ) -> list[GeoFeature]:
-    """Normalize the RGIS parcel_full payload into zone GeoFeatures."""
+    """Normalize the focused RGIS layer-analysis envelope."""
     if not envelope or envelope.get("ok") is not True:
         return []
     data = envelope.get("data")
     if not isinstance(data, dict) or data.get("applicable") is not True:
         return []
-    parcel = data.get("parcel_full")
-    if not isinstance(parcel, dict):
+    blocks = data.get("blocks")
+    if not isinstance(blocks, dict):
         return []
 
     result: list[GeoFeature] = []
-
-    zouit = parcel.get("zouit")
-    if isinstance(zouit, dict):
-        for group, items in zouit.items():
-            if not isinstance(items, list):
+    class_by_layer = {
+        "parcel_zouit": "restriction_zone",
+        "parcel_usage": "territorial_zone",
+        "territorial_zones": "territorial_zone",
+        "state_forest": "forest",
+        "forest_quarters": "forest_quarter",
+    }
+    for block_name, block in blocks.items():
+        if not isinstance(block, dict):
+            continue
+        layers = block.get("layers")
+        if not isinstance(layers, dict):
+            continue
+        for layer_name, layer in layers.items():
+            if not isinstance(layer, dict):
                 continue
-            for index, value in enumerate(items):
+            values = layer.get("zones", layer.get("objects", []))
+            if not isinstance(values, list):
+                continue
+            for index, value in enumerate(values):
                 if not isinstance(value, dict):
                     continue
-                source_id = str(
-                    value.get("zone_code") or value.get("code") or f"{group}:{index}"
+                nested_properties = value.get("properties")
+                properties = (
+                    dict(nested_properties)
+                    if isinstance(nested_properties, dict)
+                    else dict(value)
                 )
-                properties = dict(value)
-                properties["group"] = str(group)
-                geometry = _geometry_from_geojson(properties.pop("geometry", None))
+                properties.pop("properties", None)
+                properties.pop("geometry", None)
+                properties["block"] = str(block_name)
+                properties["layer"] = str(layer_name)
+                properties["layer_title"] = layer.get("title")
+                if value.get("relation") is not None:
+                    properties["source_relation"] = value["relation"]
+                geometry = _geometry_from_geojson(value.get("geometry"))
+                source_id_value = (
+                    value.get("id")
+                    or properties.get("zone_code")
+                    or properties.get("code")
+                    or properties.get("feature_id")
+                    or f"{layer_name}:{index}"
+                )
+                source_id = str(source_id_value)
+                feature_class = class_by_layer.get(str(layer_name))
+                if feature_class is None:
+                    feature_class = (
+                        "restriction_zone"
+                        if block_name == "restrictions_and_special"
+                        else str(layer_name)
+                    )
                 result.append(
                     GeoFeature(
-                        id=_feature_id(snapshot_id, f"rgis:zouit:{source_id}:{index}"),
+                        id=_feature_id(
+                            snapshot_id,
+                            f"rgis:{block_name}:{layer_name}:{source_id}:{index}",
+                        ),
                         case_id=case_id,
                         snapshot_id=snapshot_id,
                         source="rgis",
-                        source_type="zouit",
+                        source_type=str(layer_name),
                         source_id=source_id,
-                        feature_class="restriction_zone",
+                        feature_class=feature_class,
                         geometry=geometry,
                         properties=properties,
                     )
                 )
-
-    usage = parcel.get("usage")
-    if isinstance(usage, list):
-        for index, value in enumerate(usage):
-            if not isinstance(value, dict):
-                continue
-            source_id = str(value.get("zone") or f"usage:{index}")
-            properties = dict(value)
-            properties.pop("usages", None)
-            geometry = _geometry_from_geojson(properties.pop("geometry", None))
-            result.append(
-                GeoFeature(
-                    id=_feature_id(snapshot_id, f"rgis:usage:{source_id}"),
-                    case_id=case_id,
-                    snapshot_id=snapshot_id,
-                    source="rgis",
-                    source_type="territorial_zone",
-                    source_id=source_id,
-                    feature_class="territorial_zone",
-                    geometry=geometry,
-                    properties=properties,
-                )
-            )
     return result
 
 

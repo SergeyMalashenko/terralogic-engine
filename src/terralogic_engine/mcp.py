@@ -37,7 +37,8 @@ from terralogic_engine.store.local import LocalCaseStore
 
 DEFAULT_INSTRUCTIONS = (
     "Use terralogic_prepare_case first when the user provides a cadastral number. "
-    "It collects NSPD, OSM, 2GIS, and RGIS MO data, performs deterministic spatial "
+    "It collects NSPD, OSM, and 2GIS data plus RGIS MO when configured and "
+    "applicable, performs deterministic spatial "
     "analytics, and returns case_id plus collection_run_id. Then call "
     "terralogic_get_report_context for facts and terralogic_get_report_template "
     "for the independent report structure. Write a Russian Markdown report "
@@ -105,7 +106,7 @@ def create_reporting_service(
     nspd_url: str = "http://127.0.0.1:8001/mcp",
     osm_url: str = "http://127.0.0.1:8002/mcp",
     dgis_url: str = "http://127.0.0.1:8003/mcp",
-    rgis_url: str = "http://127.0.0.1:8005/mcp",
+    rgis_url: str | None = None,
 ) -> ReportingService:
     """Create the production service using the four upstream MCP servers."""
 
@@ -115,7 +116,9 @@ def create_reporting_service(
         nspd=McpNspdClient(StreamableHttpMcpTransport(nspd_url)),
         osm=McpOsmClient(StreamableHttpMcpTransport(osm_url)),
         dgis=McpDgisClient(StreamableHttpMcpTransport(dgis_url)),
-        rgis=McpRgisClient(StreamableHttpMcpTransport(rgis_url)),
+        rgis=(
+            McpRgisClient(StreamableHttpMcpTransport(rgis_url)) if rgis_url else None
+        ),
     )
     return ReportingService(store=store, acquisition=acquisition)
 
@@ -333,7 +336,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nspd-url", default="http://127.0.0.1:8001/mcp")
     parser.add_argument("--osm-url", default="http://127.0.0.1:8002/mcp")
     parser.add_argument("--dgis-url", default="http://127.0.0.1:8003/mcp")
-    parser.add_argument("--rgis-url", default="http://127.0.0.1:8005/mcp")
+    parser.add_argument(
+        "--rgis-url",
+        help="Optional RGIS MO MCP URL; used only for cadastral region 50",
+    )
     parser.add_argument("--stateful-http", action="store_true")
     parser.add_argument("--sse-response", action="store_true")
     return parser

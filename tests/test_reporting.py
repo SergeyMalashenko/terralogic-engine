@@ -59,9 +59,7 @@ async def test_report_context_is_bounded_and_keeps_provenance(tmp_path) -> None:
     assert context.zouit[0].registry_number == "52:26-6.1"
     assert context.zouit[0].intersection_area_m2 > 0
     assert context.social_nearest[0].category == "education"
-    assert context.transport_inventory[0].category == (
-        "public_transport_stops"
-    )
+    assert context.transport_inventory[0].category == ("public_transport_stops")
     assert context.transport_inventory[0].distance_basis == "search_point"
     assert context.road_inventory[0].road_class == "service"
     assert {source.source for source in context.sources} == {
@@ -94,9 +92,10 @@ async def test_reporting_service_persists_and_reopens_markdown(tmp_path) -> None
     assert report.template_id == "full_land_report"
     assert len(report.template_sha256) == 64
     assert report.markdown.endswith("\n")
-    assert report.content_sha256 == hashlib.sha256(
-        report.markdown.encode("utf-8")
-    ).hexdigest()
+    assert (
+        report.content_sha256
+        == hashlib.sha256(report.markdown.encode("utf-8")).hexdigest()
+    )
     reopened = LocalCaseStore(tmp_path / "store")
     loaded = reopened.get_latest_generated_report(
         "case-report",
@@ -133,8 +132,7 @@ async def test_reporting_service_rejects_reordered_template_sections(
     service = ReportingService(store=store, acquisition=acquisition)
     template = service.get_report_template()
     reversed_sections = "\n\n".join(
-        f"{section.heading}\n\nСодержимое."
-        for section in reversed(template.sections)
+        f"{section.heading}\n\nСодержимое." for section in reversed(template.sections)
     )
 
     try:

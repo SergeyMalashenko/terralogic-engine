@@ -10,7 +10,8 @@ Hermes
 terralogic-mcp
   |-- pynspd-mcp  http://127.0.0.1:8001/mcp
   |-- pyosm-mcp   http://127.0.0.1:8002/mcp
-  `-- py2gis-mcp  http://127.0.0.1:8003/mcp
+  |-- py2gis-mcp  http://127.0.0.1:8003/mcp
+  `-- pyrgis-mcp  http://127.0.0.1:8005/mcp (optional, cadastral region 50)
         |
         v
   Local CaseStore
@@ -37,8 +38,8 @@ python -m pip uninstall terralogic-acquisition  # once, when migrating
 python -m pip install -e '.[mcp,viewer]'
 ```
 
-Make sure `pynspd-mcp`, `pyosm-mcp`, and `py2gis-mcp` are already running,
-then start the aggregate server:
+Make sure `pynspd-mcp`, `pyosm-mcp`, and `py2gis-mcp` are already running.
+For Moscow Oblast cases, start `pyrgis-mcp` as well and pass its optional URL:
 
 ```bash
 terralogic-mcp \
@@ -48,7 +49,8 @@ terralogic-mcp \
   --store ~/TerraLogicX/case-store \
   --nspd-url http://127.0.0.1:8001/mcp \
   --osm-url http://127.0.0.1:8002/mcp \
-  --dgis-url http://127.0.0.1:8003/mcp
+  --dgis-url http://127.0.0.1:8003/mcp \
+  --rgis-url http://127.0.0.1:8005/mcp
 ```
 
 The server uses stateless Streamable HTTP by default. Its source services must
@@ -130,6 +132,9 @@ pyosm-http:
   enabled: false
 
 py2gis-http:
+  enabled: false
+
+pyrgis-http:
   enabled: false
 ```
 

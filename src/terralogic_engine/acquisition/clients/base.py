@@ -58,12 +58,18 @@ class DgisSourceClient(Protocol):
 
 
 class RgisSourceClient(Protocol):
-    """RGIS MO (Геопортал Подмосковья): агрегированные сведения об участке.
+    """Focused two-tool RGIS MO contract for cadastral region 50."""
 
-    Источник покрывает только Московскую область; для объектов вне покрытия
-    клиент обязан вернуть конверт с ``data.applicable = False``, а не ошибку.
-    """
+    async def get_land_parcel_info(
+        self, cadastral_number: str, *, detail: str
+    ) -> Mapping[str, Any]: ...
 
-    async def get_parcel_full(
-        self, cadastral_number: str, *, include_geometry: bool
+    async def analyze_land_parcel_layers(
+        self,
+        cadastral_number: str,
+        *,
+        blocks: Sequence[str],
+        include_geometry: bool,
+        limit_per_layer: int,
+        zoom: int,
     ) -> Mapping[str, Any]: ...

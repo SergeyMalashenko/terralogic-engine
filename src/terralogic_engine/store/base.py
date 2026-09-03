@@ -41,9 +41,7 @@ class CaseStore(Protocol):
         self, case_id: str
     ) -> CollectionReceipt | None: ...
 
-    def list_collection_receipts(
-        self, case_id: str
-    ) -> list[CollectionReceipt]: ...
+    def list_collection_receipts(self, case_id: str) -> list[CollectionReceipt]: ...
 
     def save_snapshot(
         self,
@@ -64,13 +62,9 @@ class CaseStore(Protocol):
 
     def save_area_of_interest(self, aoi: AreaOfInterest) -> None: ...
 
-    def get_area_of_interest(
-        self, case_id: str, aoi_id: str
-    ) -> AreaOfInterest: ...
+    def get_area_of_interest(self, case_id: str, aoi_id: str) -> AreaOfInterest: ...
 
-    def save_features(
-        self, case_id: str, features: Sequence[GeoFeature]
-    ) -> None: ...
+    def save_features(self, case_id: str, features: Sequence[GeoFeature]) -> None: ...
 
     def load_features(
         self,

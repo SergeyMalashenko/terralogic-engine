@@ -1,4 +1,4 @@
-"""Deterministic orchestration of NSPD, OSM, and 2GIS collection."""
+"""Deterministic orchestration of NSPD, OSM, 2GIS, and optional RGIS."""
 
 from __future__ import annotations
 
@@ -173,14 +173,12 @@ class AcquisitionPipeline:
 
             parcel_data = parcel_info.get("data")
             parcel = (
-                parcel_data.get("parcel")
-                if isinstance(parcel_data, Mapping)
-                else None
+                parcel_data.get("parcel") if isinstance(parcel_data, Mapping) else None
             )
             if not isinstance(parcel, Mapping) or not isinstance(
                 parcel.get("geojson"), dict
             ):
-                raise ValueError(
+                raise TypeError(
                     "nspd_get_land_parcel_info(detail='full') returned no parcel "
                     "GeoJSON"
                 )
@@ -191,9 +189,7 @@ class AcquisitionPipeline:
             normalized_geometry = dict(mapping(parcel_geometry))
             warnings.extend(geometry_warnings)
             margin_m = (
-                request.margin_m
-                if request.margin_m is not None
-                else profile.margin_m
+                request.margin_m if request.margin_m is not None else profile.margin_m
             )
             provisional_aoi = build_area_of_interest(
                 case_id=request.case_id,
@@ -205,10 +201,21 @@ class AcquisitionPipeline:
             radius_m = math.ceil(provisional_aoi.search_radius_m)
 
             async def _collect_rgis() -> Any:
-                if self.rgis is None:
+                if self.rgis is None or not request.cadastral_number.startswith("50:"):
                     return None
-                return await self.rgis.get_parcel_full(
-                    request.cadastral_number, include_geometry=True
+                return await asyncio.gather(
+                    self.rgis.get_land_parcel_info(
+                        request.cadastral_number,
+                        detail="full",
+                    ),
+                    self.rgis.analyze_land_parcel_layers(
+                        request.cadastral_number,
+                        blocks=profile.rgis_blocks,
+                        include_geometry=True,
+                        limit_per_layer=profile.rgis_limit_per_layer,
+                        zoom=profile.rgis_zoom,
+                    ),
+                    return_exceptions=True,
                 )
 
             (
@@ -382,10 +389,18 @@ class AcquisitionPipeline:
             )
 
             if rgis_result is not None:
-                rgis_envelope, stored_rgis_result = self._source_result(
-                    rgis_result,
-                    tool="rgis_parcel_full",
-                    partial_warning="RGIS collection is partial",
+                rgis_info_result, rgis_layer_result = rgis_result
+                rgis_info_envelope, stored_rgis_info = self._source_result(
+                    rgis_info_result,
+                    tool="rgis_get_land_parcel_info",
+                    partial_warning="RGIS parcel information is partial",
+                    warnings=warnings,
+                    errors=errors,
+                )
+                rgis_layer_envelope, stored_rgis_layers = self._source_result(
+                    rgis_layer_result,
+                    tool="rgis_analyze_land_parcel_layers",
+                    partial_warning="RGIS layer coverage is partial",
                     warnings=warnings,
                     errors=errors,
                 )
@@ -393,10 +408,21 @@ class AcquisitionPipeline:
                     case_id=request.case_id,
                     run_id=run_id,
                     source="rgis",
-                    payload=_json_bytes({"parcel_full": stored_rgis_result}),
-                    adapter_version=_adapter_version(rgis_envelope or {}),
+                    payload=_json_bytes(
+                        {
+                            "parcel_info": stored_rgis_info,
+                            "layer_analysis": stored_rgis_layers,
+                        }
+                    ),
+                    adapter_version=_adapter_version(
+                        rgis_info_envelope or rgis_layer_envelope or {}
+                    ),
                     metadata={
-                        "tools": ["parcel_full"],
+                        "tools": [
+                            "rgis_get_land_parcel_info",
+                            "rgis_analyze_land_parcel_layers",
+                        ],
+                        "blocks": list(profile.rgis_blocks),
                         "profile": profile.name,
                         "profile_version": profile.version,
                     },
@@ -406,7 +432,7 @@ class AcquisitionPipeline:
                     rgis_features(
                         case_id=request.case_id,
                         snapshot_id=rgis_snapshot.id,
-                        envelope=rgis_envelope,
+                        envelope=rgis_layer_envelope,
                     )
                 )
 
@@ -476,15 +502,18 @@ class AcquisitionPipeline:
         if latest is None or latest.status not in {"complete", "partial"}:
             return None
         requested_margin = (
-            request.margin_m
-            if request.margin_m is not None
-            else profile.margin_m
+            request.margin_m if request.margin_m is not None else profile.margin_m
         )
         if (
             latest.profile != request.profile
             or latest.profile_version != request.profile_version
             or latest.margin_m != requested_margin
         ):
+            return None
+        expects_rgis = self.rgis is not None and request.cadastral_number.startswith(
+            "50:"
+        )
+        if expects_rgis != (latest.rgis_snapshot_id is not None):
             return None
         if request.refresh_policy == "never":
             return latest.model_copy(update={"reused": True})

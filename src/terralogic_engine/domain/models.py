@@ -31,7 +31,7 @@ class CollectionRequest(BaseModel):
     case_id: str
     cadastral_number: str
     profile: str = "standard_land_report"
-    profile_version: str = "2.0"
+    profile_version: str = "3.0"
     refresh_policy: RefreshPolicy = "if_stale"
     allow_partial: bool = True
     margin_m: int | None = Field(default=None, ge=0, le=10_000)
@@ -125,7 +125,7 @@ class CollectionReceipt(BaseModel):
     run_id: str
     status: ReceiptStatus
     profile: str = "standard_land_report"
-    profile_version: str = "1.0"
+    profile_version: str = "3.0"
     margin_m: int = Field(default=1000, ge=0, le=10_000)
     nspd_snapshot_id: str | None = None
     osm_snapshot_id: str | None = None

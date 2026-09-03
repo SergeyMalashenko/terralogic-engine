@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Protocol
 
 
 class McpDependencyError(RuntimeError):
@@ -13,6 +13,12 @@ class McpDependencyError(RuntimeError):
 
 class McpResponseError(RuntimeError):
     """Raised when an MCP tool result has no parseable structured payload."""
+
+
+class McpToolTransport(Protocol):
+    async def call_tool(
+        self, name: str, arguments: Mapping[str, Any]
+    ) -> dict[str, Any]: ...
 
 
 class StreamableHttpMcpTransport:
@@ -38,6 +44,15 @@ class StreamableHttpMcpTransport:
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 result = await session.call_tool(name, dict(arguments))
+        if getattr(result, "isError", False) or getattr(result, "is_error", False):
+            messages = [
+                str(text)
+                for item in getattr(result, "content", [])
+                if (text := getattr(item, "text", None)) is not None
+            ]
+            raise McpResponseError(
+                f"MCP tool {name!r} failed: {'; '.join(messages) or 'unknown error'}"
+            )
         structured = getattr(result, "structuredContent", None)
         if structured is None:
             structured = getattr(result, "structured_content", None)
@@ -58,7 +73,7 @@ class StreamableHttpMcpTransport:
 class McpNspdClient:
     """Map the stable two-tool NSPD contract to the acquisition boundary."""
 
-    def __init__(self, transport: StreamableHttpMcpTransport) -> None:
+    def __init__(self, transport: McpToolTransport) -> None:
         self.transport = transport
 
     async def get_land_parcel_info(
@@ -94,7 +109,7 @@ class McpNspdClient:
 class McpOsmClient:
     """Map the target contour-based OSM contract to the acquisition boundary."""
 
-    def __init__(self, transport: StreamableHttpMcpTransport) -> None:
+    def __init__(self, transport: McpToolTransport) -> None:
         self.transport = transport
 
     async def analyze_area(
@@ -123,7 +138,7 @@ class McpOsmClient:
 class McpDgisClient:
     """Map the focused two-tool 2GIS contract to the acquisition boundary."""
 
-    def __init__(self, transport: StreamableHttpMcpTransport) -> None:
+    def __init__(self, transport: McpToolTransport) -> None:
         self.transport = transport
 
     async def analyze_social_infrastructure(
@@ -167,62 +182,60 @@ class McpDgisClient:
         )
 
 
-RGIS_ADAPTER_VERSION = "pyrgis-agents/0.3"
+RGIS_ADAPTER_VERSION = "pyrgis-agents/0.4.0"
 RGIS_SOURCES = ["RGIS MO (Геопортал Подмосковья)"]
 
 
 class McpRgisClient:
-    """Map the pyrgis parcel_full tool to the acquisition boundary.
+    """Map the focused two-tool RGIS contract to the acquisition boundary."""
 
-    The pyrgis MCP server returns bare JSON payloads (no ok/data envelope),
-    so the envelope contract is built here. Objects outside Moscow Oblast
-    coverage degrade to ``data.applicable = False`` instead of an error.
-    """
-
-    def __init__(self, transport: StreamableHttpMcpTransport) -> None:
+    def __init__(self, transport: McpToolTransport) -> None:
         self.transport = transport
 
-    async def get_parcel_full(
-        self, cadastral_number: str, *, include_geometry: bool
-    ) -> dict[str, Any]:
-        metadata = {
-            "adapter_version": RGIS_ADAPTER_VERSION,
-            "sources": RGIS_SOURCES,
-        }
-        try:
-            payload = await self.transport.call_tool(
-                "parcel_full",
-                {
-                    "cadnum": cadastral_number,
-                    "include_geometry": include_geometry,
-                },
-            )
-        except McpResponseError as exc:
-            return {
-                "ok": True,
-                "data": {"applicable": False, "reason": str(exc)},
-                "metadata": metadata,
-            }
-        # pyrgis tools return a JSON string; the SDK then wraps it as
-        # structuredContent {"result": "<json>"} — unwrap to the data object
-        if (
-            isinstance(payload, dict)
-            and set(payload) == {"result"}
-            and isinstance(payload["result"], str)
-        ):
-            try:
-                payload = json.loads(payload["result"])
-            except json.JSONDecodeError:
-                payload = {}
-        info = payload.get("info") if isinstance(payload, dict) else None
-        if not isinstance(info, dict) or not info.get("cadnum"):
-            return {
-                "ok": True,
-                "data": {"applicable": False, "reason": "parcel not found"},
-                "metadata": metadata,
-            }
+    @staticmethod
+    def _not_applicable(cadastral_number: str) -> dict[str, Any]:
         return {
             "ok": True,
-            "data": {"applicable": True, "parcel_full": payload},
-            "metadata": metadata,
+            "data": {
+                "applicable": False,
+                "cadastral_number": cadastral_number,
+                "reason": "RGIS MO covers cadastral region 50 only",
+            },
+            "error": None,
+            "metadata": {
+                "adapter_version": RGIS_ADAPTER_VERSION,
+                "sources": RGIS_SOURCES,
+            },
         }
+
+    async def get_land_parcel_info(
+        self, cadastral_number: str, *, detail: str = "standard"
+    ) -> dict[str, Any]:
+        if not cadastral_number.startswith("50:"):
+            return self._not_applicable(cadastral_number)
+        return await self.transport.call_tool(
+            "rgis_get_land_parcel_info",
+            {"cadastral_number": cadastral_number, "detail": detail},
+        )
+
+    async def analyze_land_parcel_layers(
+        self,
+        cadastral_number: str,
+        *,
+        blocks: Sequence[str],
+        include_geometry: bool,
+        limit_per_layer: int,
+        zoom: int,
+    ) -> dict[str, Any]:
+        if not cadastral_number.startswith("50:"):
+            return self._not_applicable(cadastral_number)
+        return await self.transport.call_tool(
+            "rgis_analyze_land_parcel_layers",
+            {
+                "cadastral_number": cadastral_number,
+                "blocks": list(blocks),
+                "include_geometry": include_geometry,
+                "limit_per_layer": limit_per_layer,
+                "zoom": zoom,
+            },
+        )

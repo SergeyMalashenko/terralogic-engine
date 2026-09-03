@@ -32,8 +32,8 @@ from terralogic_engine.viewer.data import (
     natural_nearest_rows,
     osm_road_map_label,
     road_class_summary,
-    source_summary_rows,
     social_nearest_rows,
+    source_summary_rows,
     zouit_analysis_rows,
 )
 
@@ -41,10 +41,12 @@ SOURCE_COLORS = {
     "nspd": "#7c3aed",
     "osm": "#047857",
     "dgis": "#2563eb",
+    "rgis": "#be123c",
 }
 FEATURE_CLASS_LABELS = {
     "parcel": "Земельный участок",
     "restriction_zone": "Ограничения ЗОУИТ",
+    "territorial_zone": "Территориальные зоны",
     "forest": "Леса",
     "lake": "Водоёмы",
     "river": "Реки",
@@ -179,12 +181,8 @@ def _add_geojson_feature_layer(
     tooltip_fields = ["label", "source", "feature_class"]
     tooltip_aliases = ["Объект", "Источник", "Класс объекта"]
     if show_road_class:
-        tooltip_fields.extend(
-            ["road_reference", "road_class_label", "road_class"]
-        )
-        tooltip_aliases.extend(
-            ["Номер дороги", "Класс дороги", "Тег highway"]
-        )
+        tooltip_fields.extend(["road_reference", "road_class_label", "road_class"])
+        tooltip_aliases.extend(["Номер дороги", "Класс дороги", "Тег highway"])
     if show_waterbody_type:
         tooltip_fields.extend(["waterbody_type_label", "waterbody_type"])
         tooltip_aliases.extend(["Тип водоёма", "Тег water"])
@@ -306,8 +304,7 @@ def _add_feature_layers(
                 _add_geojson_feature_layer(
                     map_object,
                     name=(
-                        "OSM · Дороги · "
-                        f"{ROAD_CLASS_LABELS[road_class]} [{road_class}]"
+                        f"OSM · Дороги · {ROAD_CLASS_LABELS[road_class]} [{road_class}]"
                     ),
                     values=road_values,
                     style=ROAD_CLASS_STYLES[road_class],
@@ -391,9 +388,7 @@ def _add_map_legend(
         "border-radius:6px;padding:10px 12px;font-size:13px;"
         "max-height:55vh;overflow-y:auto;"
         "box-shadow:0 1px 4px rgba(0,0,0,.25);'>"
-        "<strong>Слои карты</strong>"
-        + "".join(rows)
-        + "</div>"
+        "<strong>Слои карты</strong>" + "".join(rows) + "</div>"
     )
     map_object.get_root().html.add_child(Element(legend))
 
@@ -405,10 +400,7 @@ def _render_natural_contour_summary(features: list[GeoFeature]) -> None:
         column.metric(
             str(row["label"]),
             int(row["contours"]),
-            help=(
-                "Количество Polygon/MultiPolygon GeoJSON, доступных для "
-                "отрисовки"
-            ),
+            help=("Количество Polygon/MultiPolygon GeoJSON, доступных для отрисовки"),
         )
     missing = sum(int(row["objects"]) - int(row["contours"]) for row in summary)
     holes = sum(int(row["interior_rings"]) for row in summary)
@@ -418,8 +410,7 @@ def _render_natural_contour_summary(features: list[GeoFeature]) -> None:
     )
     if missing:
         st.warning(
-            f"Для {missing} природных объектов отсутствует "
-            "полигональная геометрия."
+            f"Для {missing} природных объектов отсутствует полигональная геометрия."
         )
 
 
@@ -453,10 +444,7 @@ def _render_map(
     show_dgis_labels: bool,
 ) -> None:
     if receipt.aoi_id is None:
-        st.warning(
-            "Для выбранного запуска не сохранена "
-            "область анализа."
-        )
+        st.warning("Для выбранного запуска не сохранена область анализа.")
         return
     aoi = store.get_area_of_interest(receipt.case_id, receipt.aoi_id)
     _render_natural_contour_summary(features)
@@ -523,6 +511,7 @@ def _snapshot_rows(
             receipt.nspd_snapshot_id,
             receipt.osm_snapshot_id,
             receipt.dgis_snapshot_id,
+            receipt.rgis_snapshot_id,
         )
         if value is not None
     }
@@ -586,22 +575,15 @@ def _render_analytics(
     zone_columns[2].metric(
         "Покрытие участка",
         f"{zone_summary.parcel_coverage_percent or 0:,.4f} %",
-        help=(
-            "Доля объединённой площади всех пересечений "
-            "без двойного счёта"
-        ),
+        help=("Доля объединённой площади всех пересечений без двойного счёта"),
     )
     zone_rows = zouit_analysis_rows(result)
     if zone_rows:
         st.dataframe(zone_rows, use_container_width=True, hide_index=True)
     else:
-        st.info(
-            "Зоны ЗОУИТ в выбранном снимке не найдены."
-        )
+        st.info("Зоны ЗОУИТ в выбранном снимке не найдены.")
 
-    st.subheader(
-        "2. Пересечение с лесами и водными ресурсами"
-    )
+    st.subheader("2. Пересечение с лесами и водными ресурсами")
     st.dataframe(
         natural_intersection_rows(result),
         use_container_width=True,
@@ -697,17 +679,12 @@ def run() -> None:
     selected_case_id = st.sidebar.selectbox(
         "Дело",
         options=list(case_by_id),
-        format_func=lambda value: (
-            f"{case_by_id[value].cadastral_number} · {value}"
-        ),
+        format_func=lambda value: f"{case_by_id[value].cadastral_number} · {value}",
     )
     selected_case = case_by_id[selected_case_id]
     receipts = store.list_collection_receipts(selected_case_id)
     if not receipts:
-        st.warning(
-            "В выбранном деле нет завершённых "
-            "запусков сбора."
-        )
+        st.warning("В выбранном деле нет завершённых запусков сбора.")
         st.stop()
     receipt = st.sidebar.selectbox(
         "Запуск",

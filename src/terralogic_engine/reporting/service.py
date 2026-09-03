@@ -44,9 +44,7 @@ class ReportingService:
     ) -> None:
         self.store = store
         self.acquisition = acquisition
-        self.template_registry = (
-            template_registry or create_default_template_registry()
-        )
+        self.template_registry = template_registry or create_default_template_registry()
 
     async def prepare_case(
         self,
@@ -142,8 +140,7 @@ class ReportingService:
             and len(normalized_model_name) > MAX_MODEL_NAME_CHARACTERS
         ):
             raise ValueError(
-                "model_name exceeds the "
-                f"{MAX_MODEL_NAME_CHARACTERS} character limit"
+                f"model_name exceeds the {MAX_MODEL_NAME_CHARACTERS} character limit"
             )
         template = self.template_registry.get(
             template_id,
@@ -166,10 +163,7 @@ class ReportingService:
             case_id=case_id,
             collection_run_id=receipt.run_id,
             analysis_id=analysis.id,
-            title=(
-                normalized_title
-                or f"Отчёт об участке {case.cadastral_number}"
-            ),
+            title=(normalized_title or f"Отчёт об участке {case.cadastral_number}"),
             template_id=template.template_id,
             template_version=template.version,
             template_sha256=template.content_sha256,

@@ -20,7 +20,7 @@ class IntersectionItem(BaseModel):
     """Intersection of one stored source object with the land parcel."""
 
     feature_id: str
-    source: Literal["nspd", "osm"]
+    source: Literal["nspd", "osm", "rgis"]
     feature_class: str
     name: str
     geometry_type: str

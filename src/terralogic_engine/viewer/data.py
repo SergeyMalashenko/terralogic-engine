@@ -143,6 +143,7 @@ def osm_road_map_label(
     value = feature.properties.get("name")
     name = " ".join(value.split()) if isinstance(value, str) else ""
     reference = osm_road_reference(feature)
+    label: str | None
     if name and reference and reference.casefold() not in name.casefold():
         label = f"{name} · {reference}"
     else:
@@ -288,6 +289,7 @@ def load_receipt_features(
         receipt.nspd_snapshot_id,
         receipt.osm_snapshot_id,
         receipt.dgis_snapshot_id,
+        receipt.rgis_snapshot_id,
     ):
         if snapshot_id is not None:
             features.extend(
@@ -380,7 +382,7 @@ def natural_contour_summary(
 ) -> list[dict[str, Any]]:
     """Summarize renderable OSM forest, waterbody, and river contours."""
 
-    result = {
+    result: dict[str, dict[str, Any]] = {
         feature_class: {
             "class": feature_class,
             "label": NATURAL_CONTOUR_LABELS[feature_class],
@@ -396,9 +398,7 @@ def natural_contour_summary(
         row = result[feature.feature_class]
         row["objects"] += 1
         geometry_type = (
-            feature.geometry.get("type")
-            if isinstance(feature.geometry, dict)
-            else None
+            feature.geometry.get("type") if isinstance(feature.geometry, dict) else None
         )
         if geometry_type in {"Polygon", "MultiPolygon"}:
             row["contours"] += 1
@@ -415,9 +415,7 @@ def road_class_summary(features: Iterable[GeoFeature]) -> list[dict[str, Any]]:
             "road_class": road_class,
             "label": ROAD_CLASS_LABELS[road_class],
             "objects": len(values),
-            "with_geometry": sum(
-                feature.geometry is not None for feature in values
-            ),
+            "with_geometry": sum(feature.geometry is not None for feature in values),
             "with_reference": sum(
                 osm_road_reference(feature) is not None for feature in values
             ),
@@ -450,13 +448,9 @@ def natural_intersection_rows(result: AnalysisResult) -> list[dict[str, Any]]:
             "Ресурс": item.name,
             "Объектов в области поиска": item.candidate_count,
             "Пересекают участок": item.intersecting_count,
-            "Площадь пересечения, м²": (
-                item.union_intersection_area_m2
-            ),
+            "Площадь пересечения, м²": (item.union_intersection_area_m2),
             "Доля площади участка, %": item.parcel_coverage_percent,
-            "Длина внутри участка, м": (
-                item.union_intersection_length_m
-            ),
+            "Длина внутри участка, м": (item.union_intersection_length_m),
         }
         for item in result.natural_summaries
     ]
@@ -496,9 +490,7 @@ def social_nearest_rows(result: AnalysisResult) -> list[dict[str, Any]]:
             "Расстояние от участка, м": item.distance_m,
             "Кандидатов в области поиска": item.candidate_count,
             "Статус": (
-                "Найден"
-                if item.status == "found"
-                else "Не найден в области поиска"
+                "Найден" if item.status == "found" else "Не найден в области поиска"
             ),
         }
         for item in result.social_nearest
@@ -515,9 +507,7 @@ def natural_nearest_rows(result: AnalysisResult) -> list[dict[str, Any]]:
             "Расстояние от участка, м": item.distance_m,
             "Кандидатов в области поиска": item.candidate_count,
             "Статус": (
-                "Найден"
-                if item.status == "found"
-                else "Не найден в области поиска"
+                "Найден" if item.status == "found" else "Не найден в области поиска"
             ),
         }
         for item in result.natural_nearest

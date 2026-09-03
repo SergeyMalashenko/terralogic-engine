@@ -1,4 +1,4 @@
-"""Spatial calculations over immutable NSPD, OSM, and 2GIS snapshots."""
+"""Spatial calculations over immutable NSPD, OSM, 2GIS, and RGIS snapshots."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from terralogic_engine.domain.models import (
 )
 from terralogic_engine.store.base import CaseStore
 
-ANALYTICS_VERSION = "1.0.0"
+ANALYTICS_VERSION = "1.1.0"
 
 SOCIAL_CATEGORIES: tuple[tuple[str, str, str, str], ...] = (
     (
@@ -184,11 +184,10 @@ def _receipt_features(store: CaseStore, receipt: CollectionReceipt) -> list[GeoF
         receipt.nspd_snapshot_id,
         receipt.osm_snapshot_id,
         receipt.dgis_snapshot_id,
+        receipt.rgis_snapshot_id,
     ):
         if snapshot_id is not None:
-            result.extend(
-                store.load_features(receipt.case_id, snapshot_id=snapshot_id)
-            )
+            result.extend(store.load_features(receipt.case_id, snapshot_id=snapshot_id))
     return result
 
 
@@ -223,9 +222,7 @@ def _intersection_item(
         intersection_area = float(parcel.intersection(polygon).area)
         parcel_percent = 100.0 * intersection_area / float(parcel.area)
         object_percent = (
-            100.0 * intersection_area / float(polygon.area)
-            if polygon.area > 0
-            else 0.0
+            100.0 * intersection_area / float(polygon.area) if polygon.area > 0 else 0.0
         )
         return IntersectionItem(
             feature_id=feature.id,
@@ -357,9 +354,7 @@ class AnalysisPipeline:
         if raw_parcel is None:
             raise AnalysisInputError("The NSPD parcel geometry is invalid")
 
-        transformer = Transformer.from_crs(
-            "EPSG:4326", aoi.metric_crs, always_xy=True
-        )
+        transformer = Transformer.from_crs("EPSG:4326", aoi.metric_crs, always_xy=True)
         parcel = transform(transformer.transform, raw_parcel)
         aoi_geometry = transform(
             transformer.transform,
@@ -383,12 +378,9 @@ class AnalysisPipeline:
         for feature in features:
             geometry = _prepared_geometry(feature)
             if geometry is None:
-                if (
-                    feature.feature_class in ANALYZED_FEATURE_CLASSES
-                    or (
-                        feature.source == "dgis"
-                        and feature.feature_class in SOCIAL_CATEGORY_KEYS
-                    )
+                if feature.feature_class in ANALYZED_FEATURE_CLASSES or (
+                    feature.source == "dgis"
+                    and feature.feature_class in SOCIAL_CATEGORY_KEYS
                 ):
                     skipped_geometry_count += 1
                 continue
@@ -404,14 +396,13 @@ class AnalysisPipeline:
                 projected[feature.id] = (feature, projected_geometry)
         if skipped_geometry_count:
             warnings.append(
-                f"Пропущено объектов без пригодной геометрии: "
-                f"{skipped_geometry_count}."
+                f"Пропущено объектов без пригодной геометрии: {skipped_geometry_count}."
             )
 
         zouit_pairs = [
             pair
             for pair in projected.values()
-            if pair[0].source == "nspd"
+            if pair[0].source in {"nspd", "rgis"}
             and pair[0].feature_class == "restriction_zone"
         ]
         zouit_items = [
@@ -428,15 +419,12 @@ class AnalysisPipeline:
 
         natural_items: list[IntersectionItem] = []
         natural_summaries: list[IntersectionSummary] = []
-        natural_pairs_by_class: dict[
-            str, list[tuple[GeoFeature, BaseGeometry]]
-        ] = {}
+        natural_pairs_by_class: dict[str, list[tuple[GeoFeature, BaseGeometry]]] = {}
         for feature_class, class_name in NATURAL_CLASSES:
             pairs = [
                 pair
                 for pair in projected.values()
-                if pair[0].source == "osm"
-                and pair[0].feature_class == feature_class
+                if pair[0].source == "osm" and pair[0].feature_class == feature_class
             ]
             natural_pairs_by_class[feature_class] = pairs
             items = [
@@ -474,9 +462,7 @@ class AnalysisPipeline:
                 name="Водные ресурсы (площадные)",
                 geometries=[geometry for _, geometry in area_water_pairs],
                 items=[
-                    item
-                    for item in natural_items
-                    if item.feature_id in area_water_ids
+                    item for item in natural_items if item.feature_id in area_water_ids
                 ],
                 parcel=parcel,
             )
@@ -487,8 +473,7 @@ class AnalysisPipeline:
             pairs = [
                 pair
                 for pair in projected.values()
-                if pair[0].source == "dgis"
-                and pair[0].feature_class == category
+                if pair[0].source == "dgis" and pair[0].feature_class == category
             ]
             social_nearest.append(
                 _nearest(

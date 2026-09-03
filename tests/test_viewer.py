@@ -29,8 +29,8 @@ from terralogic_engine.viewer.data import (
     osm_road_reference,
     osm_waterbody_type,
     road_class_summary,
-    source_summary_rows,
     social_nearest_rows,
+    source_summary_rows,
     zouit_analysis_rows,
 )
 
@@ -69,9 +69,7 @@ def test_viewer_builds_geojson_and_omits_attribute_only_features() -> None:
 
     assert collection["type"] == "FeatureCollection"
     assert len(collection["features"]) == 1
-    assert collection["features"][0]["properties"]["label"] == (
-        "52:26:0040002:3823"
-    )
+    assert collection["features"][0]["properties"]["label"] == ("52:26:0040002:3823")
     assert feature_label(attribute_only) == "nspd.parcel · attribute-only"
 
 
@@ -168,17 +166,13 @@ def test_viewer_summarizes_natural_contours_and_polygon_holes() -> None:
     )
 
     collection = build_feature_collection([forest, lake])
-    summary = natural_contour_summary(
-        [forest, lake, river_without_geometry]
-    )
+    summary = natural_contour_summary([forest, lake, river_without_geometry])
 
     assert interior_ring_count(FOREST_GEOMETRY) == 1
     assert interior_ring_count(dict(mapping(shape(FOREST_GEOMETRY)))) == 1
     assert collection["features"][0]["properties"]["interior_rings"] == 1
     assert osm_waterbody_type(lake) == "unspecified"
-    assert collection["features"][1]["properties"]["waterbody_type"] == (
-        "unspecified"
-    )
+    assert collection["features"][1]["properties"]["waterbody_type"] == ("unspecified")
     assert collection["features"][1]["properties"]["waterbody_type_label"] == (
         "Не уточнён (natural=water)"
     )
@@ -252,9 +246,7 @@ def test_viewer_groups_and_labels_roads_by_highway_class() -> None:
         "Автомагистраль"
     )
     assert geojson["features"][0]["properties"]["road_reference"] == "М-7"
-    assert geojson["features"][0]["properties"]["road_map_label"] == (
-        "Волга · М-7"
-    )
+    assert geojson["features"][0]["properties"]["road_map_label"] == ("Волга · М-7")
     assert summary == [
         {
             "road_class": "motorway",
@@ -403,20 +395,8 @@ def test_viewer_builds_four_analytics_tables() -> None:
         ],
     )
 
-    assert (
-        zouit_analysis_rows(result)[0]["Отношение"]
-        == "Пересекается"
-    )
-    assert natural_intersection_rows(result)[0][
-        "Площадь пересечения, м²"
-    ] == 50
-    assert natural_intersection_detail_rows(result)[0]["Объект"] == (
-        "Тестовый лес"
-    )
-    assert (
-        social_nearest_rows(result)[0]["Расстояние от участка, м"]
-        == 420
-    )
-    assert natural_nearest_rows(result)[0]["Статус"] == (
-        "Не найден в области поиска"
-    )
+    assert zouit_analysis_rows(result)[0]["Отношение"] == "Пересекается"
+    assert natural_intersection_rows(result)[0]["Площадь пересечения, м²"] == 50
+    assert natural_intersection_detail_rows(result)[0]["Объект"] == ("Тестовый лес")
+    assert social_nearest_rows(result)[0]["Расстояние от участка, м"] == 420
+    assert natural_nearest_rows(result)[0]["Статус"] == ("Не найден в области поиска")

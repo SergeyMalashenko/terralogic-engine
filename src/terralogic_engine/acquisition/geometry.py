@@ -102,12 +102,8 @@ def build_area_of_interest(
     canonical = normalize(geometry)
     digest = sha256(canonical.wkb).hexdigest()
     metric_crs = local_metric_crs(geometry)
-    forward = Transformer.from_crs(
-        "EPSG:4326", metric_crs, always_xy=True
-    )
-    inverse = Transformer.from_crs(
-        metric_crs, "EPSG:4326", always_xy=True
-    )
+    forward = Transformer.from_crs("EPSG:4326", metric_crs, always_xy=True)
+    inverse = Transformer.from_crs(metric_crs, "EPSG:4326", always_xy=True)
     projected = transform(forward.transform, geometry)
     minimum_circle = minimum_bounding_circle(projected)
     minimum_radius = float(minimum_bounding_radius(projected))

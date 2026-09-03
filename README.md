@@ -7,13 +7,16 @@ source adapters independent:
 
 ```text
 cadastral number -> mcp-pynspd -> parcel contour -> minimum enclosing circle
-                                      |                    |
-                                      |              + configurable margin
-                                      |                    |
-                                      +-----------> mcp-osm + mcp-2gis
-                                                           |
-                                                           v
-                                                   Local CaseStore
+       |                              |                    |
+       |                              |              + configurable margin
+       |                              |                    |
+       |                              +-----------> mcp-osm + mcp-2gis
+       |                                                   |
+       +-- region 50 and configured --> mcp-pyrgis         |
+                               |                           |
+                               +-------------+-------------+
+                                             v
+                                      Local CaseStore
 ```
 
 The current iteration provides:
@@ -25,14 +28,14 @@ The current iteration provides:
   one circular analysis area, and collects OSM and 2GIS concurrently;
 - `AnalysisPipeline`, which calculates reproducible intersections and shortest
   distances for one immutable collection run and stores the result in CaseStore;
-- HTTP MCP clients for all three source services;
+- HTTP MCP clients for NSPD, OSM, 2GIS, and optional regional RGIS MO;
 - a high-level MCP server for Hermes that prepares a case, returns a bounded
   factual report context, and persists the generated Markdown report;
 - a read-only map viewer for every normalized feature and raw snapshot.
 
 The source repositories remain independent. `terralogic_engine` imports neither
-`pynspd`, `pyosm-agents`, nor the `py2gis-agents` repository (whose Python
-module is named `py2gis_agents`); it relies only on their MCP contracts.
+`pynspd`, `pyosm-agents`, `py2gis-agents`, nor `pyrgis-agents`; it relies only
+on their MCP contracts.
 
 ## Installation
 
@@ -57,7 +60,8 @@ The public CLI commands remain `terralogic-collect`, `terralogic-analyze`,
 ## Collection
 
 Start `pynspd-mcp` on port 8001, `pyosm-mcp` on port 8002, and `py2gis-mcp`
-on port 8003, then run:
+on port 8003. For parcels in cadastral region `50`, you may additionally start
+`pyrgis-mcp` on port 8005. Then run:
 
 ```bash
 terralogic-collect 52:26:0040002:3823 \
@@ -66,6 +70,7 @@ terralogic-collect 52:26:0040002:3823 \
   --nspd-url http://127.0.0.1:8001/mcp \
   --osm-url http://127.0.0.1:8002/mcp \
   --dgis-url http://127.0.0.1:8003/mcp \
+  --rgis-url http://127.0.0.1:8005/mcp \
   --margin-m 1000 \
   --refresh-policy always
 ```
@@ -75,6 +80,13 @@ The fixed collection profile stores:
 - NSPD: parcel information, its contour, and ZOUIT restrictions;
 - OSM: forest, waterbody, and river contours plus stream and road lines;
 - 2GIS: social infrastructure and public-transport/transport-hub objects.
+- RGIS MO, when configured and applicable: the regional parcel passport plus
+  restriction/special and urban-planning layer blocks.
+
+`--rgis-url` is optional. Even when configured, RGIS is called only for a
+cadastral number beginning with `50:`. Changing RGIS availability invalidates
+a previously reusable receipt so that a region-50 case cannot silently reuse a
+collection made without the regional source.
 
 The parcel's minimum enclosing radius plus `--margin-m` defines the shared
 analysis circle. The margin defaults to 1000 metres. OSM receives the parcel
@@ -120,7 +132,8 @@ inside the configured search circle.
 
 ## Hermes report workflow
 
-Keep the three source MCP services running on ports 8001-8003, then start the
+Keep the three required source MCP services running on ports 8001-8003. For
+region `50`, optionally keep `pyrgis-mcp` on port 8005, then start the
 high-level TerraLogic server:
 
 ```bash
@@ -131,7 +144,8 @@ terralogic-mcp \
   --store ~/TerraLogicX/case-store \
   --nspd-url http://127.0.0.1:8001/mcp \
   --osm-url http://127.0.0.1:8002/mcp \
-  --dgis-url http://127.0.0.1:8003/mcp
+  --dgis-url http://127.0.0.1:8003/mcp \
+  --rgis-url http://127.0.0.1:8005/mcp
 ```
 
 It exposes exactly four high-level tools:
@@ -143,8 +157,9 @@ It exposes exactly four high-level tools:
 - `terralogic_save_report` persists the complete model-generated Markdown.
 
 Configure Hermes to use `http://127.0.0.1:8004/mcp`. For this workflow, expose
-only the TerraLogic server to the model; the NSPD, OSM, and 2GIS servers remain
-running as internal dependencies but can be disabled in the Hermes MCP list.
+only the TerraLogic server to the model; the NSPD, OSM, 2GIS, and optional RGIS
+servers remain running as internal dependencies but can be disabled in the
+Hermes MCP list.
 This prevents the model from bypassing CaseStore and the deterministic
 analytics stage.
 
@@ -174,7 +189,8 @@ case-store/
         └── raw/
             ├── nspd/
             ├── osm/
-            └── dgis/
+            ├── dgis/
+            └── rgis/
 ```
 
 Raw source responses are immutable gzip snapshots. Geometry is stored as WKB,
@@ -200,7 +216,8 @@ terralogic-view \
 It provides:
 
 - case and snapshot selection in a sidebar;
-- parcel, analysis circle, NSPD, OSM, and 2GIS layers on an interactive map;
+- parcel, analysis circle, NSPD, OSM, 2GIS, and RGIS layers on an interactive
+  map;
 - filters by source and feature class, source/class summaries, distances,
   feature attributes, collection warnings, and run history;
 - a dedicated analytics tab with tables for ZOUIT coverage, natural-resource

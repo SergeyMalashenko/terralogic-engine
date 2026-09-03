@@ -234,26 +234,25 @@ class LocalCaseStore:
 
     def _write_manifest(self, case: CaseInfo) -> None:
         target = self._case_dir(case.case_id) / "manifest.json"
-        payload = (
-            case.model_dump_json(indent=2).encode("utf-8") + b"\n"
-        )
+        payload = case.model_dump_json(indent=2).encode("utf-8") + b"\n"
         self._atomic_write(target, payload)
 
     @staticmethod
     def _atomic_write(target: Path, payload: bytes) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
-        handle = tempfile.NamedTemporaryFile(
-            mode="wb", dir=target.parent, prefix=f".{target.name}.", delete=False
-        )
-        temporary = Path(handle.name)
+        temporary: Path | None = None
         try:
-            with handle:
+            with tempfile.NamedTemporaryFile(
+                mode="wb", dir=target.parent, prefix=f".{target.name}.", delete=False
+            ) as handle:
+                temporary = Path(handle.name)
                 handle.write(payload)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, target)
         except BaseException:
-            temporary.unlink(missing_ok=True)
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
             raise
 
     def get_case(self, case_id: str) -> CaseInfo:
@@ -324,9 +323,7 @@ class LocalCaseStore:
             )
         self._write_manifest(self.get_case(receipt.case_id))
 
-    def get_latest_collection_receipt(
-        self, case_id: str
-    ) -> CollectionReceipt | None:
+    def get_latest_collection_receipt(self, case_id: str) -> CollectionReceipt | None:
         with self._connection(case_id) as connection:
             row = connection.execute(
                 """
@@ -340,9 +337,7 @@ class LocalCaseStore:
             return None
         return CollectionReceipt.model_validate_json(row["receipt_json"])
 
-    def list_collection_receipts(
-        self, case_id: str
-    ) -> list[CollectionReceipt]:
+    def list_collection_receipts(self, case_id: str) -> list[CollectionReceipt]:
         """Return completed collection runs, newest first."""
 
         with self._connection(case_id) as connection:
@@ -355,8 +350,7 @@ class LocalCaseStore:
                 (case_id,),
             ).fetchall()
         return [
-            CollectionReceipt.model_validate_json(row["receipt_json"])
-            for row in rows
+            CollectionReceipt.model_validate_json(row["receipt_json"]) for row in rows
         ]
 
     def save_snapshot(
@@ -478,9 +472,7 @@ class LocalCaseStore:
                     _json_dumps(aoi.validation_warnings),
                     _json_dumps(
                         {
-                            "parcel_minimum_radius_m": (
-                                aoi.parcel_minimum_radius_m
-                            ),
+                            "parcel_minimum_radius_m": (aoi.parcel_minimum_radius_m),
                             "margin_m": aoi.margin_m,
                             "search_radius_m": aoi.search_radius_m,
                         }
@@ -488,9 +480,7 @@ class LocalCaseStore:
                 ),
             )
 
-    def get_area_of_interest(
-        self, case_id: str, aoi_id: str
-    ) -> AreaOfInterest:
+    def get_area_of_interest(self, case_id: str, aoi_id: str) -> AreaOfInterest:
         with self._connection(case_id) as connection:
             row = connection.execute(
                 "SELECT * FROM areas_of_interest WHERE id = ? AND case_id = ?",
@@ -509,9 +499,7 @@ class LocalCaseStore:
                 row["representative_x"],
                 row["representative_y"],
             ),
-            parcel_minimum_radius_m=float(
-                metrics.get("parcel_minimum_radius_m", 0.0)
-            ),
+            parcel_minimum_radius_m=float(metrics.get("parcel_minimum_radius_m", 0.0)),
             margin_m=int(metrics.get("margin_m", 0)),
             search_radius_m=float(metrics.get("search_radius_m", 0.0)),
             source_snapshot_id=row["source_snapshot_id"],
@@ -521,9 +509,7 @@ class LocalCaseStore:
             validation_warnings=json.loads(row["warnings_json"]),
         )
 
-    def save_features(
-        self, case_id: str, features: Sequence[GeoFeature]
-    ) -> None:
+    def save_features(self, case_id: str, features: Sequence[GeoFeature]) -> None:
         rows: list[tuple[object, ...]] = []
         for feature in features:
             if feature.case_id != case_id:
@@ -670,10 +656,7 @@ class LocalCaseStore:
                 """,
                 (case_id,),
             ).fetchall()
-        return [
-            AnalysisResult.model_validate_json(row["result_json"])
-            for row in rows
-        ]
+        return [AnalysisResult.model_validate_json(row["result_json"]) for row in rows]
 
     def save_generated_report(
         self,
@@ -794,13 +777,9 @@ class LocalCaseStore:
                     collection_run_id=row["collection_run_id"],
                     analysis_id=str(metadata["analysis_id"]),
                     title=str(metadata["title"]),
-                    template_id=str(
-                        metadata.get("template_id", "full_land_report")
-                    ),
+                    template_id=str(metadata.get("template_id", "full_land_report")),
                     template_version=str(metadata["template_version"]),
-                    template_sha256=str(
-                        metadata.get("template_sha256", "unknown")
-                    ),
+                    template_sha256=str(metadata.get("template_sha256", "unknown")),
                     generated_at=row["created_at"],
                     model_name=metadata.get("model_name"),
                     relative_path=relative_path,

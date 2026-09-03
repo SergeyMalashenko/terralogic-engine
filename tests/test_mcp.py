@@ -20,8 +20,7 @@ from .fakes import FakeDgisClient, FakeNspdClient, FakeOsmClient
 def _valid_markdown(service: ReportingService) -> str:
     template = service.get_report_template()
     sections = "\n\n".join(
-        f"{section.heading}\n\nСодержимое раздела."
-        for section in template.sections
+        f"{section.heading}\n\nСодержимое раздела." for section in template.sections
     )
     return f"# Отчёт\n\n{sections}"
 
@@ -75,9 +74,7 @@ def test_mcp_registers_four_report_tools(
     assert server.kwargs["json_response"] is True
 
 
-@pytest.mark.filterwarnings(
-    "ignore:Field 'lifespan' has an incomplete definition"
-)
+@pytest.mark.filterwarnings("ignore:Field 'lifespan' has an incomplete definition")
 async def test_real_streamable_http_lists_four_tools(tmp_path) -> None:
     pytest.importorskip("mcp.server.fastmcp")
     app = create_mcp_server(_service(tmp_path)).streamable_http_app()
@@ -114,9 +111,7 @@ async def test_real_streamable_http_lists_four_tools(tmp_path) -> None:
 
     assert initialized.status_code == 200
     assert listed.status_code == 200
-    assert [
-        tool["name"] for tool in listed.json()["result"]["tools"]
-    ] == [
+    assert [tool["name"] for tool in listed.json()["result"]["tools"]] == [
         "terralogic_prepare_case",
         "terralogic_get_report_context",
         "terralogic_get_report_template",
@@ -191,3 +186,4 @@ def test_mcp_cli_defaults_to_stdio_and_port_8004() -> None:
     assert args.host == "127.0.0.1"
     assert args.port == 8004
     assert args.store == "./case-store"
+    assert args.rgis_url is None
