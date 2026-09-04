@@ -240,7 +240,10 @@ async def test_pipeline_collects_rgis_source(tmp_path) -> None:
     assert receipt.status == "complete"
     assert receipt.rgis_snapshot_id is not None
     assert receipt.feature_counts["rgis.restriction_zone"] == 1
-    assert receipt.feature_counts["rgis.territorial_zone"] == 1
+    assert receipt.feature_counts["rgis.territorial_zone"] == 2
+    assert receipt.feature_counts["rgis.gpzu"] == 1
+    assert receipt.feature_counts["rgis.planning_projects"] == 1
+    assert receipt.feature_counts["rgis.surveying_projects"] == 1
     assert rgis.info_calls == 1
     assert rgis.layer_calls == 1
     assert rgis.info_arguments["detail"] == "full"
@@ -253,6 +256,17 @@ async def test_pipeline_collects_rgis_source(tmp_path) -> None:
     context = build_report_context(store, "case-rgis", collection_run_id=receipt.run_id)
     assert {item.source for item in context.sources} == {"nspd", "osm", "dgis", "rgis"}
     assert {item.source for item in context.zouit} == {"nspd", "rgis"}
+    assert context.context_version == "1.2"
+    assert context.urban_planning.collected is True
+    assert context.urban_planning.provider_completeness_known is False
+    assert context.urban_planning.parcel_zones[0].zone == "СХ-3"
+    assert context.urban_planning.parcel_zones[0].permitted_uses[0].code == "1.1"
+    assert context.urban_planning.gpzu[0].name == "РФ-50-TEST-001 04.03.2021"
+    assert context.urban_planning.gpzu[0].relation == "intersects"
+    assert context.urban_planning.pzz_territorial_zones[0].name == "СХ-3"
+    assert context.urban_planning.planning_projects[0].name == "ППТ-TEST"
+    assert context.urban_planning.surveying_projects[0].name == "ПМТ-TEST"
+    assert '"coordinates"' not in context.model_dump_json()
 
     receipt2 = await pipeline.collect(
         CollectionRequest(
@@ -358,7 +372,9 @@ async def test_pipeline_preserves_rgis_tool_error_as_partial_result(tmp_path) ->
 
     assert receipt.status == "partial"
     assert receipt.rgis_snapshot_id is not None
-    assert any("access_blocked: RGIS access is blocked" in item for item in receipt.errors)
+    assert any(
+        "access_blocked: RGIS access is blocked" in item for item in receipt.errors
+    )
     raw = json.loads(store.load_snapshot(receipt.case_id, receipt.rgis_snapshot_id))
     assert raw["parcel_info"]["error"]["code"] == "access_blocked"
     assert receipt.feature_counts["rgis.restriction_zone"] == 1

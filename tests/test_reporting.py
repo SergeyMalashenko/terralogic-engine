@@ -62,6 +62,9 @@ async def test_report_context_is_bounded_and_keeps_provenance(tmp_path) -> None:
     assert context.transport_inventory[0].category == ("public_transport_stops")
     assert context.transport_inventory[0].distance_basis == "search_point"
     assert context.road_inventory[0].road_class == "service"
+    assert context.context_version == "1.2"
+    assert context.urban_planning.collected is False
+    assert context.urban_planning.parcel_zones == []
     assert {source.source for source in context.sources} == {
         "nspd",
         "osm",
@@ -72,9 +75,16 @@ async def test_report_context_is_bounded_and_keeps_provenance(tmp_path) -> None:
     service = ReportingService(store=store, acquisition=_acquisition)
     template = service.get_report_template()
     assert template.template_id == "full_land_report"
-    assert template.version == "1.0"
+    assert template.version == "1.1"
+    assert template.sections[2].key == "urban_planning"
+    assert "{{ urban_planning_section }}" in template.markdown_skeleton
     assert any("Не вычисляй" in rule for rule in template.generation_rules)
     assert "{{ cadastral_number }}" in template.markdown_skeleton
+    previous_template = service.get_report_template(template_version="1.0")
+    assert previous_template.version == "1.0"
+    assert all(
+        section.key != "urban_planning" for section in previous_template.sections
+    )
 
 
 async def test_reporting_service_persists_and_reopens_markdown(tmp_path) -> None:
@@ -90,6 +100,7 @@ async def test_reporting_service_persists_and_reopens_markdown(tmp_path) -> None
 
     assert report.analysis_id == analysis.id
     assert report.template_id == "full_land_report"
+    assert report.template_version == "1.1"
     assert len(report.template_sha256) == 64
     assert report.markdown.endswith("\n")
     assert (

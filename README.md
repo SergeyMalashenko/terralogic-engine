@@ -156,6 +156,12 @@ It exposes exactly four high-level tools:
   structure identified by `template_id`, version, and SHA-256;
 - `terralogic_save_report` persists the complete model-generated Markdown.
 
+Report context version 1.2 includes an `urban_planning` block for RGIS-backed
+region-50 cases: parcel planning zones and permitted uses, GPZU, PZZ
+territorial zones, planning projects, and surveying projects. The default
+`full_land_report` template is version 1.1; immutable version 1.0 remains
+available for previously generated reports.
+
 Configure Hermes to use `http://127.0.0.1:8004/mcp`. For this workflow, expose
 only the TerraLogic server to the model; the NSPD, OSM, 2GIS, and optional RGIS
 servers remain running as internal dependencies but can be disabled in the
@@ -166,13 +172,21 @@ analytics stage.
 Suggested Hermes request:
 
 ```text
-Подготовь полный отчёт по земельному участку 52:24:0000000:2216.
+Подготовь полный отчёт по земельному участку 50:32:0000000:38218.
 Сначала вызови terralogic_prepare_case, затем получи report context и
-шаблон full_land_report версии 1.0.
+шаблон full_land_report версии 1.1.
 Используй только факты и числа из контекста, не выполняй вычисления сам.
 Заполни шаблон, не меняя обязательные заголовки, и сохрани его через
 terralogic_save_report с теми же template_id и template_version.
 Верни краткое резюме и идентификатор отчёта.
+```
+
+A production-oriented, section-by-section task template is available in
+[`examples/hermes-full-land-report-v1.1.md`](examples/hermes-full-land-report-v1.1.md).
+It can be passed directly to Hermes with:
+
+```bash
+hermes -z "$(<examples/hermes-full-land-report-v1.1.md)"
 ```
 
 The exact report contract, Hermes configuration, and troubleshooting commands

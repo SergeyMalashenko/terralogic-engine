@@ -240,7 +240,7 @@ def create_mcp_server(
             template_id: Stable template identity, currently
                 ``full_land_report``.
             template_version: Exact immutable template version, currently
-                ``1.0``.
+                ``1.1``.
         """
 
         try:

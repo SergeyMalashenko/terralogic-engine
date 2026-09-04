@@ -268,10 +268,66 @@ def rgis_layer_analysis_result() -> dict[str, Any]:
                                     "name": "Зона сельскохозяйственного производства",
                                     "area": 650000.0,
                                     "percent": 100,
+                                    "usages": [
+                                        {
+                                            "code": "1.1",
+                                            "name": "Растениеводство",
+                                            "area_min": "20000",
+                                            "area_max": "Не подлежит установлению",
+                                            "margin": "3",
+                                            "building_percentage": "0%",
+                                        }
+                                    ],
                                     "geometry": deepcopy(PARCEL_GEOMETRY),
                                 }
                             ],
-                        }
+                        },
+                        "gpzu": {
+                            "title": "Градостроительные планы земельного участка",
+                            "objects": [
+                                {
+                                    "id": 101,
+                                    "relation": "intersects",
+                                    "properties": {
+                                        "label": "РФ-50-TEST-001 04.03.2021"
+                                    },
+                                    "geometry": deepcopy(PARCEL_GEOMETRY),
+                                }
+                            ],
+                        },
+                        "territorial_zones": {
+                            "title": "Территориальные зоны ПЗЗ",
+                            "objects": [
+                                {
+                                    "id": 102,
+                                    "relation": "parcel_inside_object",
+                                    "properties": {"label": "СХ-3"},
+                                    "geometry": deepcopy(PARCEL_GEOMETRY),
+                                }
+                            ],
+                        },
+                        "planning_projects": {
+                            "title": "Проекты планировки территории",
+                            "objects": [
+                                {
+                                    "id": 103,
+                                    "relation": "intersects",
+                                    "properties": {"label": "ППТ-TEST"},
+                                    "geometry": deepcopy(ZONE_GEOMETRY),
+                                }
+                            ],
+                        },
+                        "surveying_projects": {
+                            "title": "Проекты межевания территории",
+                            "objects": [
+                                {
+                                    "id": 104,
+                                    "relation": "object_inside_parcel",
+                                    "properties": {"label": "ПМТ-TEST"},
+                                    "geometry": deepcopy(ZONE_GEOMETRY),
+                                }
+                            ],
+                        },
                     }
                 },
             },

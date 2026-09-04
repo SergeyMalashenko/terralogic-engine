@@ -21,6 +21,11 @@ The model receives compact receipts and `ReportContext` separately from an
 immutable `ReportTemplate`. Source GeoJSON, raw provider responses,
 calculations, and generated Markdown stay in CaseStore.
 
+`ReportContext` version 1.2 includes bounded RGIS urban-planning facts without
+GeoJSON: parcel zones and permitted uses, GPZU, PZZ territorial zones,
+planning projects, and surveying projects. `urban_planning.collected` keeps a
+missing RGIS source distinct from an empty collected layer.
+
 `ReportContext` is the factual entity. `ReportTemplate` is an independent
 format entity with its own `template_id`, version, required sections,
 generation rules, Markdown skeleton, and SHA-256. A generated report records
@@ -106,7 +111,7 @@ npx -y @modelcontextprotocol/inspector \
   --tool-name terralogic_get_report_template \
   --tool-args-json '{
     "template_id": "full_land_report",
-    "template_version": "1.0"
+    "template_version": "1.1"
   }'
 ```
 
@@ -148,14 +153,30 @@ Expected result: a successful connection and exactly four discovered tools.
 
 ## Prompt
 
+The repository contains a detailed, directly reusable Hermes task in
+[`examples/hermes-full-land-report-v1.1.md`](../examples/hermes-full-land-report-v1.1.md).
+It defines the tool sequence, the expected structure of every report section,
+source-attribution rules, and safeguards against unsupported calculations and
+false absence claims. Replace the cadastral number and model name when reusing
+it for another case.
+
+Run it from the repository root with Hermes versions that support the global
+`-z` prompt option:
+
+```bash
+hermes -z "$(<examples/hermes-full-land-report-v1.1.md)"
+```
+
+The compact equivalent is:
+
 ```text
-Подготовь полный отчёт по земельному участку 52:24:0000000:2216.
+Подготовь полный отчёт по земельному участку 50:32:0000000:38218.
 
 Порядок работы:
 1. Вызови terralogic_prepare_case с margin_m=1000.
 2. Передай полученные case_id и collection_run_id в
    terralogic_get_report_context.
-3. Получи full_land_report версии 1.0 через
+3. Получи full_land_report версии 1.1 через
    terralogic_get_report_template.
 4. Заполни markdown_skeleton только по данным report context.
 5. Не вычисляй самостоятельно площади, проценты и расстояния.

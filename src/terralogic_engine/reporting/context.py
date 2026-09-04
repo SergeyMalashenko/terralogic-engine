@@ -11,12 +11,16 @@ from terralogic_engine.domain.models import CollectionReceipt, GeoFeature
 from terralogic_engine.reporting.models import (
     InfrastructureObjectContext,
     LegalActReportContext,
+    ParcelPlanningZoneReportContext,
     ParcelReportContext,
+    PermittedUseReportContext,
     ReportContext,
     RoadClassContext,
     SearchAreaReportContext,
     SourceEvidenceContext,
     TransportCategoryContext,
+    UrbanPlanningObjectReportContext,
+    UrbanPlanningReportContext,
     ZouitReportContext,
 )
 from terralogic_engine.store.base import CaseStore
@@ -69,6 +73,8 @@ ROAD_CLASS_LABELS = {
     "track": "Грунтовая или лесная дорога",
     "unknown": "Неизвестный класс",
 }
+MAX_PLANNING_OBJECTS_PER_LAYER = 50
+MAX_PERMITTED_USES_PER_ZONE = 100
 
 
 class ReportContextError(ValueError):
@@ -124,6 +130,7 @@ def _feature_name(feature: GeoFeature) -> str:
         "registry_number",
         "cadastral_number",
         "title",
+        "label",
     ):
         value = feature.properties.get(key)
         if value not in (None, ""):
@@ -136,6 +143,10 @@ def _optional_float(value: Any) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _optional_text(value: Any) -> str | None:
+    return str(value) if value not in (None, "") else None
 
 
 def _parcel_context(
@@ -306,6 +317,86 @@ def _road_context(features: Iterable[GeoFeature]) -> list[RoadClassContext]:
     ]
 
 
+def _planning_object(feature: GeoFeature) -> UrbanPlanningObjectReportContext:
+    relation = feature.properties.get("source_relation")
+    return UrbanPlanningObjectReportContext.model_validate(
+        {
+            "feature_id": feature.id,
+            "source_id": feature.source_id or feature.id,
+            "name": _feature_name(feature),
+            "relation": relation if relation not in (None, "") else None,
+        }
+    )
+
+
+def _urban_planning_context(
+    features: Iterable[GeoFeature],
+    *,
+    collected: bool,
+) -> UrbanPlanningReportContext:
+    relevant = [
+        feature
+        for feature in features
+        if feature.source == "rgis"
+        and feature.source_type
+        in {
+            "parcel_usage",
+            "territorial_zones",
+            "gpzu",
+            "planning_projects",
+            "surveying_projects",
+        }
+    ]
+    by_type: defaultdict[str, list[GeoFeature]] = defaultdict(list)
+    for feature in relevant:
+        source_type = feature.source_type
+        if source_type is not None:
+            by_type[source_type].append(feature)
+    for values in by_type.values():
+        values.sort(key=lambda feature: (_feature_name(feature), feature.id))
+
+    parcel_zones: list[ParcelPlanningZoneReportContext] = []
+    for feature in by_type["parcel_usage"][:MAX_PLANNING_OBJECTS_PER_LAYER]:
+        properties = feature.properties
+        raw_usages = properties.get("usages")
+        permitted_uses = [
+            PermittedUseReportContext.model_validate(value)
+            for value in (
+                raw_usages[:MAX_PERMITTED_USES_PER_ZONE]
+                if isinstance(raw_usages, list)
+                else []
+            )
+            if isinstance(value, dict)
+        ]
+        parcel_zones.append(
+            ParcelPlanningZoneReportContext(
+                feature_id=feature.id,
+                zone=_optional_text(properties.get("zone")),
+                name=_optional_text(properties.get("name")),
+                area_m2=_optional_float(properties.get("area")),
+                parcel_coverage_percent=_optional_float(properties.get("percent")),
+                account_number=_optional_text(properties.get("accountnumber")),
+                external_usage=_optional_text(properties.get("ext_usage")),
+                permitted_uses=permitted_uses,
+            )
+        )
+
+    def objects(source_type: str) -> list[UrbanPlanningObjectReportContext]:
+        return [
+            _planning_object(feature)
+            for feature in by_type[source_type][:MAX_PLANNING_OBJECTS_PER_LAYER]
+        ]
+
+    return UrbanPlanningReportContext(
+        collected=collected,
+        parcel_zones=parcel_zones,
+        pzz_territorial_zones=objects("territorial_zones"),
+        gpzu=objects("gpzu"),
+        planning_projects=objects("planning_projects"),
+        surveying_projects=objects("surveying_projects"),
+    )
+
+
 def build_report_context(
     store: CaseStore,
     case_id: str,
@@ -369,6 +460,10 @@ def build_report_context(
         social_nearest=analysis.social_nearest,
         transport_inventory=_transport_context(features),
         road_inventory=_road_context(features),
+        urban_planning=_urban_planning_context(
+            features,
+            collected=receipt.rgis_snapshot_id is not None,
+        ),
         sources=sources,
         warnings=warnings,
     )

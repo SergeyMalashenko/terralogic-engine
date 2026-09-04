@@ -92,6 +92,58 @@ class RoadClassContext(BaseModel):
     named_examples: list[str] = Field(default_factory=list)
 
 
+class PermittedUseReportContext(BaseModel):
+    """One permitted-use rule reported for an RGIS planning zone."""
+
+    code: str | None = None
+    name: str | None = None
+    area_min: str | None = None
+    area_max: str | None = None
+    margin: str | None = None
+    building_percentage: str | None = None
+
+
+class ParcelPlanningZoneReportContext(BaseModel):
+    """RGIS planning zone assigned to the parcel with its permitted uses."""
+
+    feature_id: str
+    zone: str | None = None
+    name: str | None = None
+    area_m2: float | None = None
+    parcel_coverage_percent: float | None = None
+    account_number: str | None = None
+    external_usage: str | None = None
+    permitted_uses: list[PermittedUseReportContext] = Field(default_factory=list)
+
+
+class UrbanPlanningObjectReportContext(BaseModel):
+    """Bounded reference to one object from an RGIS planning layer."""
+
+    feature_id: str
+    source_id: str
+    name: str
+    relation: SpatialRelation | None = None
+
+
+class UrbanPlanningReportContext(BaseModel):
+    """Regional planning facts supplied to the reporting model without GeoJSON."""
+
+    source: Literal["rgis"] = "rgis"
+    collected: bool = False
+    provider_completeness_known: bool = False
+    parcel_zones: list[ParcelPlanningZoneReportContext] = Field(default_factory=list)
+    pzz_territorial_zones: list[UrbanPlanningObjectReportContext] = Field(
+        default_factory=list
+    )
+    gpzu: list[UrbanPlanningObjectReportContext] = Field(default_factory=list)
+    planning_projects: list[UrbanPlanningObjectReportContext] = Field(
+        default_factory=list
+    )
+    surveying_projects: list[UrbanPlanningObjectReportContext] = Field(
+        default_factory=list
+    )
+
+
 class SourceEvidenceContext(BaseModel):
     """Provenance for one immutable source snapshot."""
 
@@ -134,7 +186,7 @@ class ReportTemplate(BaseModel):
 class ReportContext(BaseModel):
     """Bounded factual context supplied to Hermes for narrative generation."""
 
-    context_version: str = "1.1"
+    context_version: str = "1.2"
     case_id: str
     collection_run_id: str
     analysis_id: str
@@ -151,6 +203,9 @@ class ReportContext(BaseModel):
     social_nearest: list[NearestObject] = Field(default_factory=list)
     transport_inventory: list[TransportCategoryContext] = Field(default_factory=list)
     road_inventory: list[RoadClassContext] = Field(default_factory=list)
+    urban_planning: UrbanPlanningReportContext = Field(
+        default_factory=UrbanPlanningReportContext
+    )
     sources: list[SourceEvidenceContext] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
