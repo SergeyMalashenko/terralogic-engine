@@ -21,6 +21,7 @@ from terralogic_engine.viewer.data import (
     ROAD_CLASS_LABELS,
     build_feature_collection,
     dgis_map_label,
+    document_vri_rows,
     feature_label,
     feature_table_rows,
     group_features,
@@ -35,6 +36,7 @@ from terralogic_engine.viewer.data import (
     social_nearest_rows,
     source_summary_rows,
     zouit_analysis_rows,
+    zouit_regime_rows,
 )
 
 SOURCE_COLORS = {
@@ -744,6 +746,7 @@ def run() -> None:
         report_tab,
         map_tab,
         objects_tab,
+        documents_tab,
         provenance_tab,
         history_tab,
     ) = st.tabs(
@@ -753,6 +756,7 @@ def run() -> None:
             "Отчёт",
             "Карта",
             "Объекты",
+            "Документы",
             "Источники",
             "История",
         ]
@@ -807,6 +811,28 @@ def run() -> None:
                     "properties": selected_feature.properties,
                 }
             )
+
+    with documents_tab:
+        snapshot_ids = [
+            snapshot.id
+            for snapshot in store.list_snapshots(receipt.case_id)
+            if snapshot.run_id == receipt.run_id
+        ]
+        facts = store.list_facts(receipt.case_id, snapshot_ids=snapshot_ids)
+        vri_rows = document_vri_rows(facts)
+        regime_rows = zouit_regime_rows(facts)
+        if not vri_rows and not regime_rows:
+            st.info(
+                "Документный контур в этом запуске не собирался: "
+                "сервисы pyrgis-mcp/pynspd-mcp без общего GEODOCS_HOME "
+                "или документы не обнаружены."
+            )
+        if vri_rows:
+            st.subheader("Виды разрешённого использования из ПЗЗ")
+            st.dataframe(vri_rows, use_container_width=True, hide_index=True)
+        if regime_rows:
+            st.subheader("Режимы ЗОУИТ (правовые акты)")
+            st.dataframe(regime_rows, use_container_width=True, hide_index=True)
 
     with provenance_tab:
         st.dataframe(

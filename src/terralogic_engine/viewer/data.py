@@ -8,6 +8,7 @@ from typing import Any
 
 from terralogic_engine.analytics.models import AnalysisResult
 from terralogic_engine.domain.models import (
+    CaseFact,
     CollectionReceipt,
     GeoFeature,
 )
@@ -512,3 +513,50 @@ def natural_nearest_rows(result: AnalysisResult) -> list[dict[str, Any]]:
         }
         for item in result.natural_nearest
     ]
+
+
+def document_vri_rows(facts: Iterable[CaseFact]) -> list[dict[str, Any]]:
+    """Строки таблицы ВРИ из facts типа document_vri (документный контур ПЗЗ)."""
+    rows: list[dict[str, Any]] = []
+    for fact in facts:
+        if fact.fact_type != "document_vri":
+            continue
+        value = fact.value
+        zone = value.get("zone_code")
+        doc = f'{value.get("doc_number")} от {value.get("version_date")}'
+        for item in value.get("items") or []:
+            rows.append(
+                {
+                    "Зона": zone,
+                    "Код": item.get("code"),
+                    "Наименование ВРИ": item.get("name"),
+                    "min, м²": item.get("area_min"),
+                    "max, м²": item.get("area_max"),
+                    "% застройки": item.get("building_percentage"),
+                    "Отступ, м": item.get("margin"),
+                    "ПЗЗ": doc,
+                    "Файл": value.get("source_file"),
+                }
+            )
+    return rows
+
+
+def zouit_regime_rows(facts: Iterable[CaseFact]) -> list[dict[str, Any]]:
+    """Строки таблицы режимов ЗОУИТ из facts типа zouit_regime."""
+    rows: list[dict[str, Any]] = []
+    for fact in facts:
+        if fact.fact_type != "zouit_regime":
+            continue
+        value = fact.value
+        restrictions = (value.get("restrictions") or "").strip()
+        rows.append(
+            {
+                "Реестровый №": value.get("registry_number"),
+                "Наименование": value.get("name"),
+                "Тип зоны": value.get("zone_type"),
+                "Дата регистрации": value.get("registration_date"),
+                "Документ": value.get("document_number"),
+                "Режим (начало текста)": restrictions[:300],
+            }
+        )
+    return rows

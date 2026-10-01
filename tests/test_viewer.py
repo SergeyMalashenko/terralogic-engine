@@ -10,11 +10,12 @@ from terralogic_engine.analytics.models import (
     IntersectionSummary,
     NearestObject,
 )
-from terralogic_engine.domain.models import GeoFeature, SourceName, utc_now
+from terralogic_engine.domain.models import CaseFact, GeoFeature, SourceName, utc_now
 from terralogic_engine.viewer.cli import build_parser
 from terralogic_engine.viewer.data import (
     build_feature_collection,
     dgis_map_label,
+    document_vri_rows,
     feature_label,
     feature_table_rows,
     group_features,
@@ -32,6 +33,7 @@ from terralogic_engine.viewer.data import (
     social_nearest_rows,
     source_summary_rows,
     zouit_analysis_rows,
+    zouit_regime_rows,
 )
 
 from .fakes import FOREST_GEOMETRY, PARCEL_GEOMETRY, ROAD_GEOMETRY
@@ -400,3 +402,72 @@ def test_viewer_builds_four_analytics_tables() -> None:
     assert natural_intersection_detail_rows(result)[0]["Объект"] == ("Тестовый лес")
     assert social_nearest_rows(result)[0]["Расстояние от участка, м"] == 420
     assert natural_nearest_rows(result)[0]["Статус"] == ("Не найден в области поиска")
+
+
+def _fact(fact_type: str, value: dict) -> CaseFact:
+    return CaseFact(
+        id="fact-1",
+        case_id="case-1",
+        subject_feature_id="feature-1",
+        fact_type=fact_type,
+        predicate=fact_type,
+        value=value,
+        snapshot_id="snapshot-1",
+        quality="extracted",
+    )
+
+
+def test_viewer_document_vri_rows_flatten_items() -> None:
+    facts = [
+        _fact(
+            "document_vri",
+            {
+                "zone_code": "Ж-2",
+                "doc_number": "1986/8",
+                "version_date": "2026-08-06",
+                "source_file": "cntd_450398792.html",
+                "items": [
+                    {
+                        "code": "2.1",
+                        "name": "Для индивидуального жилищного строительства",
+                        "area_min": 500,
+                        "area_max": 500000,
+                        "building_percentage": "40%",
+                        "margin": "3",
+                    }
+                ],
+            },
+        ),
+        _fact("other_fact", {"ignored": True}),
+    ]
+
+    rows = document_vri_rows(facts)
+
+    assert len(rows) == 1
+    assert rows[0]["Зона"] == "Ж-2"
+    assert rows[0]["Код"] == "2.1"
+    assert rows[0]["min, м²"] == 500
+    assert rows[0]["ПЗЗ"] == "1986/8 от 2026-08-06"
+
+
+def test_viewer_zouit_regime_rows() -> None:
+    facts = [
+        _fact(
+            "zouit_regime",
+            {
+                "registry_number": "50:00-6.2819",
+                "name": "Шестая подзона приаэродромной территории",
+                "zone_type": "Охранная зона транспорта",
+                "registration_date": "2024-04-08",
+                "restrictions": "Запрещается размещение объектов отходов",
+                "document_number": "395-П",
+            },
+        )
+    ]
+
+    rows = zouit_regime_rows(facts)
+
+    assert len(rows) == 1
+    assert rows[0]["Реестровый №"] == "50:00-6.2819"
+    assert rows[0]["Документ"] == "395-П"
+    assert "отходов" in rows[0]["Режим (начало текста)"]
