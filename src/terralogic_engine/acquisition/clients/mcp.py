@@ -15,6 +15,10 @@ class McpResponseError(RuntimeError):
     """Raised when an MCP tool result has no parseable structured payload."""
 
 
+class McpToolError(RuntimeError):
+    """Raised when an MCP tool envelope reports ok != True."""
+
+
 class McpToolTransport(Protocol):
     async def call_tool(
         self, name: str, arguments: Mapping[str, Any]
@@ -239,3 +243,101 @@ class McpRgisClient:
                 "zoom": zoom,
             },
         )
+
+
+def _checked_tool_result(name: str, envelope: Mapping[str, Any]) -> dict[str, Any]:
+    result = dict(envelope)
+    if result.get("ok") is not True:
+        error = result.get("error")
+        if isinstance(error, Mapping):
+            code = error.get("code", "tool_error")
+            message = error.get("message", "unknown error")
+            raise McpToolError(f"MCP tool {name!r} failed: {code}: {message}")
+        raise McpToolError(f"MCP tool {name!r} failed: ok != True")
+    return result
+
+
+class McpRgisDocumentsClient:
+    """Map the RGIS MO document tools to the acquisition boundary."""
+
+    def __init__(self, transport: McpToolTransport) -> None:
+        self.transport = transport
+
+    @staticmethod
+    def _not_applicable(cadastral_number: str) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "data": {
+                "applicable": False,
+                "cadastral_number": cadastral_number,
+                "reason": "RGIS MO covers cadastral region 50 only",
+            },
+            "error": None,
+            "metadata": {
+                "adapter_version": RGIS_ADAPTER_VERSION,
+                "sources": RGIS_SOURCES,
+            },
+        }
+
+    async def sync_parcel_documents(
+        self, cadastral_number: str
+    ) -> dict[str, Any]:
+        if not cadastral_number.startswith("50:"):
+            return self._not_applicable(cadastral_number)
+        envelope = await self.transport.call_tool(
+            "rgis_sync_parcel_documents",
+            {"cadastral_number": cadastral_number},
+        )
+        return _checked_tool_result("rgis_sync_parcel_documents", envelope)
+
+    async def fetch_external_document(
+        self, cadastral_number: str, *, document_url: str
+    ) -> dict[str, Any]:
+        if not cadastral_number.startswith("50:"):
+            return self._not_applicable(cadastral_number)
+        envelope = await self.transport.call_tool(
+            "rgis_fetch_external_document",
+            {
+                "cadastral_number": cadastral_number,
+                "document_url": document_url,
+            },
+        )
+        return _checked_tool_result("rgis_fetch_external_document", envelope)
+
+    async def get_document_vri(
+        self, cadastral_number: str, *, zone_code: str | None = None
+    ) -> dict[str, Any]:
+        if not cadastral_number.startswith("50:"):
+            return self._not_applicable(cadastral_number)
+        arguments: dict[str, Any] = {"cadastral_number": cadastral_number}
+        if zone_code is not None:
+            arguments["zone_code"] = zone_code
+        envelope = await self.transport.call_tool(
+            "rgis_get_document_vri", arguments
+        )
+        return _checked_tool_result("rgis_get_document_vri", envelope)
+
+
+class McpNspdDocumentsClient:
+    """Map the NSPD document tools to the acquisition boundary."""
+
+    def __init__(self, transport: McpToolTransport) -> None:
+        self.transport = transport
+
+    async def sync_parcel_documents(
+        self, cadastral_number: str
+    ) -> dict[str, Any]:
+        envelope = await self.transport.call_tool(
+            "nspd_sync_parcel_documents",
+            {"cadastral_number": cadastral_number},
+        )
+        return _checked_tool_result("nspd_sync_parcel_documents", envelope)
+
+    async def get_zouit_regimes(
+        self, cadastral_number: str
+    ) -> dict[str, Any]:
+        envelope = await self.transport.call_tool(
+            "nspd_get_zouit_regimes",
+            {"cadastral_number": cadastral_number},
+        )
+        return _checked_tool_result("nspd_get_zouit_regimes", envelope)

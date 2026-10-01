@@ -6,6 +6,7 @@ import sqlite3
 from terralogic_engine.acquisition.geometry import build_area_of_interest
 from terralogic_engine.acquisition.normalize import parcel_feature
 from terralogic_engine.domain.models import (
+    CaseFact,
     CollectionReceipt,
     CollectionRequest,
     utc_now,
@@ -133,3 +134,52 @@ def test_create_case_is_idempotent_but_rejects_other_parcel(tmp_path) -> None:
         assert "another cadastral number" in str(exc)
     else:
         raise AssertionError("A case id must not be silently reused for another parcel")
+
+
+def test_local_case_store_saves_and_filters_facts(tmp_path) -> None:
+    store = LocalCaseStore(tmp_path / "store")
+    store.create_case(
+        case_id="case-facts",
+        cadastral_number="52:26:0040002:3823",
+        report_profile="standard_land_report",
+    )
+    facts = [
+        CaseFact(
+            id="fact-1",
+            case_id="case-facts",
+            subject_feature_id="feature-1",
+            fact_type="document_vri",
+            predicate="document_vri",
+            value={"zone_code": "218020020006", "items": []},
+            snapshot_id="rgis-documents-vri-1",
+            quality="extracted",
+        ),
+        CaseFact(
+            id="fact-2",
+            case_id="case-facts",
+            subject_feature_id="feature-1",
+            fact_type="zouit_regime",
+            predicate="zouit_regime",
+            value={"registry_number": "52:26-6.1"},
+            snapshot_id="nspd-documents-regimes-1",
+            quality="registered",
+        ),
+    ]
+    store.save_facts("case-facts", facts)
+
+    assert store.list_facts("case-facts") == facts
+    assert store.list_facts("case-facts", fact_type="document_vri") == [facts[0]]
+    assert store.list_facts(
+        "case-facts", snapshot_ids=["nspd-documents-regimes-1"]
+    ) == [facts[1]]
+
+    with sqlite3.connect(tmp_path / "store" / "cases" / "case-facts" / "case.sqlite") as database:
+        user_version = database.execute("PRAGMA user_version").fetchone()[0]
+        fact_columns = {
+            row[1] for row in database.execute("PRAGMA table_info(facts)")
+        }
+    assert user_version == 2
+    assert "fact_type" in fact_columns
+
+    reopened = LocalCaseStore(tmp_path / "store")
+    assert reopened.list_facts("case-facts") == facts

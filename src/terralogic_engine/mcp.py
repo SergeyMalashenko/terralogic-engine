@@ -13,8 +13,10 @@ from pydantic import BaseModel, Field
 from terralogic_engine.acquisition.clients import (
     McpDgisClient,
     McpNspdClient,
+    McpNspdDocumentsClient,
     McpOsmClient,
     McpRgisClient,
+    McpRgisDocumentsClient,
     StreamableHttpMcpTransport,
 )
 from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
@@ -37,8 +39,9 @@ from terralogic_engine.store.local import LocalCaseStore
 
 DEFAULT_INSTRUCTIONS = (
     "Use terralogic_prepare_case first when the user provides a cadastral number. "
-    "It collects NSPD, OSM, and 2GIS data plus RGIS MO when configured and "
-    "applicable, performs deterministic spatial "
+    "It collects NSPD, OSM, and 2GIS data plus RGIS MO and the document "
+    "contour (PZZ documents, permitted-use tables, ZOUIT regimes) when "
+    "configured and applicable, performs deterministic spatial "
     "analytics, and returns case_id plus collection_run_id. Then call "
     "terralogic_get_report_context for facts and terralogic_get_report_template "
     "for the independent report structure. Write a Russian Markdown report "
@@ -108,17 +111,28 @@ def create_reporting_service(
     dgis_url: str = "http://127.0.0.1:8003/mcp",
     rgis_url: str | None = None,
 ) -> ReportingService:
-    """Create the production service using the four upstream MCP servers."""
+    """Create the production service using the four upstream MCP servers.
+
+    The document tools of pynspd-mcp and pyrgis-mcp live on the same servers
+    as the NSPD and RGIS source tools, so their URLs are reused as-is.
+    """
 
     store = LocalCaseStore(store_path)
+    nspd_transport = StreamableHttpMcpTransport(nspd_url)
     acquisition = AcquisitionPipeline(
         store=store,
-        nspd=McpNspdClient(StreamableHttpMcpTransport(nspd_url)),
+        nspd=McpNspdClient(nspd_transport),
         osm=McpOsmClient(StreamableHttpMcpTransport(osm_url)),
         dgis=McpDgisClient(StreamableHttpMcpTransport(dgis_url)),
         rgis=(
             McpRgisClient(StreamableHttpMcpTransport(rgis_url)) if rgis_url else None
         ),
+        rgis_documents=(
+            McpRgisDocumentsClient(StreamableHttpMcpTransport(rgis_url))
+            if rgis_url
+            else None
+        ),
+        nspd_documents=McpNspdDocumentsClient(nspd_transport),
     )
     return ReportingService(store=store, acquisition=acquisition)
 
@@ -180,6 +194,11 @@ def create_mcp_server(
     ) -> ToolResult[PrepareCaseResult]:
         """Collect and analyze one land parcel before report generation.
 
+        Besides the NSPD, OSM, 2GIS, and optional RGIS MO sources, the
+        document contour (pyrgis-mcp / pynspd-mcp) is collected when the
+        same server URLs are configured: PZZ and general-plan documents,
+        extracted permitted-use tables (ВРИ), and ZOUIT regime documents.
+
         Args:
             cadastral_number: Four numeric parts separated by colons.
             case_id: Optional stable CaseStore identifier. If omitted, it is
@@ -210,6 +229,10 @@ def create_mcp_server(
         collection_run_id: str | None = None,
     ) -> ToolResult[ReportContext]:
         """Load compact verified facts for a Hermes-generated report.
+
+        The context includes the document contour (documents): PZZ
+        documents with extracted permitted-use tables and ZOUIT regimes
+        when the document tools were collected for the selected run.
 
         Args:
             case_id: Existing CaseStore case identifier.

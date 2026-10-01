@@ -73,3 +73,31 @@ class RgisSourceClient(Protocol):
         limit_per_layer: int,
         zoom: int,
     ) -> Mapping[str, Any]: ...
+
+
+class RgisDocumentsClient(Protocol):
+    """Document contour of the RGIS MO MCP server (region 50 only)."""
+
+    async def sync_parcel_documents(
+        self, cadastral_number: str
+    ) -> Mapping[str, Any]: ...
+
+    async def fetch_external_document(
+        self, cadastral_number: str, *, document_url: str
+    ) -> Mapping[str, Any]: ...
+
+    async def get_document_vri(
+        self, cadastral_number: str, *, zone_code: str | None = None
+    ) -> Mapping[str, Any]: ...
+
+
+class NspdDocumentsClient(Protocol):
+    """Document contour of the NSPD MCP server (federal coverage)."""
+
+    async def sync_parcel_documents(
+        self, cadastral_number: str
+    ) -> Mapping[str, Any]: ...
+
+    async def get_zouit_regimes(
+        self, cadastral_number: str
+    ) -> Mapping[str, Any]: ...

@@ -1,11 +1,12 @@
-"""Normalize source envelopes into canonical GeoFeature records."""
+"""Normalize source envelopes into canonical GeoFeature and CaseFact records."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from hashlib import sha256
 from typing import Any
 
-from terralogic_engine.domain.models import GeoFeature
+from terralogic_engine.domain.models import CaseFact, GeoFeature
 
 NSPD_FEATURE_CLASSES = {
     "zouit": "restriction_zone",
@@ -370,3 +371,109 @@ def count_features(features: list[GeoFeature]) -> dict[str, int]:
         key = f"{feature.source}.{feature.feature_class}"
         result[key] = result.get(key, 0) + 1
     return dict(sorted(result.items()))
+
+
+DOCUMENT_VRI_FACT_TYPE = "document_vri"
+ZOUIT_REGIME_FACT_TYPE = "zouit_regime"
+
+
+def _fact_id(snapshot_id: str, fact_type: str, identity: str) -> str:
+    digest = sha256(identity.encode("utf-8")).hexdigest()[:20]
+    return f"fact-{snapshot_id}-{fact_type}-{digest}"
+
+
+def document_vri_facts(
+    *,
+    case_id: str,
+    subject_feature_id: str,
+    snapshot_id: str,
+    envelope: Mapping[str, Any],
+) -> list[CaseFact]:
+    """Turn one rgis_get_document_vri envelope into document_vri facts."""
+
+    data = envelope.get("data")
+    if not isinstance(data, Mapping):
+        return []
+    raw_zones = data.get("zones")
+    if not isinstance(raw_zones, list):
+        return []
+    facts: list[CaseFact] = []
+    for zone in raw_zones:
+        if not isinstance(zone, Mapping) or zone.get("found") is not True:
+            continue
+        zone_code = str(zone.get("zone_code") or "")
+        extractions = zone.get("extractions")
+        if not isinstance(extractions, list) or not extractions:
+            continue
+        extraction = extractions[0]
+        if not isinstance(extraction, Mapping):
+            continue
+        document = extraction.get("document")
+        document = document if isinstance(document, Mapping) else {}
+        items = extraction.get("items")
+        facts.append(
+            CaseFact(
+                id=_fact_id(snapshot_id, DOCUMENT_VRI_FACT_TYPE, zone_code),
+                case_id=case_id,
+                subject_feature_id=subject_feature_id,
+                fact_type=DOCUMENT_VRI_FACT_TYPE,
+                predicate=DOCUMENT_VRI_FACT_TYPE,
+                value={
+                    "zone_code": zone_code,
+                    "doc_number": str(document.get("number") or ""),
+                    "version_date": str(document.get("version_date") or ""),
+                    "items": items if isinstance(items, list) else [],
+                    "source_file": str(extraction.get("source_file") or ""),
+                    "confidence": extraction.get("confidence"),
+                    "snapshot_id": snapshot_id,
+                },
+                snapshot_id=snapshot_id,
+                quality="extracted",
+            )
+        )
+    return facts
+
+
+def zouit_regime_facts(
+    *,
+    case_id: str,
+    subject_feature_id: str,
+    snapshot_id: str,
+    envelope: Mapping[str, Any],
+) -> list[CaseFact]:
+    """Turn one nspd_get_zouit_regimes envelope into zouit_regime facts."""
+
+    data = envelope.get("data")
+    if not isinstance(data, Mapping):
+        return []
+    raw_regimes = data.get("regimes")
+    if not isinstance(raw_regimes, list):
+        return []
+    facts: list[CaseFact] = []
+    for regime in raw_regimes:
+        if not isinstance(regime, Mapping):
+            continue
+        registry_number = str(regime.get("registry_number") or "")
+        document = regime.get("document")
+        document = document if isinstance(document, Mapping) else {}
+        facts.append(
+            CaseFact(
+                id=_fact_id(snapshot_id, ZOUIT_REGIME_FACT_TYPE, registry_number),
+                case_id=case_id,
+                subject_feature_id=subject_feature_id,
+                fact_type=ZOUIT_REGIME_FACT_TYPE,
+                predicate=ZOUIT_REGIME_FACT_TYPE,
+                value={
+                    "registry_number": registry_number,
+                    "name": str(regime.get("name") or ""),
+                    "zone_type": str(regime.get("zone_type") or ""),
+                    "registration_date": str(regime.get("registration_date") or ""),
+                    "restrictions": str(regime.get("restrictions") or ""),
+                    "document_number": str(document.get("number") or ""),
+                    "snapshot_id": snapshot_id,
+                },
+                snapshot_id=snapshot_id,
+                quality="registered",
+            )
+        )
+    return facts

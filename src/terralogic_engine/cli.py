@@ -8,8 +8,10 @@ import asyncio
 from terralogic_engine.acquisition.clients import (
     McpDgisClient,
     McpNspdClient,
+    McpNspdDocumentsClient,
     McpOsmClient,
     McpRgisClient,
+    McpRgisDocumentsClient,
     StreamableHttpMcpTransport,
 )
 from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
@@ -25,12 +27,19 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("cadastral_number")
     parser.add_argument("--case-id")
     parser.add_argument("--store", default="./case-store")
-    parser.add_argument("--nspd-url", default="http://127.0.0.1:8001/mcp")
+    parser.add_argument(
+        "--nspd-url",
+        default="http://127.0.0.1:8001/mcp",
+        help="NSPD MCP URL; its document tools share the same server",
+    )
     parser.add_argument("--osm-url", default="http://127.0.0.1:8002/mcp")
     parser.add_argument("--dgis-url", default="http://127.0.0.1:8003/mcp")
     parser.add_argument(
         "--rgis-url",
-        help="Optional RGIS MO MCP URL; used only for cadastral region 50",
+        help=(
+            "Optional RGIS MO MCP URL; used only for cadastral region 50, "
+            "and its document tools share the same server"
+        ),
     )
     parser.add_argument(
         "--margin-m",
@@ -52,9 +61,10 @@ def _parser() -> argparse.ArgumentParser:
 
 async def _run(args: argparse.Namespace) -> int:
     case_id = args.case_id or f"case-{args.cadastral_number.replace(':', '-')}"
+    nspd_transport = StreamableHttpMcpTransport(args.nspd_url)
     pipeline = AcquisitionPipeline(
         store=LocalCaseStore(args.store),
-        nspd=McpNspdClient(StreamableHttpMcpTransport(args.nspd_url)),
+        nspd=McpNspdClient(nspd_transport),
         osm=McpOsmClient(StreamableHttpMcpTransport(args.osm_url)),
         dgis=McpDgisClient(StreamableHttpMcpTransport(args.dgis_url)),
         rgis=(
@@ -62,6 +72,12 @@ async def _run(args: argparse.Namespace) -> int:
             if args.rgis_url
             else None
         ),
+        rgis_documents=(
+            McpRgisDocumentsClient(StreamableHttpMcpTransport(args.rgis_url))
+            if args.rgis_url
+            else None
+        ),
+        nspd_documents=McpNspdDocumentsClient(nspd_transport),
     )
     receipt = await pipeline.collect(
         CollectionRequest(

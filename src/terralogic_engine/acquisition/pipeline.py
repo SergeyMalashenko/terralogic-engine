@@ -14,8 +14,10 @@ from shapely.geometry import mapping
 
 from terralogic_engine.acquisition.clients.base import (
     DgisSourceClient,
+    NspdDocumentsClient,
     NspdSourceClient,
     OsmSourceClient,
+    RgisDocumentsClient,
     RgisSourceClient,
 )
 from terralogic_engine.acquisition.geometry import (
@@ -25,23 +27,32 @@ from terralogic_engine.acquisition.geometry import (
 from terralogic_engine.acquisition.normalize import (
     count_features,
     dgis_features,
+    document_vri_facts,
     nspd_layer_features,
     osm_features,
     parcel_feature,
     rgis_features,
+    zouit_regime_facts,
 )
 from terralogic_engine.acquisition.profiles import (
     CollectionProfile,
     get_collection_profile,
 )
 from terralogic_engine.domain.models import (
+    CaseFact,
     CollectionReceipt,
     CollectionRequest,
     GeoFeature,
     ReceiptStatus,
+    SourceName,
     utc_now,
 )
 from terralogic_engine.store.base import CaseStore
+
+DOCUMENT_SYNC_SNAPSHOT_TYPE = "documents_sync"
+DOCUMENT_VRI_SNAPSHOT_TYPE = "documents_vri"
+DOCUMENT_REGIMES_SNAPSHOT_TYPE = "documents_regimes"
+EXTERNAL_DOCUMENT_WARNING = "external document source not configured"
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -84,6 +95,7 @@ def _coverage_is_partial(payload: Mapping[str, Any]) -> bool:
             data.get("global_limit_reached") is True,
             data.get("source_complete") is False,
             data.get("response_limited") is True,
+            data.get("partial") is True,
         )
     )
 
@@ -93,6 +105,31 @@ def _exception_payload(exc: BaseException) -> dict[str, str]:
         "transport_error": str(exc),
         "exception_type": type(exc).__name__,
     }
+
+
+def _external_document_warning(envelope: Mapping[str, Any]) -> str | None:
+    """Detect a not_found PZZ whose full text lives on an external source."""
+
+    data = envelope.get("data")
+    if not isinstance(data, Mapping):
+        return None
+    documents = data.get("documents")
+    if not isinstance(documents, list):
+        return None
+    for document in documents:
+        if not isinstance(document, Mapping):
+            continue
+        if str(document.get("doc_type") or "") != "pzz":
+            continue
+        if document.get("status") != "not_found":
+            continue
+        sources = document.get("sources")
+        if isinstance(sources, list) and any(
+            isinstance(source, str) and source.startswith(("http://", "https://"))
+            for source in sources
+        ):
+            return EXTERNAL_DOCUMENT_WARNING
+    return None
 
 
 class AcquisitionPipeline:
@@ -106,6 +143,8 @@ class AcquisitionPipeline:
         osm: OsmSourceClient,
         dgis: DgisSourceClient,
         rgis: RgisSourceClient | None = None,
+        rgis_documents: RgisDocumentsClient | None = None,
+        nspd_documents: NspdDocumentsClient | None = None,
         profile_resolver: Callable[[str, str], CollectionProfile] = (
             get_collection_profile
         ),
@@ -116,8 +155,34 @@ class AcquisitionPipeline:
         self.osm = osm
         self.dgis = dgis
         self.rgis = rgis
+        self.rgis_documents = rgis_documents
+        self.nspd_documents = nspd_documents
         self.profile_resolver = profile_resolver
         self.clock = clock
+
+    async def _collect_nspd_documents(self, cadastral_number: str) -> Any:
+        if self.nspd_documents is None:
+            return None
+        return await asyncio.gather(
+            self.nspd_documents.sync_parcel_documents(cadastral_number),
+            self.nspd_documents.get_zouit_regimes(cadastral_number),
+            return_exceptions=True,
+        )
+
+    async def _collect_rgis_documents(self, cadastral_number: str) -> Any:
+        """Run the RGIS document contour without raising past the gather."""
+
+        if self.rgis_documents is None:
+            return None
+        sync = await self.rgis_documents.sync_parcel_documents(cadastral_number)
+        warning = _external_document_warning(sync)
+        if warning is not None:
+            return (sync, None, warning)
+        try:
+            vri: Any = await self.rgis_documents.get_document_vri(cadastral_number)
+        except Exception as exc:  # noqa: BLE001 - handled via _source_result
+            vri = exc
+        return (sync, vri, None)
 
     async def collect(self, request: CollectionRequest) -> CollectionReceipt:
         """Execute one collection or reuse a fresh successful prior result."""
@@ -141,6 +206,7 @@ class AcquisitionPipeline:
         rgis_snapshot_id: str | None = None
         aoi_id: str | None = None
         all_features: list[GeoFeature] = []
+        case_facts: list[CaseFact] = []
         warnings: list[str] = []
         errors: list[str] = []
 
@@ -215,6 +281,7 @@ class AcquisitionPipeline:
                         limit_per_layer=profile.rgis_limit_per_layer,
                         zoom=profile.rgis_zoom,
                     ),
+                    self._collect_rgis_documents(request.cadastral_number),
                     return_exceptions=True,
                 )
 
@@ -224,6 +291,7 @@ class AcquisitionPipeline:
                 social_result,
                 transport_result,
                 rgis_result,
+                nspd_documents_result,
             ) = await asyncio.gather(
                 self.nspd.analyze_land_parcel_layers(
                     request.cadastral_number,
@@ -255,6 +323,7 @@ class AcquisitionPipeline:
                     limit_per_category=profile.dgis_limit_per_category,
                 ),
                 _collect_rgis(),
+                self._collect_nspd_documents(request.cadastral_number),
                 return_exceptions=True,
             )
 
@@ -293,14 +362,13 @@ class AcquisitionPipeline:
             self.store.save_area_of_interest(aoi)
             aoi_id = aoi.id
 
-            all_features.append(
-                parcel_feature(
-                    case_id=request.case_id,
-                    snapshot_id=nspd_snapshot.id,
-                    parcel=dict(parcel),
-                    geometry=aoi.parcel_geometry,
-                )
+            parcel_record = parcel_feature(
+                case_id=request.case_id,
+                snapshot_id=nspd_snapshot.id,
+                parcel=dict(parcel),
+                geometry=aoi.parcel_geometry,
             )
+            all_features.append(parcel_record)
             all_features.extend(
                 nspd_layer_features(
                     case_id=request.case_id,
@@ -308,6 +376,60 @@ class AcquisitionPipeline:
                     envelope=layer_envelope,
                 )
             )
+
+            if nspd_documents_result is not None:
+                nspd_sync_result, nspd_regimes_result = nspd_documents_result
+                nspd_sync_envelope, _stored_nspd_sync = self._source_result(
+                    nspd_sync_result,
+                    tool="nspd_sync_parcel_documents",
+                    partial_warning="NSPD document sync is partial",
+                    warnings=warnings,
+                    errors=errors,
+                )
+                if nspd_sync_envelope is not None:
+                    self.store.save_snapshot(
+                        case_id=request.case_id,
+                        run_id=run_id,
+                        source="nspd",
+                        payload=_json_bytes(nspd_sync_envelope),
+                        adapter_version=_adapter_version(nspd_sync_envelope),
+                        metadata={
+                            "snapshot_type": DOCUMENT_SYNC_SNAPSHOT_TYPE,
+                            "tools": ["nspd_sync_parcel_documents"],
+                            "profile": profile.name,
+                            "profile_version": profile.version,
+                        },
+                    )
+                regimes_envelope, _stored_regimes = self._source_result(
+                    nspd_regimes_result,
+                    tool="nspd_get_zouit_regimes",
+                    partial_warning="NSPD ZOUIT regime coverage is partial",
+                    warnings=warnings,
+                    errors=errors,
+                )
+                if regimes_envelope is not None:
+                    regimes_snapshot = self.store.save_snapshot(
+                        case_id=request.case_id,
+                        run_id=run_id,
+                        source="nspd",
+                        payload=_json_bytes(regimes_envelope),
+                        adapter_version=_adapter_version(regimes_envelope),
+                        metadata={
+                            "snapshot_type": DOCUMENT_REGIMES_SNAPSHOT_TYPE,
+                            "tools": ["nspd_get_zouit_regimes"],
+                            "profile": profile.name,
+                            "profile_version": profile.version,
+                        },
+                    )
+                    if regimes_envelope.get("ok") is True:
+                        case_facts.extend(
+                            zouit_regime_facts(
+                                case_id=request.case_id,
+                                subject_feature_id=parcel_record.id,
+                                snapshot_id=regimes_snapshot.id,
+                                envelope=regimes_envelope,
+                            )
+                        )
 
             osm_envelope, _stored_osm = self._source_result(
                 osm_result,
@@ -389,7 +511,7 @@ class AcquisitionPipeline:
             )
 
             if rgis_result is not None:
-                rgis_info_result, rgis_layer_result = rgis_result
+                rgis_info_result, rgis_layer_result, rgis_documents_result = rgis_result
                 rgis_info_envelope, stored_rgis_info = self._source_result(
                     rgis_info_result,
                     tool="rgis_get_land_parcel_info",
@@ -435,7 +557,19 @@ class AcquisitionPipeline:
                         envelope=rgis_layer_envelope,
                     )
                 )
+                self._store_rgis_documents(
+                    request=request,
+                    run_id=run_id,
+                    profile=profile,
+                    parcel_feature_id=parcel_record.id,
+                    documents_result=rgis_documents_result,
+                    case_facts=case_facts,
+                    warnings=warnings,
+                    errors=errors,
+                )
 
+            if case_facts:
+                self.store.save_facts(request.case_id, case_facts)
             self.store.save_features(request.case_id, all_features)
             status = self._result_status(
                 errors=errors,
@@ -493,6 +627,87 @@ class AcquisitionPipeline:
             warnings.append(partial_warning)
         return envelope, envelope
 
+    def _store_rgis_documents(
+        self,
+        *,
+        request: CollectionRequest,
+        run_id: str,
+        profile: CollectionProfile,
+        parcel_feature_id: str,
+        documents_result: Any,
+        case_facts: list[CaseFact],
+        warnings: list[str],
+        errors: list[str],
+    ) -> None:
+        if documents_result is None:
+            return
+        if isinstance(documents_result, BaseException):
+            self._source_result(
+                documents_result,
+                tool="rgis_sync_parcel_documents",
+                partial_warning="RGIS document sync is partial",
+                warnings=warnings,
+                errors=errors,
+            )
+            return
+        sync_result, vri_result, external_warning = documents_result
+        if external_warning is not None:
+            warnings.append(external_warning)
+        sync_envelope, _stored_sync = self._source_result(
+            sync_result,
+            tool="rgis_sync_parcel_documents",
+            partial_warning="RGIS document sync is partial",
+            warnings=warnings,
+            errors=errors,
+        )
+        if sync_envelope is not None:
+            self.store.save_snapshot(
+                case_id=request.case_id,
+                run_id=run_id,
+                source="rgis",
+                payload=_json_bytes(sync_envelope),
+                adapter_version=_adapter_version(sync_envelope),
+                metadata={
+                    "snapshot_type": DOCUMENT_SYNC_SNAPSHOT_TYPE,
+                    "tools": ["rgis_sync_parcel_documents"],
+                    "profile": profile.name,
+                    "profile_version": profile.version,
+                },
+            )
+        if vri_result is None:
+            return
+        vri_envelope, _stored_vri = self._source_result(
+            vri_result,
+            tool="rgis_get_document_vri",
+            partial_warning="RGIS document VRI extraction is partial",
+            warnings=warnings,
+            errors=errors,
+        )
+        if vri_envelope is None:
+            return
+        vri_snapshot = self.store.save_snapshot(
+            case_id=request.case_id,
+            run_id=run_id,
+            source="rgis",
+            payload=_json_bytes(vri_envelope),
+            adapter_version=_adapter_version(vri_envelope),
+            metadata={
+                "snapshot_type": DOCUMENT_VRI_SNAPSHOT_TYPE,
+                "tools": ["rgis_get_document_vri"],
+                "profile": profile.name,
+                "profile_version": profile.version,
+            },
+        )
+        if vri_envelope.get("ok") is True:
+            case_facts.extend(
+                document_vri_facts(
+                    case_id=request.case_id,
+                    subject_feature_id=parcel_feature_id,
+                    snapshot_id=vri_snapshot.id,
+                    envelope=vri_envelope,
+                )
+            )
+
     def _reusable_receipt(
         self, request: CollectionRequest, profile: CollectionProfile
     ) -> CollectionReceipt | None:
@@ -515,12 +730,35 @@ class AcquisitionPipeline:
         )
         if expects_rgis != (latest.rgis_snapshot_id is not None):
             return None
+        expects_rgis_documents = (
+            self.rgis_documents is not None
+            and request.cadastral_number.startswith("50:")
+        )
+        if expects_rgis_documents != self._run_has_documents_snapshot(
+            request.case_id, latest.run_id, source="rgis"
+        ):
+            return None
+        if (self.nspd_documents is not None) != self._run_has_documents_snapshot(
+            request.case_id, latest.run_id, source="nspd"
+        ):
+            return None
         if request.refresh_policy == "never":
             return latest.model_copy(update={"reused": True})
         age = self.clock() - latest.completed_at
         if age <= timedelta(seconds=profile.stale_after_seconds):
             return latest.model_copy(update={"reused": True})
         return None
+
+    def _run_has_documents_snapshot(
+        self, case_id: str, run_id: str, *, source: SourceName
+    ) -> bool:
+        return any(
+            snapshot.run_id == run_id
+            and str(snapshot.metadata.get("snapshot_type") or "").startswith(
+                "documents"
+            )
+            for snapshot in self.store.list_snapshots(case_id, source=source)
+        )
 
     @staticmethod
     def _result_status(

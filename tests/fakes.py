@@ -519,3 +519,250 @@ class FakeDgisClient:
                 object_id="stop-1",
             )
         )
+
+
+def rgis_documents_sync_result() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "data": {
+            "applicable": True,
+            "cadastral_number": "50:32:0000000:38218",
+            "zone_codes": ["218020020006"],
+            "documents": [
+                {
+                    "version_id": 9001,
+                    "doc_type": "pzz",
+                    "municipality": "Тестовый район",
+                    "number": "ПЗЗ-Т-592",
+                    "version_date": "2021-04-03",
+                    "role": "main",
+                    "status": "downloaded",
+                    "sources": ["https://rgis.test/card/9001"],
+                    "files": ["pzz-592.docx"],
+                },
+                {
+                    "version_id": 9002,
+                    "doc_type": "general_plan",
+                    "municipality": "Тестовый район",
+                    "number": "ГП-Т-15",
+                    "version_date": "2019-11-20",
+                    "role": "main",
+                    "status": "downloaded",
+                    "sources": ["https://rgis.test/card/9002"],
+                    "files": ["gp-15.pdf"],
+                },
+            ],
+            "warnings": [],
+            "partial": False,
+        },
+        "error": None,
+        "metadata": {"adapter_version": "pyrgis-agents-test"},
+    }
+
+
+def rgis_document_vri_result() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "data": {
+            "applicable": True,
+            "cadastral_number": "50:32:0000000:38218",
+            "zones": [
+                {
+                    "zone_code": "218020020006",
+                    "found": True,
+                    "extractions": [
+                        {
+                            "document": {
+                                "version_id": 9001,
+                                "doc_type": "pzz",
+                                "municipality": "Тестовый район",
+                                "number": "ПЗЗ-Т-592",
+                                "version_date": "2021-04-03",
+                            },
+                            "source_file": "pzz-592.docx",
+                            "extractor": "docx_table",
+                            "confidence": 0.93,
+                            "counts": {"items": 2},
+                            "items": [
+                                {
+                                    "row": "1",
+                                    "code": "1.1",
+                                    "name": "Растениеводство",
+                                    "area_min": "20000",
+                                    "area_max": "Не подлежит установлению",
+                                    "building_percentage": "0%",
+                                    "margin": "3",
+                                },
+                                {
+                                    "row": "2",
+                                    "code": "2.1",
+                                    "name": "Садоводство",
+                                    # int-значения, как из parse_number экстракторов
+                                    "area_min": 600,
+                                    "area_max": 1200,
+                                    "building_percentage": "10%",
+                                    "margin": "3",
+                                },
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "zone_code": "218020020099",
+                    "found": False,
+                    "extractions": [],
+                },
+            ],
+            "warnings": [],
+            "partial": False,
+        },
+        "error": None,
+        "metadata": {"adapter_version": "pyrgis-agents-test"},
+    }
+
+
+def nspd_documents_sync_result() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "data": {
+            "cadastral_number": "50:32:0000000:38218",
+            "municipality": "Тестовый район",
+            "territorial_zones": [],
+            "zouit_zones": ["50:32-6.1"],
+            "documents": [
+                {
+                    "version_id": 8001,
+                    "number": "Постановление № 111",
+                    "version_date": "2015-05-12",
+                    "status": "registered_pending_fetch",
+                    "sources": ["https://nspd.test/doc/8001"],
+                    "zone_codes": ["50:32-6.1"],
+                }
+            ],
+            "warnings": [],
+            "partial": False,
+        },
+        "error": None,
+        "metadata": {"adapter_version": "pynspd-agents-test"},
+    }
+
+
+def nspd_zouit_regimes_result() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "data": {
+            "applicable": True,
+            "cadastral_number": "50:32:0000000:38218",
+            "regimes": [
+                {
+                    "registry_number": "50:32-6.1",
+                    "name": "Тестовая охранная зона",
+                    "zone_type": "охранная зона",
+                    "registration_date": "2015-05-12",
+                    "restrictions": "Запрет строительства",
+                    "relation_kind": "zone_inside_parcel",
+                    "parcel_coverage_percent": 0.02,
+                    "document": {
+                        "version_id": 8001,
+                        "number": "Постановление № 111",
+                        "version_date": "2015-05-12",
+                    },
+                    "extractor": "nspd_card",
+                }
+            ],
+            "warnings": [],
+            "partial": False,
+        },
+        "error": None,
+        "metadata": {"adapter_version": "pynspd-agents-test"},
+    }
+
+
+class FakeRgisDocumentsClient:
+    def __init__(
+        self,
+        *,
+        sync_result: dict[str, Any] | None = None,
+        vri_result: dict[str, Any] | None = None,
+        sync_failure: Exception | None = None,
+        vri_failure: Exception | None = None,
+    ) -> None:
+        self.sync_result = sync_result or rgis_documents_sync_result()
+        self.vri_result = vri_result or rgis_document_vri_result()
+        self.sync_failure = sync_failure
+        self.vri_failure = vri_failure
+        self.sync_calls = 0
+        self.vri_calls = 0
+        self.fetch_calls = 0
+        self.vri_arguments: dict[str, Any] = {}
+
+    async def sync_parcel_documents(
+        self, cadastral_number: str
+    ) -> Mapping[str, Any]:
+        self.sync_calls += 1
+        if self.sync_failure is not None:
+            raise self.sync_failure
+        return deepcopy(self.sync_result)
+
+    async def fetch_external_document(
+        self, cadastral_number: str, *, document_url: str
+    ) -> Mapping[str, Any]:
+        self.fetch_calls += 1
+        return {
+            "ok": True,
+            "data": {
+                "applicable": True,
+                "cadastral_number": cadastral_number,
+                "document_url": document_url,
+                "files": [],
+                "warnings": [],
+                "partial": False,
+            },
+            "error": None,
+            "metadata": {"adapter_version": "pyrgis-agents-test"},
+        }
+
+    async def get_document_vri(
+        self, cadastral_number: str, *, zone_code: str | None = None
+    ) -> Mapping[str, Any]:
+        self.vri_calls += 1
+        self.vri_arguments = {
+            "cadastral_number": cadastral_number,
+            "zone_code": zone_code,
+        }
+        if self.vri_failure is not None:
+            raise self.vri_failure
+        return deepcopy(self.vri_result)
+
+
+class FakeNspdDocumentsClient:
+    def __init__(
+        self,
+        *,
+        sync_result: dict[str, Any] | None = None,
+        regimes_result: dict[str, Any] | None = None,
+        sync_failure: Exception | None = None,
+        regimes_failure: Exception | None = None,
+    ) -> None:
+        self.sync_result = sync_result or nspd_documents_sync_result()
+        self.regimes_result = regimes_result or nspd_zouit_regimes_result()
+        self.sync_failure = sync_failure
+        self.regimes_failure = regimes_failure
+        self.sync_calls = 0
+        self.regimes_calls = 0
+
+    async def sync_parcel_documents(
+        self, cadastral_number: str
+    ) -> Mapping[str, Any]:
+        self.sync_calls += 1
+        if self.sync_failure is not None:
+            raise self.sync_failure
+        return deepcopy(self.sync_result)
+
+    async def get_zouit_regimes(
+        self, cadastral_number: str
+    ) -> Mapping[str, Any]:
+        self.regimes_calls += 1
+        if self.regimes_failure is not None:
+            raise self.regimes_failure
+        return deepcopy(self.regimes_result)

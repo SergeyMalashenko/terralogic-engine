@@ -135,6 +135,75 @@ _FULL_LAND_REPORT_V1_1_SECTIONS = (
     ),
 )
 
+_FULL_LAND_REPORT_V1_2_SECTIONS = (
+    ReportSectionTemplate(
+        key="executive_summary",
+        order=1,
+        heading="## 1. Краткое резюме",
+        purpose="Кратко изложить ключевые характеристики и ограничения участка.",
+    ),
+    ReportSectionTemplate(
+        key="parcel_passport",
+        order=2,
+        heading="## 2. Паспорт участка",
+        purpose="Привести основные сведения НСПД и вычисленную площадь.",
+    ),
+    ReportSectionTemplate(
+        key="urban_planning",
+        order=3,
+        heading="## 3. Градостроительная информация",
+        purpose=(
+            "Привести территориальные зоны, ВРИ, ГПЗУ, проекты планировки "
+            "и межевания по данным RGIS."
+        ),
+    ),
+    ReportSectionTemplate(
+        key="documents",
+        order=4,
+        heading="### 3.1. Документы и ВРИ (ПЗЗ/НПА)",
+        purpose=(
+            "Привести ПЗЗ и генпланы муниципалитета, извлечённые таблицы "
+            "видов разрешённого использования и режимы ЗОУИТ из документов."
+        ),
+    ),
+    ReportSectionTemplate(
+        key="zouit",
+        order=5,
+        heading="## 4. ЗОУИТ и ограничения",
+        purpose="Описать зоны, отношения и площади пересечения.",
+    ),
+    ReportSectionTemplate(
+        key="natural_resources",
+        order=6,
+        heading="## 5. Леса и водные ресурсы",
+        purpose="Описать пересечения и ближайшие природные объекты.",
+    ),
+    ReportSectionTemplate(
+        key="social_infrastructure",
+        order=7,
+        heading="## 6. Социальная инфраструктура",
+        purpose="Привести ближайшие объекты по категориям 2GIS.",
+    ),
+    ReportSectionTemplate(
+        key="transport",
+        order=8,
+        heading="## 7. Транспортная инфраструктура",
+        purpose="Описать транспортный инвентарь и классы дорог.",
+    ),
+    ReportSectionTemplate(
+        key="limitations",
+        order=9,
+        heading="## 8. Качество и ограничения данных",
+        purpose="Явно перечислить предупреждения и границы интерпретации.",
+    ),
+    ReportSectionTemplate(
+        key="sources",
+        order=10,
+        heading="## 9. Источники",
+        purpose="Перечислить снимки, даты и версии адаптеров.",
+    ),
+)
+
 _GENERATION_RULES = (
     "Используй только факты и числа из ReportContext.",
     "Не вычисляй площади, доли и расстояния самостоятельно.",
@@ -155,6 +224,18 @@ _GENERATION_RULES_V1_1 = (
     (
         "provider_completeness_known=false означает, что пустой список "
         "градостроительного слоя не доказывает отсутствие объектов на местности."
+    ),
+)
+
+_GENERATION_RULES_V1_2 = (
+    *_GENERATION_RULES_V1_1,
+    (
+        "Если documents=null, указывай, что документный контур не собирался, "
+        "а не что документы отсутствуют."
+    ),
+    (
+        "Если documents.partial=true, явно указывай, что реестр документов "
+        "и таблицы ВРИ неполные."
     ),
 )
 
@@ -273,4 +354,20 @@ def create_default_template_registry() -> ReportTemplateRegistry:
         markdown_skeleton=v1_1_skeleton,
         content_sha256=sha256(v1_1_skeleton.encode("utf-8")).hexdigest(),
     )
-    return ReportTemplateRegistry((v1_template, v1_1_template))
+    v1_2_resource = templates.joinpath("full_land_report_v1_2.md")
+    v1_2_skeleton = v1_2_resource.read_text(encoding="utf-8")
+    v1_2_template = ReportTemplate(
+        template_id=DEFAULT_TEMPLATE_ID,
+        version="1.2",
+        name="Полный отчёт о земельном участке",
+        description=(
+            "Версионированный русский Markdown-отчёт по данным НСПД, RGIS, "
+            "документному контуру ПЗЗ/НПА, OSM, 2GIS и пространственной "
+            "аналитики."
+        ),
+        sections=_FULL_LAND_REPORT_V1_2_SECTIONS,
+        generation_rules=_GENERATION_RULES_V1_2,
+        markdown_skeleton=v1_2_skeleton,
+        content_sha256=sha256(v1_2_skeleton.encode("utf-8")).hexdigest(),
+    )
+    return ReportTemplateRegistry((v1_template, v1_1_template, v1_2_template))

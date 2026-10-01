@@ -21,6 +21,7 @@ from shapely.wkb import loads as load_wkb
 from terralogic_engine.analytics.models import AnalysisResult
 from terralogic_engine.domain.models import (
     AreaOfInterest,
+    CaseFact,
     CaseInfo,
     CollectionReceipt,
     CollectionRequest,
@@ -89,6 +90,43 @@ class LocalCaseStore:
                 "ALTER TABLE areas_of_interest "
                 "ADD COLUMN metrics_json TEXT NOT NULL DEFAULT '{}'"
             )
+            changed = True
+        user_version = int(
+            connection.execute("PRAGMA user_version").fetchone()[0] or 0
+        )
+        if user_version < 2:
+            if "facts" not in tables:
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS facts (
+                        id TEXT PRIMARY KEY,
+                        case_id TEXT NOT NULL,
+                        subject_feature_id TEXT NOT NULL,
+                        predicate TEXT NOT NULL,
+                        value_json TEXT NOT NULL,
+                        unit TEXT,
+                        snapshot_id TEXT NOT NULL,
+                        quality TEXT NOT NULL,
+                        FOREIGN KEY (case_id) REFERENCES case_info(case_id)
+                    )
+                    """
+                )
+            fact_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(facts)")
+            }
+            if "fact_type" not in fact_columns:
+                connection.execute(
+                    "ALTER TABLE facts "
+                    "ADD COLUMN fact_type TEXT NOT NULL DEFAULT ''"
+                )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_facts_case_type
+                ON facts(case_id, fact_type)
+                """
+            )
+            connection.execute("PRAGMA user_version = 2")
             changed = True
         if "analysis_results" not in tables:
             connection.executescript(
@@ -592,6 +630,72 @@ class LocalCaseStore:
             geometry=geometry,
             crs=row["crs"],
             properties=json.loads(row["properties_json"]),
+        )
+
+    def save_facts(self, case_id: str, facts: Sequence[CaseFact]) -> None:
+        rows: list[tuple[object, ...]] = []
+        for fact in facts:
+            if fact.case_id != case_id:
+                raise ValueError("All facts must belong to the target case")
+            rows.append(
+                (
+                    fact.id,
+                    fact.case_id,
+                    fact.subject_feature_id,
+                    fact.predicate,
+                    _json_dumps(fact.value),
+                    fact.unit,
+                    fact.snapshot_id,
+                    fact.quality,
+                    fact.fact_type,
+                )
+            )
+        if not rows:
+            return
+        with self._connection(case_id) as connection:
+            connection.executemany(
+                """
+                INSERT INTO facts(
+                    id, case_id, subject_feature_id, predicate, value_json,
+                    unit, snapshot_id, quality, fact_type
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+    def list_facts(
+        self,
+        case_id: str,
+        *,
+        fact_type: str | None = None,
+        snapshot_ids: Sequence[str] | None = None,
+    ) -> list[CaseFact]:
+        sql = "SELECT * FROM facts WHERE case_id = ?"
+        parameters: list[object] = [case_id]
+        if fact_type is not None:
+            sql += " AND fact_type = ?"
+            parameters.append(fact_type)
+        if snapshot_ids:
+            placeholders = ",".join("?" for _ in snapshot_ids)
+            sql += f" AND snapshot_id IN ({placeholders})"
+            parameters.extend(snapshot_ids)
+        sql += " ORDER BY fact_type, id"
+        with self._connection(case_id) as connection:
+            rows = connection.execute(sql, parameters).fetchall()
+        return [self._fact_from_row(row) for row in rows]
+
+    @staticmethod
+    def _fact_from_row(row: sqlite3.Row) -> CaseFact:
+        return CaseFact(
+            id=row["id"],
+            case_id=row["case_id"],
+            subject_feature_id=row["subject_feature_id"],
+            fact_type=row["fact_type"],
+            predicate=row["predicate"],
+            value=json.loads(row["value_json"]),
+            snapshot_id=row["snapshot_id"],
+            quality=row["quality"],
+            unit=row["unit"],
         )
 
     def save_analysis_result(self, result: AnalysisResult) -> None:

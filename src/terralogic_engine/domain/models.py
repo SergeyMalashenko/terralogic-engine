@@ -118,6 +118,20 @@ class GeoFeature(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict)
 
 
+class CaseFact(BaseModel):
+    """One typed non-spatial fact attached to a case feature and snapshot."""
+
+    id: str
+    case_id: str
+    subject_feature_id: str
+    fact_type: str
+    predicate: str
+    value: dict[str, Any]
+    snapshot_id: str
+    quality: str
+    unit: str | None = None
+
+
 class CollectionReceipt(BaseModel):
     """Compact result returned to Hermes instead of large source payloads."""
 

@@ -144,6 +144,65 @@ class UrbanPlanningReportContext(BaseModel):
     )
 
 
+class DocumentVriItemContext(BaseModel):
+    """One bounded row of a permitted-use table extracted from a document."""
+
+    row: str | None = None
+    code: str | None = None
+    name: str | None = None
+    area_min: int | float | str | None = None
+    area_max: int | float | str | None = None
+    building_percentage: str | None = None
+    margin: int | float | str | None = None
+
+
+class DocumentVriZoneContext(BaseModel):
+    """Extraction result for one territorial zone code."""
+
+    zone_code: str
+    found: bool
+    items: list[DocumentVriItemContext] = Field(default_factory=list)
+
+
+class PzzDocumentContext(BaseModel):
+    """Bounded PZZ document summary with its extracted zone tables."""
+
+    number: str | None = None
+    version_date: str | None = None
+    files: list[str] = Field(default_factory=list)
+    zones: list[DocumentVriZoneContext] = Field(default_factory=list)
+
+
+class GeneralPlanDocumentContext(BaseModel):
+    """Bounded general-plan document summary."""
+
+    number: str | None = None
+    version_date: str | None = None
+    status: str | None = None
+    files: list[str] = Field(default_factory=list)
+
+
+class ZouitRegimeDocumentContext(BaseModel):
+    """Regime of one ZOUIT zone sourced from its legal act document."""
+
+    registry_number: str | None = None
+    name: str | None = None
+    zone_type: str | None = None
+    registration_date: str | None = None
+    restrictions: str | None = None
+    document_number: str | None = None
+
+
+class DocumentReportContext(BaseModel):
+    """Document-contour facts: PZZ/ВРИ tables and ZOUIT regimes, no GeoJSON."""
+
+    pzz: PzzDocumentContext | None = None
+    general_plans: list[GeneralPlanDocumentContext] = Field(default_factory=list)
+    zouit_regimes: list[ZouitRegimeDocumentContext] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=list)
+    partial: bool = False
+
+
 class SourceEvidenceContext(BaseModel):
     """Provenance for one immutable source snapshot."""
 
@@ -186,7 +245,7 @@ class ReportTemplate(BaseModel):
 class ReportContext(BaseModel):
     """Bounded factual context supplied to Hermes for narrative generation."""
 
-    context_version: str = "1.2"
+    context_version: str = "1.3"
     case_id: str
     collection_run_id: str
     analysis_id: str
@@ -206,6 +265,7 @@ class ReportContext(BaseModel):
     urban_planning: UrbanPlanningReportContext = Field(
         default_factory=UrbanPlanningReportContext
     )
+    documents: DocumentReportContext | None = None
     sources: list[SourceEvidenceContext] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 

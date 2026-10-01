@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 
+import pytest
+
 from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
 from terralogic_engine.analytics.pipeline import AnalysisPipeline
 from terralogic_engine.domain.models import CollectionRequest
@@ -62,7 +64,8 @@ async def test_report_context_is_bounded_and_keeps_provenance(tmp_path) -> None:
     assert context.transport_inventory[0].category == ("public_transport_stops")
     assert context.transport_inventory[0].distance_basis == "search_point"
     assert context.road_inventory[0].road_class == "service"
-    assert context.context_version == "1.2"
+    assert context.context_version == "1.3"
+    assert context.documents is None
     assert context.urban_planning.collected is False
     assert context.urban_planning.parcel_zones == []
     assert {source.source for source in context.sources} == {
@@ -156,3 +159,50 @@ async def test_reporting_service_rejects_reordered_template_sections(
         assert "not in template order" in str(exc)
     else:
         raise AssertionError("Reordered Markdown sections must be rejected")
+
+
+async def test_template_v1_2_adds_documents_subsection(tmp_path) -> None:
+    store, acquisition, receipt, _analysis = await _collected_store(tmp_path)
+    service = ReportingService(store=store, acquisition=acquisition)
+
+    default_template = service.get_report_template()
+    assert default_template.version == "1.1"
+    template = service.get_report_template(template_version="1.2")
+    assert template.template_id == "full_land_report"
+    assert template.version == "1.2"
+    assert [section.order for section in template.sections] == list(range(1, 11))
+    assert template.sections[2].key == "urban_planning"
+    assert template.sections[3].key == "documents"
+    assert template.sections[3].heading == "### 3.1. Документы и ВРИ (ПЗЗ/НПА)"
+    assert "{{ documents_section }}" in template.markdown_skeleton
+    assert "{{ urban_planning_section }}" in template.markdown_skeleton
+    assert len(template.content_sha256) == 64
+    assert any("documents=null" in rule for rule in template.generation_rules)
+
+    sections = "\n\n".join(
+        f"{section.heading}\n\nПроверенный текст раздела."
+        for section in template.sections
+    )
+    service.template_registry.validate_markdown(
+        template, f"# Отчёт о земельном участке\n\n{sections}"
+    )
+
+    previous_sections = "\n\n".join(
+        f"{section.heading}\n\nПроверенный текст раздела."
+        for section in default_template.sections
+    )
+    with pytest.raises(ReportStructureError) as excinfo:
+        service.template_registry.validate_markdown(
+            template,
+            f"# Отчёт о земельном участке\n\n{previous_sections}",
+        )
+    assert "missing required headings" in str(excinfo.value)
+
+    saved = service.save_report(
+        "case-report",
+        f"# Отчёт о земельном участке\n\n{sections}",
+        collection_run_id=receipt.run_id,
+        template_version="1.2",
+    )
+    assert saved.template_version == "1.2"
+    assert saved.template_sha256 == template.content_sha256

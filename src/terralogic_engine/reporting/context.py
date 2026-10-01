@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from terralogic_engine.analytics.models import AnalysisResult
-from terralogic_engine.domain.models import CollectionReceipt, GeoFeature
+from terralogic_engine.domain.models import (
+    CaseFact,
+    CollectionReceipt,
+    GeoFeature,
+    SourceSnapshot,
+)
 from terralogic_engine.reporting.models import (
+    DocumentReportContext,
+    DocumentVriItemContext,
+    DocumentVriZoneContext,
+    GeneralPlanDocumentContext,
     InfrastructureObjectContext,
     LegalActReportContext,
     ParcelPlanningZoneReportContext,
     ParcelReportContext,
     PermittedUseReportContext,
+    PzzDocumentContext,
     ReportContext,
     RoadClassContext,
     SearchAreaReportContext,
@@ -21,9 +32,16 @@ from terralogic_engine.reporting.models import (
     TransportCategoryContext,
     UrbanPlanningObjectReportContext,
     UrbanPlanningReportContext,
+    ZouitRegimeDocumentContext,
     ZouitReportContext,
 )
 from terralogic_engine.store.base import CaseStore
+
+DOCUMENT_VRI_FACT_TYPE = "document_vri"
+ZOUIT_REGIME_FACT_TYPE = "zouit_regime"
+DOCUMENTS_SNAPSHOT_TYPE_PREFIX = "documents"
+MAX_DOCUMENT_VRI_ITEMS_PER_ZONE = 50
+MAX_GENERAL_PLANS = 10
 
 TRANSPORT_TAXONOMY: tuple[tuple[str, str, str, str], ...] = (
     (
@@ -397,6 +415,168 @@ def _urban_planning_context(
     )
 
 
+def _document_snapshots_for_run(
+    store: CaseStore,
+    receipt: CollectionReceipt,
+) -> list[SourceSnapshot]:
+    return [
+        snapshot
+        for snapshot in store.list_snapshots(receipt.case_id)
+        if snapshot.run_id == receipt.run_id
+        and str(snapshot.metadata.get("snapshot_type") or "").startswith(
+            DOCUMENTS_SNAPSHOT_TYPE_PREFIX
+        )
+    ]
+
+
+def _snapshot_envelope(
+    store: CaseStore, case_id: str, snapshot: SourceSnapshot
+) -> Mapping[str, Any] | None:
+    try:
+        payload = json.loads(store.load_snapshot(case_id, snapshot.id))
+    except (KeyError, OSError, ValueError):
+        return None
+    return payload if isinstance(payload, Mapping) else None
+
+
+def _vri_zone_context(fact: CaseFact) -> DocumentVriZoneContext:
+    raw_items = fact.value.get("items")
+    items = [
+        DocumentVriItemContext.model_validate(item)
+        for item in (
+            raw_items[:MAX_DOCUMENT_VRI_ITEMS_PER_ZONE]
+            if isinstance(raw_items, list)
+            else []
+        )
+        if isinstance(item, Mapping)
+    ]
+    return DocumentVriZoneContext(
+        zone_code=str(fact.value.get("zone_code") or ""),
+        found=True,
+        items=items,
+    )
+
+
+def _regime_context(fact: CaseFact) -> ZouitRegimeDocumentContext:
+    return ZouitRegimeDocumentContext(
+        registry_number=_optional_text(fact.value.get("registry_number")),
+        name=_optional_text(fact.value.get("name")),
+        zone_type=_optional_text(fact.value.get("zone_type")),
+        registration_date=_optional_text(fact.value.get("registration_date")),
+        restrictions=_optional_text(fact.value.get("restrictions")),
+        document_number=_optional_text(fact.value.get("document_number")),
+    )
+
+
+def _string_list(value: Any) -> list[str]:
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def _documents_context(
+    store: CaseStore,
+    receipt: CollectionReceipt,
+    snapshots: list[SourceSnapshot],
+) -> DocumentReportContext | None:
+    if not snapshots:
+        return None
+    facts = store.list_facts(receipt.case_id, snapshot_ids=[s.id for s in snapshots])
+    zones = [
+        _vri_zone_context(fact)
+        for fact in facts
+        if fact.fact_type == DOCUMENT_VRI_FACT_TYPE
+    ]
+    regimes = [
+        _regime_context(fact)
+        for fact in facts
+        if fact.fact_type == ZOUIT_REGIME_FACT_TYPE
+    ]
+    partial = False
+    pzz_documents: list[Mapping[str, Any]] = []
+    general_plan_documents: list[Mapping[str, Any]] = []
+    for snapshot in snapshots:
+        envelope = _snapshot_envelope(store, receipt.case_id, snapshot)
+        if envelope is None:
+            partial = True
+            continue
+        data = envelope.get("data")
+        if not isinstance(data, Mapping):
+            continue
+        if data.get("partial") is True:
+            partial = True
+        if snapshot.metadata.get("snapshot_type") != "documents_sync":
+            continue
+        raw_documents = data.get("documents")
+        if not isinstance(raw_documents, list):
+            continue
+        for document in raw_documents:
+            if not isinstance(document, Mapping):
+                continue
+            doc_type = str(document.get("doc_type") or "")
+            if doc_type == "pzz":
+                pzz_documents.append(document)
+            elif doc_type == "general_plan":
+                general_plan_documents.append(document)
+
+    selected_pzz = next(
+        (
+            document
+            for document in pzz_documents
+            if document.get("status") == "downloaded"
+        ),
+        pzz_documents[0] if pzz_documents else None,
+    )
+    first_vri_fact = next(
+        (fact for fact in facts if fact.fact_type == DOCUMENT_VRI_FACT_TYPE),
+        None,
+    )
+    pzz = None
+    if selected_pzz is not None or zones:
+        pzz = PzzDocumentContext(
+            number=(
+                _optional_text(selected_pzz.get("number"))
+                if selected_pzz is not None
+                else None
+            )
+            or (
+                _optional_text(first_vri_fact.value.get("doc_number"))
+                if first_vri_fact is not None
+                else None
+            ),
+            version_date=(
+                _optional_text(selected_pzz.get("version_date"))
+                if selected_pzz is not None
+                else None
+            )
+            or (
+                _optional_text(first_vri_fact.value.get("version_date"))
+                if first_vri_fact is not None
+                else None
+            ),
+            files=(
+                _string_list(selected_pzz.get("files"))
+                if selected_pzz is not None
+                else []
+            ),
+            zones=zones,
+        )
+    general_plans = [
+        GeneralPlanDocumentContext(
+            number=_optional_text(document.get("number")),
+            version_date=_optional_text(document.get("version_date")),
+            status=_optional_text(document.get("status")),
+            files=_string_list(document.get("files")),
+        )
+        for document in general_plan_documents[:MAX_GENERAL_PLANS]
+    ]
+    return DocumentReportContext(
+        pzz=pzz,
+        general_plans=general_plans,
+        zouit_regimes=regimes,
+        sources=[snapshot.id for snapshot in snapshots],
+        partial=partial,
+    )
+
+
 def build_report_context(
     store: CaseStore,
     case_id: str,
@@ -439,6 +619,7 @@ def build_report_context(
     warnings = list(
         dict.fromkeys([*receipt.warnings, *receipt.errors, *analysis.warnings])
     )
+    document_snapshots = _document_snapshots_for_run(store, receipt)
     return ReportContext(
         case_id=case_id,
         collection_run_id=receipt.run_id,
@@ -464,6 +645,7 @@ def build_report_context(
             features,
             collected=receipt.rgis_snapshot_id is not None,
         ),
+        documents=_documents_context(store, receipt, document_snapshots),
         sources=sources,
         warnings=warnings,
     )

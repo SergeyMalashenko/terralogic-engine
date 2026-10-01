@@ -8,6 +8,7 @@ from typing import Protocol
 from terralogic_engine.analytics.models import AnalysisResult
 from terralogic_engine.domain.models import (
     AreaOfInterest,
+    CaseFact,
     CaseInfo,
     CollectionReceipt,
     CollectionRequest,
@@ -74,6 +75,16 @@ class CaseStore(Protocol):
         snapshot_id: str | None = None,
         feature_classes: Sequence[str] | None = None,
     ) -> list[GeoFeature]: ...
+
+    def save_facts(self, case_id: str, facts: Sequence[CaseFact]) -> None: ...
+
+    def list_facts(
+        self,
+        case_id: str,
+        *,
+        fact_type: str | None = None,
+        snapshot_ids: Sequence[str] | None = None,
+    ) -> list[CaseFact]: ...
 
     def save_analysis_result(self, result: AnalysisResult) -> None: ...
 
