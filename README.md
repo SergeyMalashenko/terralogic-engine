@@ -57,6 +57,33 @@ The public CLI commands remain `terralogic-collect`, `terralogic-analyze`,
 `terralogic-mcp`, and `terralogic-view`. Python imports now use the
 `terralogic_engine` namespace.
 
+## Local stack
+
+The full system is this engine plus four independent source services
+(`pynspd-mcp`, `pyosm-mcp`, `py2gis-mcp`, `pyrgis-mcp`; the last one covers
+cadastral region 50 only). Each service is a separate MCP server; the engine
+reaches them over HTTP and imports none of their code. A launcher starts the
+whole stack from sibling checkouts:
+
+```bash
+# pynspd :8001, pyosm :8002, py2gis :8003, pyrgis :8005
+GEODOCS_HOME=~/.geodocs scripts/run-local-stack.sh
+# the same plus terralogic-mcp on :8004
+GEODOCS_HOME=~/.geodocs scripts/run-local-stack.sh --engine
+```
+
+| Service | Port | Needs |
+|---|---|---|
+| pynspd-mcp | 8001 | — |
+| pyosm-mcp | 8002 | — |
+| py2gis-mcp | 8003 | `PY2GIS_API_KEY` in `py2gis-agents/.env` |
+| pyrgis-mcp | 8005 | `GEODOCS_HOME` for the document contour |
+| terralogic-mcp | 8004 | `--store` for the case store |
+
+`GEODOCS_HOME` (default `~/.geodocs`) is the shared document store used by
+`pyrgis-mcp` and `pynspd-mcp`: documents are downloaded once per municipality
+and reused across parcels. Both services must see the same directory.
+
 ## Collection
 
 Start `pynspd-mcp` on port 8001, `pyosm-mcp` on port 8002, and `py2gis-mcp`
@@ -82,6 +109,12 @@ The fixed collection profile stores:
 - 2GIS: social infrastructure and public-transport/transport-hub objects.
 - RGIS MO, when configured and applicable: the regional parcel passport plus
   restriction/special and urban-planning layer blocks.
+- Documents, when the source services use the shared `GEODOCS_HOME`:
+  `pyrgis-mcp` discovers and downloads urban-planning documents (PZZ,
+  general plans, GPZU) into the shared store and extracts zone VRI tables;
+  `pynspd-mcp` registers the legal acts behind ZOUIT zones and their regimes.
+  Document failures degrade the run to `partial` instead of failing it, and
+  the extracted rows surface in the report context (`documents` section).
 
 `--rgis-url` is optional. Even when configured, RGIS is called only for a
 cadastral number beginning with `50:`. Changing RGIS availability invalidates
