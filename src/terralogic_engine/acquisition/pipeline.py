@@ -163,11 +163,16 @@ class AcquisitionPipeline:
     async def _collect_nspd_documents(self, cadastral_number: str) -> Any:
         if self.nspd_documents is None:
             return None
-        return await asyncio.gather(
-            self.nspd_documents.sync_parcel_documents(cadastral_number),
-            self.nspd_documents.get_zouit_regimes(cadastral_number),
-            return_exceptions=True,
-        )
+        # Последовательно: параллельный запуск двух вызовов к одному
+        # stateless MCP-серверу приводил к гонке lifespan (закрытый
+        # между запросами общий стор). geodocs теперь переподключается,
+        # но последовательность дешевле и предсказуемее.
+        sync = await self.nspd_documents.sync_parcel_documents(cadastral_number)
+        try:
+            regimes = await self.nspd_documents.get_zouit_regimes(cadastral_number)
+        except Exception as exc:  # noqa: BLE001 - handled via _source_result
+            regimes = exc
+        return (sync, regimes)
 
     async def _collect_rgis_documents(self, cadastral_number: str) -> Any:
         """Run the RGIS document contour without raising past the gather."""
@@ -378,58 +383,67 @@ class AcquisitionPipeline:
             )
 
             if nspd_documents_result is not None:
-                nspd_sync_result, nspd_regimes_result = nspd_documents_result
-                nspd_sync_envelope, _stored_nspd_sync = self._source_result(
-                    nspd_sync_result,
-                    tool="nspd_sync_parcel_documents",
-                    partial_warning="NSPD document sync is partial",
-                    warnings=warnings,
-                    errors=errors,
-                )
-                if nspd_sync_envelope is not None:
-                    self.store.save_snapshot(
-                        case_id=request.case_id,
-                        run_id=run_id,
-                        source="nspd",
-                        payload=_json_bytes(nspd_sync_envelope),
-                        adapter_version=_adapter_version(nspd_sync_envelope),
-                        metadata={
-                            "snapshot_type": DOCUMENT_SYNC_SNAPSHOT_TYPE,
-                            "tools": ["nspd_sync_parcel_documents"],
-                            "profile": profile.name,
-                            "profile_version": profile.version,
-                        },
+                if isinstance(nspd_documents_result, BaseException):
+                    self._source_result(
+                        nspd_documents_result,
+                        tool="nspd_documents",
+                        partial_warning="NSPD document contour is partial",
+                        warnings=warnings,
+                        errors=errors,
                     )
-                regimes_envelope, _stored_regimes = self._source_result(
-                    nspd_regimes_result,
-                    tool="nspd_get_zouit_regimes",
-                    partial_warning="NSPD ZOUIT regime coverage is partial",
-                    warnings=warnings,
-                    errors=errors,
-                )
-                if regimes_envelope is not None:
-                    regimes_snapshot = self.store.save_snapshot(
-                        case_id=request.case_id,
-                        run_id=run_id,
-                        source="nspd",
-                        payload=_json_bytes(regimes_envelope),
-                        adapter_version=_adapter_version(regimes_envelope),
-                        metadata={
-                            "snapshot_type": DOCUMENT_REGIMES_SNAPSHOT_TYPE,
-                            "tools": ["nspd_get_zouit_regimes"],
-                            "profile": profile.name,
-                            "profile_version": profile.version,
-                        },
+                else:
+                    nspd_sync_result, nspd_regimes_result = nspd_documents_result
+                    nspd_sync_envelope, _stored_nspd_sync = self._source_result(
+                        nspd_sync_result,
+                        tool="nspd_sync_parcel_documents",
+                        partial_warning="NSPD document sync is partial",
+                        warnings=warnings,
+                        errors=errors,
                     )
-                    if regimes_envelope.get("ok") is True:
-                        case_facts.extend(
-                            zouit_regime_facts(
-                                case_id=request.case_id,
-                                subject_feature_id=parcel_record.id,
-                                snapshot_id=regimes_snapshot.id,
-                                envelope=regimes_envelope,
-                            )
+                    if nspd_sync_envelope is not None:
+                        self.store.save_snapshot(
+                            case_id=request.case_id,
+                            run_id=run_id,
+                            source="nspd",
+                            payload=_json_bytes(nspd_sync_envelope),
+                            adapter_version=_adapter_version(nspd_sync_envelope),
+                            metadata={
+                                "snapshot_type": DOCUMENT_SYNC_SNAPSHOT_TYPE,
+                                "tools": ["nspd_sync_parcel_documents"],
+                                "profile": profile.name,
+                                "profile_version": profile.version,
+                            },
                         )
+                    regimes_envelope, _stored_regimes = self._source_result(
+                        nspd_regimes_result,
+                        tool="nspd_get_zouit_regimes",
+                        partial_warning="NSPD ZOUIT regime coverage is partial",
+                        warnings=warnings,
+                        errors=errors,
+                    )
+                    if regimes_envelope is not None:
+                        regimes_snapshot = self.store.save_snapshot(
+                            case_id=request.case_id,
+                            run_id=run_id,
+                            source="nspd",
+                            payload=_json_bytes(regimes_envelope),
+                            adapter_version=_adapter_version(regimes_envelope),
+                            metadata={
+                                "snapshot_type": DOCUMENT_REGIMES_SNAPSHOT_TYPE,
+                                "tools": ["nspd_get_zouit_regimes"],
+                                "profile": profile.name,
+                                "profile_version": profile.version,
+                            },
+                        )
+                        if regimes_envelope.get("ok") is True:
+                            case_facts.extend(
+                                zouit_regime_facts(
+                                    case_id=request.case_id,
+                                    subject_feature_id=parcel_record.id,
+                                    snapshot_id=regimes_snapshot.id,
+                                    envelope=regimes_envelope,
+                                )
+                            )
 
             osm_envelope, _stored_osm = self._source_result(
                 osm_result,
