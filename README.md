@@ -37,6 +37,64 @@ The source repositories remain independent. `terralogic_engine` imports neither
 `pynspd`, `pyosm-agents`, `py2gis-agents`, nor `pyrgis-agents`; it relies only
 on their MCP contracts.
 
+## Workspace bootstrap
+
+All repositories belong to one GitHub account (`SergeyMalashenko`) and deploy
+as siblings in a single workspace directory. Code-level dependencies (uv path
+dependencies) form this hierarchy:
+
+```text
+geodocs-store 0.2.0  (package "geodocs", shared document SQLite store)
+        ^                        ^
+        | editable               | editable
+        |                        |
+pynspd-agents 0.4.0        pyrgis-agents 0.6.0  (pyrgis-mcp :8005)
+(pynspd-mcp :8001)         deps: pyrgis 0.6.0  (editable ../pyrgis),
+deps: geodocs (editable    geodocs (editable ../geodocs-store),
+      ../geodocs-store),    mcp
+      pynspd>=1.1.13 from PyPI
+
+pyosm-agents 0.4.1 (:8002), py2gis-agents 0.1.0 (:8003) — no internal deps
+terralogic-engine 0.9.0 — imports none of the above; HTTP MCP only
+SergeyMalashenko/pynspd — reference fork; the runtime resolves pynspd from PyPI
+```
+
+Runtime topology after bootstrap:
+
+```text
+Hermes / CLI
+    |
+    v
+terralogic-mcp :8004 ----HTTP MCP----> pynspd-mcp :8001
+    |                                    |     \
+    |---> pyosm-mcp  :8002               |      \
+    |---> py2gis-mcp :8003               |       \
+    |---> pyrgis-mcp :8005               |        \
+    |                                 shared GEODOCS_HOME (SQLite, WAL)
+    v                                 = one document cache for both services
+terralogic-view :8501 (read-only Streamlit viewer over the case store)
+```
+
+One-time deployment from scratch (any machine with `git`, `uv`, and SSH access
+to GitHub):
+
+```bash
+git clone git@github.com:SergeyMalashenko/terralogic-engine.git
+cd terralogic-engine
+scripts/bootstrap-workspace.sh          # clones siblings, uv sync --all-extras in dependency order,
+                                        # smoke-checks every venv; use --pull to refresh existing checkouts
+GEODOCS_HOME=~/.geodocs scripts/run-local-stack.sh --engine
+```
+
+Two non-obvious requirements baked into the scripts:
+
+- every agent is synced with `uv sync --all-extras` — without the extras the
+  `mcp` (and the engine's `viewer`) optional dependencies are missing and the
+  `*-mcp` / `terralogic-view` entry points fail with `ImportError`;
+- `GEODOCS_HOME` must name one shared directory for `pynspd-mcp` and
+  `pyrgis-mcp` — it is the common document cache, so both services must see
+  the same path.
+
 ## Installation
 
 For local development:
