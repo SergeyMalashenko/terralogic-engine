@@ -86,6 +86,10 @@ scripts/bootstrap-workspace.sh          # clones siblings, uv sync --all-extras 
 GEODOCS_HOME=~/.geodocs scripts/run-local-stack.sh --engine
 ```
 
+For a full-workspace deploy from one clone, prefer the `TerraLogicX`
+meta-repository (all components as pinned submodules + `Makefile`):
+`git clone --recurse-submodules git@github.com:SergeyMalashenko/TerraLogicX.git && cd TerraLogicX && make up`.
+
 Two non-obvious requirements baked into the scripts:
 
 - every agent is synced with `uv sync --all-extras` — without the extras the
