@@ -1,0 +1,111 @@
+{
+  "providers": [
+    {
+      "provider": "kimi-agent",
+      "versions": 19,
+      "files": 113
+    },
+    {
+      "provider": "rgis",
+      "versions": 27,
+      "files": 69
+    }
+  ],
+  "tasks": [
+    {
+      "slug": "pzz_1069",
+      "status": "downloaded",
+      "executor": "kimi",
+      "attempts": 1,
+      "quota_exhausted": [],
+      "error": null,
+      "finished_at": "2026-10-06T12:34:08.375223+00:00"
+    },
+    {
+      "slug": "pzz_1198",
+      "status": "downloaded",
+      "executor": "kimi",
+      "attempts": 1,
+      "quota_exhausted": [],
+      "error": null,
+      "finished_at": "2026-10-06T13:48:27.985274+00:00"
+    },
+    {
+      "slug": "pzz_1666",
+      "status": "downloaded",
+      "executor": null,
+      "attempts": 1,
+      "quota_exhausted": [],
+      "error": null,
+      "finished_at": "2026-10-05T15:47:36.506505+00:00"
+    },
+    {
+      "slug": "pzz_2214",
+      "status": "downloaded",
+      "executor": null,
+      "attempts": 1,
+      "quota_exhausted": [],
+      "error": null,
+      "finished_at": "2026-10-05T17:04:22.812598+00:00"
+    },
+    {
+      "slug": "pzz_2293_па",
+      "status": "downloaded",
+      "executor": null,
+      "attempts": 1,
+      "quota_exhausted": [],
+      "error": null,
+      "finished_at": "2026-10-05T15:47:37.528060+00:00"
+    },
+    {
+      "slug": "pzz_2594_па",
+      "status": "downloaded",
+      "executor": null,
+      "attempts": 1,
+      "quota_exhausted": [],
+      "error": "manifest missing; recovered from inbox evidence",
+      "finished_at": "2026-10-05T16:46:23.432962+00:00"
+    },
+    {
+      "slug": "pzz_2670",
+      "status": "downloaded",
+      "executor": null,
+      "attempts": 1,
+      "quota_exhausted": [],
+      "error": null,
+      "finished_at": "2026-10-05T15:47:36.005264+00:00"
+    },
+    {
+      "slug": "pzz_5505",
+      "status": "downloaded",
+      "executor": null,
+      "attempts": 1,
+      "quota_exhausted": [],
+      "error": null,
+      "finished_at": "2026-10-05T15:47:36.497389+00:00"
+    },
+    {
+      "slug": "pzz_885_пг",
+      "status": "downloaded",
+      "executor": null,
+      "attempts": 1,
+      "quota_exhausted": [],
+      "error": null,
+      "finished_at": "2026-10-05T15:47:37.536182+00:00"
+    },
+    {
+      "slug": "zouit_regime_1182_пп",
+      "status": "downloaded",
+      "executor": null,
+      "attempts": 1,
+      "quota_exhausted": [],
+      "error": "manifest missing; recovered from inbox evidence",
+      "finished_at": "2026-10-05T17:01:43.442327+00:00"
+    }
+  ],
+  "status_counts": {
+    "downloaded": 10
+  },
+  "quota_counts": {},
+  "manual_required": []
+}

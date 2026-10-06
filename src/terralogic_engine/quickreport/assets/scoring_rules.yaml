@@ -1,0 +1,100 @@
+# Методика скоринга участка «TerraLogicX Express».
+# Заглушка v0: равномерные веса. Замена на методику 5.0 — правка этого файла,
+# интерфейс (правила, пороги, версия) не меняется.
+methodology_version: "0.1-stub"
+
+base_score: 100
+score_min: 0
+score_max: 100
+
+grades:
+  - min: 75
+    key: clear
+    title: "без существенных ограничений"
+    summary: "Выявленные особенности вряд ли повлияют на проект дома. Рекомендуется стандартная проверка перед покупкой."
+  - min: 50
+    key: attention
+    title: "требует повышенного внимания"
+    summary: "Участок имеет ограничения, которые могут повлиять на проект дома и расходы. Возможность реализовать ваш замысел требует подробного анализа."
+  - min: 0
+    key: severe
+    title: "серьёзные ограничения"
+    summary: "Выявленные факторы с высокой вероятностью влияют на возможность строительства и бюджет. Обязательна детальная проверка до любых решений."
+
+coverage_words:
+  - min_pct: 80
+    word: "практически весь участок"
+  - min_pct: 20
+    word: "часть участка"
+  - min_pct: 0
+    word: "край участка"
+
+rules:
+  - id: water_protection
+    title: "Водоохранная зона"
+    when: { zone_type: water_protection }
+    weight: 10
+    guidance: water_protection
+
+  - id: coastal_strip
+    title: "Прибрежная защитная полоса"
+    when: { zone_type: coastal_strip }
+    weight: 10
+    guidance: coastal_strip
+
+  - id: airport_subzone
+    title: "Подзона приаэродромной территории"
+    when: { zone_type: airport_subzone }
+    weight: 10
+    guidance: airport_subzone
+
+  - id: oopt
+    title: "Особо охраняемая природная территория"
+    when: { zone_type: oopt }
+    weight: 10
+    guidance: oopt
+
+  - id: cultural_heritage
+    title: "Зона охраны объекта культурного наследия"
+    when: { zone_type: cultural_heritage }
+    weight: 10
+    guidance: cultural_heritage
+
+  - id: power_line
+    title: "Охранная зона линии электропередачи"
+    when: { zone_type: power_line }
+    weight: 10
+    guidance: power_line
+    coverage: { fixed_100: true }
+
+  - id: pipeline
+    title: "Охранная зона магистрального трубопровода"
+    when: { zone_type: pipeline }
+    weight: 10
+    guidance: pipeline
+    coverage: { fixed_100: true }
+
+  - id: sanitary_zone
+    title: "Санитарно-защитная зона"
+    when: { zone_type: sanitary_zone }
+    weight: 10
+    guidance: sanitary_zone
+
+  - id: forest_protection
+    title: "Защитный лес / лесные участки"
+    when: { zone_type: forest_protection }
+    weight: 10
+    guidance: forest_protection
+
+  - id: zsoutu
+    title: "Зона с особыми условиями использования территории"
+    when: { zone_type: zsoutu }
+    weight: 10
+    guidance: zsoutu
+
+  - id: communications_unknown
+    title: "Коммуникации не проверены"
+    when: { communications: unknown }
+    weight: 0
+    informational: true
+    guidance: communications
