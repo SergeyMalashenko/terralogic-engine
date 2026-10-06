@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.10",
     "pyproj>=3.7",
+    "pyyaml>=6.0.3",
     "shapely>=2.0.6",
 ]
 
