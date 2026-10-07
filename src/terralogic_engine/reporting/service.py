@@ -5,6 +5,12 @@ from __future__ import annotations
 from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
 from terralogic_engine.analytics.pipeline import AnalysisPipeline
 from terralogic_engine.domain.models import CollectionRequest, RefreshPolicy
+from terralogic_engine.quickreport import (
+    QuickReportResult,
+    build_quick_context,
+    methodology_sha256,
+    render_quickreport,
+)
 from terralogic_engine.reporting.context import (
     build_report_context,
     collection_receipt_for_run,
@@ -26,6 +32,8 @@ from terralogic_engine.store.base import CaseStore
 MAX_REPORT_CHARACTERS = 500_000
 MAX_REPORT_TITLE_CHARACTERS = 300
 MAX_MODEL_NAME_CHARACTERS = 200
+
+QUICK_REPORT_TEMPLATE_ID = "quick_report"
 
 
 class CasePreparationError(RuntimeError):
@@ -99,6 +107,56 @@ class ReportingService:
             self.store,
             case_id,
             collection_run_id=collection_run_id,
+        )
+
+    def prepare_quickreport(
+        self,
+        case_id: str,
+        *,
+        collection_run_id: str | None = None,
+    ) -> QuickReportResult:
+        """Build and persist the deterministic quick report for a case run.
+
+        No LLM is involved: factor texts come from ``zone_guidance.yaml``
+        and the score from the stub methodology in ``scoring_rules.yaml``.
+        The report is stored with ``template_id="quick_report"`` and the
+        methodology version as the template version.
+        """
+
+        context = build_quick_context(
+            self.store,
+            case_id,
+            collection_run_id=collection_run_id,
+        )
+        markdown = render_quickreport(context)
+        analysis = self.store.get_analysis_result(
+            case_id,
+            context.collection_run_id,
+        )
+        if analysis is None:
+            raise ValueError("The selected run has no analytics result")
+        report = self.store.save_generated_report(
+            case_id=case_id,
+            collection_run_id=context.collection_run_id,
+            analysis_id=analysis.id,
+            title=f"Экспресс-оценка участка {context.parcel.cadastral_number}",
+            template_id=QUICK_REPORT_TEMPLATE_ID,
+            template_version=context.methodology_version,
+            template_sha256=methodology_sha256(),
+            markdown=markdown,
+        )
+        return QuickReportResult(
+            report_id=report.id,
+            case_id=report.case_id,
+            collection_run_id=report.collection_run_id,
+            analysis_id=report.analysis_id,
+            methodology_version=context.methodology_version,
+            title=report.title,
+            relative_path=report.relative_path,
+            content_sha256=report.content_sha256,
+            generated_at=report.generated_at,
+            markdown=report.markdown,
+            warnings=context.warnings,
         )
 
     def get_report_template(

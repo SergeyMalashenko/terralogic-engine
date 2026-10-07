@@ -2,6 +2,7 @@
 
 from .base import (
     DgisSourceClient,
+    GeodocsClient,
     NspdDocumentsClient,
     NspdSourceClient,
     OsmSourceClient,
@@ -10,6 +11,7 @@ from .base import (
 )
 from .mcp import (
     McpDgisClient,
+    McpGeodocsClient,
     McpNspdClient,
     McpNspdDocumentsClient,
     McpOsmClient,
@@ -21,7 +23,9 @@ from .mcp import (
 
 __all__ = [
     "DgisSourceClient",
+    "GeodocsClient",
     "McpDgisClient",
+    "McpGeodocsClient",
     "McpNspdClient",
     "McpNspdDocumentsClient",
     "McpOsmClient",

@@ -29,8 +29,8 @@ The current iteration provides:
 - `AnalysisPipeline`, which calculates reproducible intersections and shortest
   distances for one immutable collection run and stores the result in CaseStore;
 - HTTP MCP clients for NSPD, OSM, 2GIS, and optional regional RGIS MO;
-- a high-level MCP server for Hermes that prepares a case, returns a bounded
-  factual report context, and persists the generated Markdown report;
+- a high-level MCP server for Hermes that prepares a case and renders a
+  deterministic quick report (Markdown) from the stored facts;
 - a read-only map viewer for every normalized feature and raw snapshot.
 
 The source repositories remain independent. `terralogic_engine` imports neither
@@ -70,8 +70,11 @@ terralogic-mcp :8004 ----HTTP MCP----> pynspd-mcp :8001
     |---> pyosm-mcp  :8002               |      \
     |---> py2gis-mcp :8003               |       \
     |---> pyrgis-mcp :8005               |        \
+    |---> geodocs-mcp :8006 (second      |         \
+    |       document contour: acquire    |          \
+    |       + query, agent tier inside)  |           \
     |                                 shared GEODOCS_HOME (SQLite, WAL)
-    v                                 = one document cache for both services
+    v                                 = one document cache for all services
 terralogic-view :8501 (read-only Streamlit viewer over the case store)
 ```
 
@@ -128,7 +131,7 @@ reaches them over HTTP and imports none of their code. A launcher starts the
 whole stack from sibling checkouts:
 
 ```bash
-# pynspd :8001, pyosm :8002, py2gis :8003, pyrgis :8005
+# pynspd :8001, pyosm :8002, py2gis :8003, pyrgis :8005, geodocs :8006
 GEODOCS_HOME=~/.geodocs scripts/run-local-stack.sh
 # the same plus terralogic-mcp on :8004
 GEODOCS_HOME=~/.geodocs scripts/run-local-stack.sh --engine
@@ -136,15 +139,20 @@ GEODOCS_HOME=~/.geodocs scripts/run-local-stack.sh --engine
 
 | Service | Port | Needs |
 |---|---|---|
-| pynspd-mcp | 8001 | — |
+| pynspd-mcp | 8001 | `GEODOCS_HOME` for the document sync contour |
 | pyosm-mcp | 8002 | — |
 | py2gis-mcp | 8003 | `PY2GIS_API_KEY` in `py2gis-agents/.env` |
-| pyrgis-mcp | 8005 | `GEODOCS_HOME` for the document contour |
+| pyrgis-mcp | 8005 | `GEODOCS_HOME` for the document sync contour |
+| geodocs-mcp | 8006 | `GEODOCS_HOME`; the agent tier is slow (minutes) |
 | terralogic-mcp | 8004 | `--store` for the case store |
 
 `GEODOCS_HOME` (default `~/.geodocs`) is the shared document store used by
-`pyrgis-mcp` and `pynspd-mcp`: documents are downloaded once per municipality
-and reused across parcels. Both services must see the same directory.
+`pyrgis-mcp`, `pynspd-mcp`, and `geodocs-mcp`: documents are downloaded once
+per municipality and reused across parcels. All three services must see the
+same directory. `geodocs-mcp` is the second document contour — the only place
+that downloads files (`acquire_documents`) and answers document queries
+(`query_documents`); the source services only discover and register
+documents, leaving their versions pending.
 
 ## Collection
 
@@ -164,7 +172,7 @@ terralogic-collect 52:26:0040002:3823 \
   --refresh-policy always
 ```
 
-The fixed collection profile stores:
+The fixed collection profile (3.0) stores:
 
 - NSPD: parcel information, its contour, and ZOUIT restrictions;
 - OSM: forest, waterbody, and river contours plus stream and road lines;
@@ -172,11 +180,19 @@ The fixed collection profile stores:
 - RGIS MO, when configured and applicable: the regional parcel passport plus
   restriction/special and urban-planning layer blocks.
 - Documents, when the source services use the shared `GEODOCS_HOME`:
-  `pyrgis-mcp` discovers and downloads urban-planning documents (PZZ,
-  general plans, GPZU) into the shared store and extracts zone VRI tables;
-  `pynspd-mcp` registers the legal acts behind ZOUIT zones and their regimes.
-  Document failures degrade the run to `partial` instead of failing it, and
-  the extracted rows surface in the report context (`documents` section).
+  `pyrgis-mcp` discovers and registers urban-planning documents (PZZ,
+  general plans, GPZU) in the shared store without downloading them;
+  `pynspd-mcp` registers the legal acts behind ZOUIT zones. Document
+  failures degrade the run to `partial` instead of failing it.
+
+Profile 3.1 (`--profile-version 3.1`) additionally enables the second
+document contour when `--geodocs-url http://127.0.0.1:8006/mcp` is
+configured: pending PZZ/general-plan versions are acquired through
+`geodocs-mcp` (`acquire_documents`, limited by the profile), then permitted-use
+tables (ВРИ) and ZOUIT regimes are extracted through `query_documents` and
+surface in the report context (`documents` section). The agent tier inside
+geodocs is slow (minutes); without `--geodocs-url` the document contour
+stops after sync.
 
 `--rgis-url` is optional. Even when configured, RGIS is called only for a
 cadastral number beginning with `50:`. Changing RGIS availability invalidates
@@ -240,22 +256,17 @@ terralogic-mcp \
   --nspd-url http://127.0.0.1:8001/mcp \
   --osm-url http://127.0.0.1:8002/mcp \
   --dgis-url http://127.0.0.1:8003/mcp \
-  --rgis-url http://127.0.0.1:8005/mcp
+  --rgis-url http://127.0.0.1:8005/mcp \
+  --geodocs-url http://127.0.0.1:8006/mcp
 ```
 
-It exposes exactly four high-level tools:
+It exposes exactly two high-level tools:
 
 - `terralogic_prepare_case` collects source data and runs analytics;
-- `terralogic_get_report_context` returns compact facts without GeoJSON;
-- `terralogic_get_report_template` returns an independent, immutable report
-  structure identified by `template_id`, version, and SHA-256;
-- `terralogic_save_report` persists the complete model-generated Markdown.
-
-Report context version 1.2 includes an `urban_planning` block for RGIS-backed
-region-50 cases: parcel planning zones and permitted uses, GPZU, PZZ
-territorial zones, planning projects, and surveying projects. The default
-`full_land_report` template is version 1.1; immutable version 1.0 remains
-available for previously generated reports.
+- `terralogic_prepare_quickreport` renders and persists the deterministic
+  quick report (Russian Markdown): the score and factor texts come from the
+  versioned scoring methodology (`quick_report` template id), no model
+  writing is involved.
 
 Configure Hermes to use `http://127.0.0.1:8004/mcp`. For this workflow, expose
 only the TerraLogic server to the model; the NSPD, OSM, 2GIS, and optional RGIS
@@ -267,25 +278,10 @@ analytics stage.
 Suggested Hermes request:
 
 ```text
-Подготовь полный отчёт по земельному участку 50:32:0000000:38218.
-Сначала вызови terralogic_prepare_case, затем получи report context и
-шаблон full_land_report версии 1.1.
-Используй только факты и числа из контекста, не выполняй вычисления сам.
-Заполни шаблон, не меняя обязательные заголовки, и сохрани его через
-terralogic_save_report с теми же template_id и template_version.
-Верни краткое резюме и идентификатор отчёта.
+Подготовь экспресс-оценку земельного участка 50:32:0000000:38218.
+Сначала вызови terralogic_prepare_case, затем terralogic_prepare_quickreport
+с тем же case_id. Верни Markdown отчёта и идентификатор сохранённого отчёта.
 ```
-
-A production-oriented, section-by-section task template is available in
-[`examples/hermes-full-land-report-v1.1.md`](examples/hermes-full-land-report-v1.1.md).
-It can be passed directly to Hermes with:
-
-```bash
-hermes -z "$(<examples/hermes-full-land-report-v1.1.md)"
-```
-
-The exact report contract, Hermes configuration, and troubleshooting commands
-are documented in [`docs/hermes-reporting.md`](docs/hermes-reporting.md).
 
 ## Stored case
 
@@ -299,7 +295,8 @@ case-store/
             ├── nspd/
             ├── osm/
             ├── dgis/
-            └── rgis/
+            ├── rgis/
+            └── geodocs/
 ```
 
 Raw source responses are immutable gzip snapshots. Geometry is stored as WKB,

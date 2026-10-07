@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import hashlib
+from datetime import UTC, date, datetime
 
 import pytest
 
+from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
 from terralogic_engine.analytics.models import IntersectionSummary, NearestObject
+from terralogic_engine.analytics.pipeline import AnalysisPipeline
+from terralogic_engine.domain.models import CollectionRequest
 from terralogic_engine.quickreport import (
     build_quick_context_from_report,
     compute_score,
     load_scoring_rules,
     load_zone_guidance,
     match_guidance,
+    render_quickreport,
 )
 from terralogic_engine.reporting.models import (
     ParcelPlanningZoneReportContext,
@@ -22,6 +27,10 @@ from terralogic_engine.reporting.models import (
     UrbanPlanningReportContext,
     ZouitReportContext,
 )
+from terralogic_engine.reporting.service import ReportingService
+from terralogic_engine.store.local import LocalCaseStore
+
+from .fakes import FakeDgisClient, FakeNspdClient, FakeOsmClient
 
 
 @pytest.fixture()
@@ -205,3 +214,128 @@ def test_no_zones_gives_max_score(rules, guidance):
     assert quick.verdict.score == 100
     assert quick.verdict.grade_key == "clear"
     assert [f.rule_id for f in quick.factors] == ["communications_unknown"]
+
+
+# ---------------------------------------------------------------------------
+# Рендер
+# ---------------------------------------------------------------------------
+
+
+def test_render_quickreport_structure(rules, guidance):
+    quick = build_quick_context_from_report(
+        _base_context(), rules=rules, guidance=guidance
+    )
+
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+
+    assert markdown.startswith("# Экспресс-оценка земельного участка\n")
+    assert (
+        "Отчёт от 07.10.2026 · Данные от 06.10.2026 · "
+        "Методика оценки — версия 0.1-stub"
+    ) in markdown
+    assert "**Кадастровый номер 50:11:0020310:49**" in markdown
+    # скор в заголовке вердикта + градация + summary
+    assert "## Оценка участка — 86/100 (без существенных ограничений)" in markdown
+    assert "Рекомендуется стандартная проверка перед покупкой." in markdown
+    # таблица факторов: заголовок и обе зоны, informational-строки нет
+    assert "| № | Зона | Охват участка | Что это значит для вас |" in markdown
+    assert "| 1 | Водоохранная зона р. Банка | Практически весь участок |" in markdown
+    assert "| 2 | Прибрежная защитная полоса | Часть участка |" in markdown
+    assert "| 3 |" not in markdown
+    assert "Коммуникации не проверены |" not in markdown
+    # паспорт участка
+    assert "## Паспорт участка" in markdown
+    assert "- **Адрес:** Московская область, Красногорск" in markdown
+    assert "- **Статус / площадь:** Учтённый · 1 000 м²" in markdown
+    assert "- **Категория земель:** Земли населённых пунктов" in markdown
+    assert "- **Разрешённое использование:** ИЖС" in markdown
+    assert "- **Территориальная зона:** Ж-2, Зона застройки ИЖС" in markdown
+    assert (
+        "- **Кадастровая стоимость:** 5 000 000 руб. (не является рыночной ценой)"
+        in markdown
+    )
+    # окружение + блок коммуникаций
+    assert "## Окружение" in markdown
+    assert "- Водные объекты: пруд Круглый ~42 м" in markdown
+    assert "### Коммуникации" in markdown
+    assert "электричеству" in markdown
+    # заглушка карты и дисклеймер
+    assert "Схема расположения зон приводится в подробном заключении." in markdown
+    assert "## Ограничения отчёта" in markdown
+    assert (
+        "не заменяет юридическое, кадастровое или градостроительное заключение"
+        in markdown
+    )
+    assert markdown.endswith("\n")
+    # маркетинговых блоков образца нет
+    assert "Заключение»" not in markdown
+    assert "Подбор" not in markdown
+
+
+def test_render_quickreport_without_zones(rules, guidance):
+    base = _base_context()
+    base.zouit = []
+    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
+
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+
+    assert "## Оценка участка — 100/100 (без существенных ограничений)" in markdown
+    assert "| 1 |" not in markdown
+    assert "на участок не попадают" in markdown
+
+
+def test_render_quickreport_defaults_today(rules, guidance):
+    quick = build_quick_context_from_report(
+        _base_context(), rules=rules, guidance=guidance
+    )
+    markdown = render_quickreport(quick)
+    assert f"Отчёт от {datetime.now(UTC):%d.%m.%Y}" in markdown
+
+
+# ---------------------------------------------------------------------------
+# prepare_quickreport end-to-end
+# ---------------------------------------------------------------------------
+
+
+async def test_prepare_quickreport_persists_markdown(tmp_path) -> None:
+    store = LocalCaseStore(tmp_path / "store")
+    acquisition = AcquisitionPipeline(
+        store=store,
+        nspd=FakeNspdClient(),
+        osm=FakeOsmClient(),
+        dgis=FakeDgisClient(),
+    )
+    receipt = await acquisition.collect(
+        CollectionRequest(
+            case_id="case-quickreport",
+            cadastral_number="52:26:0040002:3823",
+            refresh_policy="always",
+        )
+    )
+    analysis = AnalysisPipeline(store=store).analyze("case-quickreport")
+    service = ReportingService(store=store, acquisition=acquisition)
+
+    result = service.prepare_quickreport("case-quickreport")
+
+    assert result.case_id == "case-quickreport"
+    assert result.collection_run_id == receipt.run_id
+    assert result.analysis_id == analysis.id
+    assert result.methodology_version == "0.1-stub"
+    assert result.markdown.startswith("# Экспресс-оценка земельного участка\n")
+    assert "52:26:0040002:3823" in result.markdown
+    persisted = store.get_latest_generated_report("case-quickreport", receipt.run_id)
+    assert persisted is not None
+    assert persisted.id == result.report_id
+    assert persisted.template_id == "quick_report"
+    assert persisted.template_version == result.methodology_version
+    assert len(persisted.template_sha256) == 64
+    assert persisted.markdown == result.markdown
+    assert persisted.content_sha256 == result.content_sha256
+    assert (
+        result.content_sha256
+        == hashlib.sha256(result.markdown.encode("utf-8")).hexdigest()
+    )
+    report_file = (
+        tmp_path / "store" / "cases" / "case-quickreport" / result.relative_path
+    )
+    assert report_file.read_text("utf-8") == result.markdown

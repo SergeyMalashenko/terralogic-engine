@@ -76,28 +76,46 @@ class RgisSourceClient(Protocol):
 
 
 class RgisDocumentsClient(Protocol):
-    """Document contour of the RGIS MO MCP server (region 50 only)."""
+    """Document discovery contour of the RGIS MO MCP server (region 50 only).
+
+    Sync only registers documents in the shared geodocs store; files are
+    downloaded by the second contour (geodocs-mcp), not by this client.
+    """
 
     async def sync_parcel_documents(
         self, cadastral_number: str
-    ) -> Mapping[str, Any]: ...
-
-    async def fetch_external_document(
-        self, cadastral_number: str, *, document_url: str
-    ) -> Mapping[str, Any]: ...
-
-    async def get_document_vri(
-        self, cadastral_number: str, *, zone_code: str | None = None
     ) -> Mapping[str, Any]: ...
 
 
 class NspdDocumentsClient(Protocol):
-    """Document contour of the NSPD MCP server (federal coverage)."""
+    """Document discovery contour of the NSPD MCP server (federal coverage)."""
 
     async def sync_parcel_documents(
         self, cadastral_number: str
     ) -> Mapping[str, Any]: ...
 
-    async def get_zouit_regimes(
-        self, cadastral_number: str
+
+class GeodocsClient(Protocol):
+    """Second document contour (geodocs-mcp): acquisition and extraction.
+
+    Responses are plain geodocs payloads (status/refs/warnings for acquire,
+    status/data/evidence for query), not ok/data/error tool envelopes.
+    """
+
+    async def acquire_documents(
+        self,
+        municipality: str,
+        doc_type: str,
+        *,
+        number: str | None = None,
+        version_date: str | None = None,
+        title: str | None = None,
+    ) -> Mapping[str, Any]: ...
+
+    async def query_documents(
+        self,
+        version_ids: Sequence[int],
+        query: str,
+        *,
+        response_schema: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]: ...

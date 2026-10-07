@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from terralogic_engine.acquisition.clients import (
     McpDgisClient,
+    McpGeodocsClient,
     McpNspdClient,
     McpNspdDocumentsClient,
     McpOsmClient,
@@ -20,20 +21,12 @@ from terralogic_engine.acquisition.clients import (
     StreamableHttpMcpTransport,
 )
 from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
+from terralogic_engine.quickreport.models import QuickReportResult
 from terralogic_engine.reporting.context import ReportContextError
-from terralogic_engine.reporting.models import (
-    PrepareCaseResult,
-    ReportContext,
-    ReportTemplate,
-    SavedReportResult,
-)
+from terralogic_engine.reporting.models import PrepareCaseResult
 from terralogic_engine.reporting.service import (
     CasePreparationError,
     ReportingService,
-)
-from terralogic_engine.reporting.template_registry import (
-    DEFAULT_TEMPLATE_ID,
-    DEFAULT_TEMPLATE_VERSION,
 )
 from terralogic_engine.store.local import LocalCaseStore
 
@@ -43,14 +36,12 @@ DEFAULT_INSTRUCTIONS = (
     "contour (PZZ documents, permitted-use tables, ZOUIT regimes) when "
     "configured and applicable, performs deterministic spatial "
     "analytics, and returns case_id plus collection_run_id. Then call "
-    "terralogic_get_report_context for facts and terralogic_get_report_template "
-    "for the independent report structure. Write a Russian Markdown report "
-    "using only the context facts and the selected template. Never calculate "
-    "areas, percentages, or "
-    "distances yourself. Treat not_found_within_aoi as absence only in the "
-    "collected search area. Transport example distances are measured from the "
-    "search point, not the parcel. Do not present the report as a legal opinion. "
-    "Finally call terralogic_save_report with the complete Markdown document."
+    "terralogic_prepare_quickreport with the same case_id: it builds and "
+    "persists the deterministic quick report (Russian Markdown) without any "
+    "model writing — the score and factor texts come from the versioned "
+    "scoring methodology. Return the report Markdown and report_id to the "
+    "user. Never calculate areas, percentages, or distances yourself. "
+    "Do not present the report as a legal opinion."
 )
 
 T = TypeVar("T")
@@ -110,11 +101,14 @@ def create_reporting_service(
     osm_url: str = "http://127.0.0.1:8002/mcp",
     dgis_url: str = "http://127.0.0.1:8003/mcp",
     rgis_url: str | None = None,
+    geodocs_url: str | None = None,
 ) -> ReportingService:
-    """Create the production service using the four upstream MCP servers.
+    """Create the production service using the upstream MCP servers.
 
-    The document tools of pynspd-mcp and pyrgis-mcp live on the same servers
-    as the NSPD and RGIS source tools, so their URLs are reused as-is.
+    The document sync tools of pynspd-mcp and pyrgis-mcp live on the same
+    servers as the NSPD and RGIS source tools, so their URLs are reused
+    as-is. ``geodocs_url`` points at the second document contour
+    (geodocs-mcp): without it the document contour stops after sync.
     """
 
     store = LocalCaseStore(store_path)
@@ -133,6 +127,7 @@ def create_reporting_service(
             else None
         ),
         nspd_documents=McpNspdDocumentsClient(nspd_transport),
+        geodocs=(McpGeodocsClient(url=geodocs_url) if geodocs_url else None),
     )
     return ReportingService(store=store, acquisition=acquisition)
 
@@ -192,12 +187,17 @@ def create_mcp_server(
         margin_m: int = 1000,
         refresh_policy: Literal["never", "if_stale", "always"] = "if_stale",
     ) -> ToolResult[PrepareCaseResult]:
-        """Collect and analyze one land parcel before report generation.
+        """Collect and analyze one land parcel before quick-report generation.
 
         Besides the NSPD, OSM, 2GIS, and optional RGIS MO sources, the
-        document contour (pyrgis-mcp / pynspd-mcp) is collected when the
-        same server URLs are configured: PZZ and general-plan documents,
-        extracted permitted-use tables (ВРИ), and ZOUIT regime documents.
+        document sync contour (pyrgis-mcp / pynspd-mcp) is collected when the
+        same server URLs are configured: PZZ and general-plan documents are
+        registered in the shared document store. Collection profile 3.1
+        additionally runs the second document contour (geodocs-mcp, when
+        ``--geodocs-url`` is configured): acquire of pending documents plus
+        extracted permitted-use tables (ВРИ) and ZOUIT regimes.
+        After a successful prepare, call ``terralogic_prepare_quickreport``
+        with the returned ``case_id`` to build the report.
 
         Args:
             cadastral_number: Four numeric parts separated by colons.
@@ -224,15 +224,16 @@ def create_mcp_server(
         return ToolResult[PrepareCaseResult](ok=True, data=data)
 
     @server.tool()
-    async def terralogic_get_report_context(
+    async def terralogic_prepare_quickreport(
         case_id: str,
         collection_run_id: str | None = None,
-    ) -> ToolResult[ReportContext]:
-        """Load compact verified facts for a Hermes-generated report.
+    ) -> ToolResult[QuickReportResult]:
+        """Build and persist the deterministic quick report for a case.
 
-        The context includes the document contour (documents): PZZ
-        documents with extracted permitted-use tables and ZOUIT regimes
-        when the document tools were collected for the selected run.
+        The report is rendered from CaseStore facts without any model
+        involvement: the score and factor texts come from the versioned
+        scoring methodology, whose version is stored with the report.
+        Returns the complete Markdown document plus its CaseStore metadata.
 
         Args:
             case_id: Existing CaseStore case identifier.
@@ -241,94 +242,16 @@ def create_mcp_server(
         """
 
         try:
-            data = service.get_report_context(
+            data = service.prepare_quickreport(
                 case_id,
                 collection_run_id=collection_run_id,
             )
         except Exception as exc:  # noqa: BLE001 - MCP application boundary
-            return ToolResult[ReportContext](
+            return ToolResult[QuickReportResult](
                 ok=False,
                 error=_tool_failure(exc),
             )
-        return ToolResult[ReportContext](ok=True, data=data)
-
-    @server.tool()
-    async def terralogic_get_report_template(
-        template_id: str = DEFAULT_TEMPLATE_ID,
-        template_version: str = DEFAULT_TEMPLATE_VERSION,
-    ) -> ToolResult[ReportTemplate]:
-        """Load an independent versioned Markdown report template.
-
-        Args:
-            template_id: Stable template identity, currently
-                ``full_land_report``.
-            template_version: Exact immutable template version, currently
-                ``1.1``.
-        """
-
-        try:
-            data = service.get_report_template(
-                template_id,
-                template_version=template_version,
-            )
-        except Exception as exc:  # noqa: BLE001 - MCP application boundary
-            return ToolResult[ReportTemplate](
-                ok=False,
-                error=_tool_failure(exc),
-            )
-        return ToolResult[ReportTemplate](ok=True, data=data)
-
-    @server.tool()
-    async def terralogic_save_report(
-        case_id: str,
-        markdown: str,
-        collection_run_id: str | None = None,
-        title: str | None = None,
-        model_name: str | None = None,
-        template_id: str = DEFAULT_TEMPLATE_ID,
-        template_version: str = DEFAULT_TEMPLATE_VERSION,
-    ) -> ToolResult[SavedReportResult]:
-        """Persist a complete model-generated Markdown report in CaseStore.
-
-        Args:
-            case_id: Existing CaseStore case identifier.
-            markdown: Complete report document, up to 500000 characters.
-            collection_run_id: Exact source run used by the report. If omitted,
-                the latest collection run is selected.
-            title: Optional report title stored in artifact metadata.
-            model_name: Optional model identifier for reproducibility.
-            template_id: Template identity used to generate the Markdown.
-            template_version: Exact template version used by Hermes.
-        """
-
-        try:
-            report = service.save_report(
-                case_id,
-                markdown,
-                collection_run_id=collection_run_id,
-                title=title,
-                model_name=model_name,
-                template_id=template_id,
-                template_version=template_version,
-            )
-            data = SavedReportResult(
-                report_id=report.id,
-                case_id=report.case_id,
-                collection_run_id=report.collection_run_id,
-                analysis_id=report.analysis_id,
-                template_id=report.template_id,
-                template_version=report.template_version,
-                template_sha256=report.template_sha256,
-                relative_path=report.relative_path,
-                content_sha256=report.content_sha256,
-                generated_at=report.generated_at,
-            )
-        except Exception as exc:  # noqa: BLE001 - MCP application boundary
-            return ToolResult[SavedReportResult](
-                ok=False,
-                error=_tool_failure(exc),
-            )
-        return ToolResult[SavedReportResult](ok=True, data=data)
+        return ToolResult[QuickReportResult](ok=True, data=data)
 
     return server
 
@@ -363,6 +286,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--rgis-url",
         help="Optional RGIS MO MCP URL; used only for cadastral region 50",
     )
+    parser.add_argument(
+        "--geodocs-url",
+        help=(
+            "Optional geodocs-mcp URL (second document contour: acquire and "
+            "query); without it the document contour stops after sync"
+        ),
+    )
     parser.add_argument("--stateful-http", action="store_true")
     parser.add_argument("--sse-response", action="store_true")
     return parser
@@ -379,6 +309,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             osm_url=args.osm_url,
             dgis_url=args.dgis_url,
             rgis_url=args.rgis_url,
+            geodocs_url=args.geodocs_url,
         )
         server = create_mcp_server(
             service,

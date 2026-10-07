@@ -2,14 +2,15 @@
 # Поднимает локальный стек сервисов для terralogic-engine.
 #
 # Использование:
-#   scripts/run-local-stack.sh            # источники: :8001 :8002 :8003 :8005
+#   scripts/run-local-stack.sh            # источники: :8001 :8002 :8003 :8005, geodocs :8006
 #   scripts/run-local-stack.sh --engine   # + terralogic-mcp на :8004
 #
 # Ожидает раскладку соседних checkout'ов:
-#   <root>/pynspd-agents  pyosm-agents  py2gis-agents  pyrgis-agents  terralogic-engine
+#   <root>/pynspd-agents  pyosm-agents  py2gis-agents  pyrgis-agents
+#   <root>/geodocs-store  terralogic-engine
 #
-# GEODOCS_HOME (по умолчанию ~/.geodocs) — общая база документов pyrgis-mcp и
-# pynspd-mcp; оба сервиса обязаны видеть один каталог.
+# GEODOCS_HOME (по умолчанию ~/.geodocs) — общая база документов pyrgis-mcp,
+# pynspd-mcp и geodocs-mcp; все сервисы обязаны видеть один каталог.
 
 set -euo pipefail
 
@@ -45,6 +46,7 @@ start pynspd-agents pynspd-mcp --transport streamable-http --host 127.0.0.1 --po
 start pyosm-agents pyosm-mcp --transport streamable-http --host 127.0.0.1 --port 8002
 start py2gis-agents py2gis-mcp --transport streamable-http --host 127.0.0.1 --port 8003
 start pyrgis-agents pyrgis-mcp --transport streamable-http --host 127.0.0.1 --port 8005
+start geodocs-store geodocs-mcp --transport streamable-http --host 127.0.0.1 --port 8006
 
 if [ "$WITH_ENGINE" -eq 1 ]; then
     start terralogic-engine terralogic-mcp \
@@ -53,18 +55,20 @@ if [ "$WITH_ENGINE" -eq 1 ]; then
         --osm-url http://127.0.0.1:8002/mcp \
         --dgis-url http://127.0.0.1:8003/mcp \
         --rgis-url http://127.0.0.1:8005/mcp \
+        --geodocs-url http://127.0.0.1:8006/mcp \
         --store ./case-store
 fi
 
 cat <<EOF
 
 Stack is starting (GEODOCS_HOME=$GEODOCS_HOME):
-  nspd :8001   osm :8002   2gis :8003   rgis :8005$( [ "$WITH_ENGINE" -eq 1 ] && echo '   engine :8004' )
+  nspd :8001   osm :8002   2gis :8003   rgis :8005   geodocs :8006$( [ "$WITH_ENGINE" -eq 1 ] && echo '   engine :8004' )
 Hermes endpoint: http://127.0.0.1:8004/mcp
 Collect a case:
   terralogic-collect <cadastral-number> --store ./case-store \\
     --nspd-url http://127.0.0.1:8001/mcp --osm-url http://127.0.0.1:8002/mcp \\
-    --dgis-url http://127.0.0.1:8003/mcp --rgis-url http://127.0.0.1:8005/mcp
+    --dgis-url http://127.0.0.1:8003/mcp --rgis-url http://127.0.0.1:8005/mcp \\
+    --geodocs-url http://127.0.0.1:8006/mcp
 Ctrl-C останавливает все сервисы.
 EOF
 

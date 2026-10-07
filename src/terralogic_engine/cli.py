@@ -7,6 +7,7 @@ import asyncio
 
 from terralogic_engine.acquisition.clients import (
     McpDgisClient,
+    McpGeodocsClient,
     McpNspdClient,
     McpNspdDocumentsClient,
     McpOsmClient,
@@ -39,6 +40,21 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "Optional RGIS MO MCP URL; used only for cadastral region 50, "
             "and its document tools share the same server"
+        ),
+    )
+    parser.add_argument(
+        "--geodocs-url",
+        help=(
+            "Optional geodocs-mcp URL (second document contour: acquire and "
+            "query); without it the document contour stops after sync"
+        ),
+    )
+    parser.add_argument(
+        "--profile-version",
+        default="3.0",
+        help=(
+            "Collection profile version; 3.1 enables the geodocs document "
+            "contour (acquire + query) when --geodocs-url is configured"
         ),
     )
     parser.add_argument(
@@ -78,11 +94,13 @@ async def _run(args: argparse.Namespace) -> int:
             else None
         ),
         nspd_documents=McpNspdDocumentsClient(nspd_transport),
+        geodocs=(McpGeodocsClient(url=args.geodocs_url) if args.geodocs_url else None),
     )
     receipt = await pipeline.collect(
         CollectionRequest(
             case_id=case_id,
             cadastral_number=args.cadastral_number,
+            profile_version=args.profile_version,
             refresh_policy=args.refresh_policy,
             allow_partial=not args.strict,
             margin_m=args.margin_m,

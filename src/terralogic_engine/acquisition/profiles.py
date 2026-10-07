@@ -26,6 +26,9 @@ class CollectionProfile(BaseModel):
     rgis_limit_per_layer: int = Field(default=50, ge=1, le=100)
     rgis_zoom: int = Field(default=14, ge=10, le=18)
     stale_after_seconds: int = Field(default=86_400, ge=0)
+    documents_acquire: bool = False
+    documents_acquire_limit: int = Field(default=3, ge=0, le=50)
+    documents_query: bool = False
 
 
 STANDARD_LAND_REPORT = CollectionProfile(
@@ -41,8 +44,21 @@ STANDARD_LAND_REPORT = CollectionProfile(
     ),
 )
 
+STANDARD_LAND_REPORT_WITH_DOCUMENTS = STANDARD_LAND_REPORT.model_copy(
+    update={
+        "version": "3.1",
+        "documents_acquire": True,
+        "documents_acquire_limit": 3,
+        "documents_query": True,
+    }
+)
+
 _PROFILES = {
     (STANDARD_LAND_REPORT.name, STANDARD_LAND_REPORT.version): STANDARD_LAND_REPORT,
+    (
+        STANDARD_LAND_REPORT_WITH_DOCUMENTS.name,
+        STANDARD_LAND_REPORT_WITH_DOCUMENTS.version,
+    ): STANDARD_LAND_REPORT_WITH_DOCUMENTS,
 }
 
 

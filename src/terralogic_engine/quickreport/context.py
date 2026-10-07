@@ -164,6 +164,7 @@ def build_quick_context_from_report(
     return QuickReportContext(
         case_id=base.case_id,
         collection_run_id=base.collection_run_id,
+        collected_at=base.collected_at,
         methodology_version=rules.methodology_version,
         parcel=_passport(base),
         verdict=QuickVerdict(

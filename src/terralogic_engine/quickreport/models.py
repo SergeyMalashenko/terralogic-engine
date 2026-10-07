@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -52,9 +54,26 @@ class QuickReportContext(BaseModel):
 
     case_id: str
     collection_run_id: str
+    collected_at: datetime
     methodology_version: str
     parcel: QuickPassport
     verdict: QuickVerdict
     factors: list[QuickFactor] = Field(default_factory=list)
     surroundings: QuickSurroundings
+    warnings: list[str] = Field(default_factory=list)
+
+
+class QuickReportResult(BaseModel):
+    """Результат prepare_quickreport: Markdown и метаданные сохранённого отчёта."""
+
+    report_id: str
+    case_id: str
+    collection_run_id: str
+    analysis_id: str
+    methodology_version: str
+    title: str
+    relative_path: str
+    content_sha256: str
+    generated_at: datetime
+    markdown: str
     warnings: list[str] = Field(default_factory=list)

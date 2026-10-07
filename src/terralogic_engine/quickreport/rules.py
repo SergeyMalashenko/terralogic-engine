@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,14 @@ from typing import Any
 import yaml
 
 _ASSETS = Path(__file__).resolve().parent / "assets"
+
+
+def methodology_sha256() -> str:
+    """Отпечаток методики: sha256 активов скоринга и текстов guidance."""
+    digest = hashlib.sha256()
+    for name in ("scoring_rules.yaml", "zone_guidance.yaml"):
+        digest.update((_ASSETS / name).read_bytes())
+    return digest.hexdigest()
 
 
 class QuickRulesError(ValueError):

@@ -536,9 +536,9 @@ def rgis_documents_sync_result() -> dict[str, Any]:
                     "number": "ПЗЗ-Т-592",
                     "version_date": "2021-04-03",
                     "role": "main",
-                    "status": "downloaded",
+                    "status": "registered_pending_fetch",
                     "sources": ["https://rgis.test/card/9001"],
-                    "files": ["pzz-592.docx"],
+                    "files": [],
                 },
                 {
                     "version_id": 9002,
@@ -560,50 +560,77 @@ def rgis_documents_sync_result() -> dict[str, Any]:
     }
 
 
-def rgis_document_vri_result() -> dict[str, Any]:
+def geodocs_acquire_result() -> dict[str, Any]:
+    """Успешный ответ geodocs acquire_documents по ПЗЗ-Т-592 (version 9001)."""
+
     return {
-        "ok": True,
+        "status": "acquired",
+        "refs": [
+            {
+                "municipality": "Тестовый район",
+                "doc_type": "pzz",
+                "number": "ПЗЗ-Т-592",
+                "version_date": "2021-04-03",
+                "role": "unknown",
+                "title": None,
+                "issuer": None,
+                "region_code": None,
+                "source": "rgis",
+                "source_object_id": "9001",
+                "amendment_number": None,
+                "version_id": 9001,
+            }
+        ],
+        "warnings": [],
+    }
+
+
+def geodocs_vri_query_result() -> dict[str, Any]:
+    """Ответ geodocs query_documents (static:vri) по таблицам ВРИ зон."""
+
+    return {
+        "status": "success",
         "data": {
-            "applicable": True,
-            "cadastral_number": "50:32:0000000:38218",
             "zones": [
                 {
                     "zone_code": "218020020006",
                     "found": True,
                     "extractions": [
                         {
-                            "document": {
-                                "version_id": 9001,
-                                "doc_type": "pzz",
-                                "municipality": "Тестовый район",
-                                "number": "ПЗЗ-Т-592",
-                                "version_date": "2021-04-03",
-                            },
-                            "source_file": "pzz-592.docx",
+                            "version_id": 9001,
+                            "status": "extracted",
                             "extractor": "docx_table",
-                            "confidence": 0.93,
-                            "counts": {"items": 2},
-                            "items": [
-                                {
-                                    "row": "1",
-                                    "code": "1.1",
-                                    "name": "Растениеводство",
-                                    "area_min": "20000",
-                                    "area_max": "Не подлежит установлению",
-                                    "building_percentage": "0%",
-                                    "margin": "3",
-                                },
-                                {
-                                    "row": "2",
-                                    "code": "2.1",
-                                    "name": "Садоводство",
-                                    # int-значения, как из parse_number экстракторов
-                                    "area_min": 600,
-                                    "area_max": 1200,
-                                    "building_percentage": "10%",
-                                    "margin": "3",
-                                },
-                            ],
+                            "table": {
+                                "zone_code": "218020020006",
+                                "zone_name": None,
+                                "zone_description": None,
+                                "items": [
+                                    {
+                                        "row": "1",
+                                        "code": "1.1",
+                                        "name": "Растениеводство",
+                                        "area_min": "20000",
+                                        "area_max": "Не подлежит установлению",
+                                        "building_percentage": "0%",
+                                        "margin": "3",
+                                        "raw": "1 1.1 Растениеводство",
+                                    },
+                                    {
+                                        "row": "2",
+                                        "code": "2.1",
+                                        "name": "Садоводство",
+                                        # int-значения, как из parse_number
+                                        "area_min": 600,
+                                        "area_max": 1200,
+                                        "building_percentage": "10%",
+                                        "margin": "3",
+                                        "raw": "2 2.1 Садоводство",
+                                    },
+                                ],
+                                "counts": {"items": 2},
+                                "source_file": "pzz-592.docx",
+                                "confidence": 0.93,
+                            },
                         }
                     ],
                 },
@@ -612,12 +639,77 @@ def rgis_document_vri_result() -> dict[str, Any]:
                     "found": False,
                     "extractions": [],
                 },
-            ],
-            "warnings": [],
-            "partial": False,
+            ]
         },
-        "error": None,
-        "metadata": {"adapter_version": "pyrgis-agents-test"},
+        "evidence": [
+            {
+                "version_id": 9001,
+                "file": "pzz-592.docx",
+                "page": None,
+                "section": "218020020006",
+                "quote": "Таблица ВРИ зоны 218020020006",
+            }
+        ],
+        "answer_text": "Таблицы ВРИ извлечены детерминированно",
+        "documents": [
+            {
+                "version_id": 9001,
+                "municipality": "Тестовый район",
+                "doc_type": "pzz",
+                "number": "ПЗЗ-Т-592",
+                "version_date": "2021-04-03",
+                "title": None,
+            }
+        ],
+        "executor": "static:vri",
+        "warnings": [],
+        "duration_seconds": 0.01,
+    }
+
+
+def geodocs_zouit_query_result() -> dict[str, Any]:
+    """Ответ geodocs query_documents (static:zouit) по режимам ЗОУИТ."""
+
+    return {
+        "status": "success",
+        "data": {
+            "regimes": [
+                {
+                    "version_id": 8001,
+                    "zone_code": "50:32-6.1",
+                    "registry_number": "50:32-6.1",
+                    "name": "Тестовая охранная зона",
+                    "zone_type": "охранная зона",
+                    "registration_date": "2015-05-12",
+                    "restrictions": "Запрет строительства",
+                    "relation_kind": "zone_inside_parcel",
+                    "parcel_coverage_percent": 0.02,
+                }
+            ]
+        },
+        "evidence": [
+            {
+                "version_id": 8001,
+                "file": None,
+                "page": None,
+                "section": "50:32-6.1",
+                "quote": "Тестовая охранная зона",
+            }
+        ],
+        "answer_text": "Режимы ЗОУИТ взяты из готовых extractions: 1 шт.",
+        "documents": [
+            {
+                "version_id": 8001,
+                "municipality": "Тестовый район",
+                "doc_type": "zouit_regime",
+                "number": "Постановление № 111",
+                "version_date": "2015-05-12",
+                "title": None,
+            }
+        ],
+        "executor": "static:zouit",
+        "warnings": [],
+        "duration_seconds": 0.01,
     }
 
 
@@ -647,92 +739,22 @@ def nspd_documents_sync_result() -> dict[str, Any]:
     }
 
 
-def nspd_zouit_regimes_result() -> dict[str, Any]:
-    return {
-        "ok": True,
-        "data": {
-            "applicable": True,
-            "cadastral_number": "50:32:0000000:38218",
-            "regimes": [
-                {
-                    "registry_number": "50:32-6.1",
-                    "name": "Тестовая охранная зона",
-                    "zone_type": "охранная зона",
-                    "registration_date": "2015-05-12",
-                    "restrictions": "Запрет строительства",
-                    "relation_kind": "zone_inside_parcel",
-                    "parcel_coverage_percent": 0.02,
-                    "document": {
-                        "version_id": 8001,
-                        "number": "Постановление № 111",
-                        "version_date": "2015-05-12",
-                    },
-                    "extractor": "nspd_card",
-                }
-            ],
-            "warnings": [],
-            "partial": False,
-        },
-        "error": None,
-        "metadata": {"adapter_version": "pynspd-agents-test"},
-    }
-
-
 class FakeRgisDocumentsClient:
     def __init__(
         self,
         *,
         sync_result: dict[str, Any] | None = None,
-        vri_result: dict[str, Any] | None = None,
         sync_failure: Exception | None = None,
-        vri_failure: Exception | None = None,
     ) -> None:
         self.sync_result = sync_result or rgis_documents_sync_result()
-        self.vri_result = vri_result or rgis_document_vri_result()
         self.sync_failure = sync_failure
-        self.vri_failure = vri_failure
         self.sync_calls = 0
-        self.vri_calls = 0
-        self.fetch_calls = 0
-        self.vri_arguments: dict[str, Any] = {}
 
-    async def sync_parcel_documents(
-        self, cadastral_number: str
-    ) -> Mapping[str, Any]:
+    async def sync_parcel_documents(self, cadastral_number: str) -> Mapping[str, Any]:
         self.sync_calls += 1
         if self.sync_failure is not None:
             raise self.sync_failure
         return deepcopy(self.sync_result)
-
-    async def fetch_external_document(
-        self, cadastral_number: str, *, document_url: str
-    ) -> Mapping[str, Any]:
-        self.fetch_calls += 1
-        return {
-            "ok": True,
-            "data": {
-                "applicable": True,
-                "cadastral_number": cadastral_number,
-                "document_url": document_url,
-                "files": [],
-                "warnings": [],
-                "partial": False,
-            },
-            "error": None,
-            "metadata": {"adapter_version": "pyrgis-agents-test"},
-        }
-
-    async def get_document_vri(
-        self, cadastral_number: str, *, zone_code: str | None = None
-    ) -> Mapping[str, Any]:
-        self.vri_calls += 1
-        self.vri_arguments = {
-            "cadastral_number": cadastral_number,
-            "zone_code": zone_code,
-        }
-        if self.vri_failure is not None:
-            raise self.vri_failure
-        return deepcopy(self.vri_result)
 
 
 class FakeNspdDocumentsClient:
@@ -740,29 +762,81 @@ class FakeNspdDocumentsClient:
         self,
         *,
         sync_result: dict[str, Any] | None = None,
-        regimes_result: dict[str, Any] | None = None,
         sync_failure: Exception | None = None,
-        regimes_failure: Exception | None = None,
     ) -> None:
         self.sync_result = sync_result or nspd_documents_sync_result()
-        self.regimes_result = regimes_result or nspd_zouit_regimes_result()
         self.sync_failure = sync_failure
-        self.regimes_failure = regimes_failure
         self.sync_calls = 0
-        self.regimes_calls = 0
 
-    async def sync_parcel_documents(
-        self, cadastral_number: str
-    ) -> Mapping[str, Any]:
+    async def sync_parcel_documents(self, cadastral_number: str) -> Mapping[str, Any]:
         self.sync_calls += 1
         if self.sync_failure is not None:
             raise self.sync_failure
         return deepcopy(self.sync_result)
 
-    async def get_zouit_regimes(
-        self, cadastral_number: str
+
+class FakeGeodocsClient:
+    """Fake второго контура: acquire по кандидатам + query ВРИ/ЗОУИТ."""
+
+    def __init__(
+        self,
+        *,
+        acquire_result: dict[str, Any] | None = None,
+        vri_result: dict[str, Any] | None = None,
+        regimes_result: dict[str, Any] | None = None,
+        acquire_failure: Exception | None = None,
+        vri_failure: Exception | None = None,
+        regimes_failure: Exception | None = None,
+    ) -> None:
+        self.acquire_result = acquire_result or geodocs_acquire_result()
+        self.vri_result = vri_result or geodocs_vri_query_result()
+        self.regimes_result = regimes_result or geodocs_zouit_query_result()
+        self.acquire_failure = acquire_failure
+        self.vri_failure = vri_failure
+        self.regimes_failure = regimes_failure
+        self.acquire_calls: list[dict[str, Any]] = []
+        self.query_calls: list[dict[str, Any]] = []
+
+    async def acquire_documents(
+        self,
+        municipality: str,
+        doc_type: str,
+        *,
+        number: str | None = None,
+        version_date: str | None = None,
+        title: str | None = None,
     ) -> Mapping[str, Any]:
-        self.regimes_calls += 1
+        self.acquire_calls.append(
+            {
+                "municipality": municipality,
+                "doc_type": doc_type,
+                "number": number,
+                "version_date": version_date,
+                "title": title,
+            }
+        )
+        if self.acquire_failure is not None:
+            raise self.acquire_failure
+        return deepcopy(self.acquire_result)
+
+    async def query_documents(
+        self,
+        version_ids,
+        query: str,
+        *,
+        response_schema=None,
+    ) -> Mapping[str, Any]:
+        self.query_calls.append(
+            {
+                "version_ids": list(version_ids),
+                "query": query,
+                "response_schema": response_schema,
+            }
+        )
+        if "ВРИ" in query:
+            if self.vri_failure is not None:
+                raise self.vri_failure
+            return deepcopy(self.vri_result)
         if self.regimes_failure is not None:
             raise self.regimes_failure
         return deepcopy(self.regimes_result)

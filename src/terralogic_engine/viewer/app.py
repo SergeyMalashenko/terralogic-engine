@@ -635,8 +635,8 @@ def _render_report(
     if report is None:
         st.info(
             "Для выбранного запуска сохранённый отчёт отсутствует. "
-            "Попросите Hermes получить `terralogic_get_report_context`, "
-            "сформировать Markdown и вызвать `terralogic_save_report`."
+            "Вызовите `terralogic_prepare_quickreport` для этого кейса "
+            "и запуска сбора."
         )
         return
 

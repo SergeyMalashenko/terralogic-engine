@@ -6,10 +6,13 @@ from typing import Any
 import pytest
 
 from terralogic_engine.acquisition.clients.mcp import (
+    DEFAULT_GEODOCS_READ_TIMEOUT_SECONDS,
+    McpGeodocsClient,
     McpNspdDocumentsClient,
     McpRgisClient,
     McpRgisDocumentsClient,
     McpToolError,
+    StreamableHttpMcpTransport,
 )
 
 
@@ -99,40 +102,16 @@ async def test_rgis_client_calls_exact_two_tool_contract_for_region_50() -> None
     ]
 
 
-async def test_rgis_documents_client_calls_exact_three_tool_contract() -> None:
+async def test_rgis_documents_client_calls_exact_sync_tool_contract() -> None:
     transport = RecordingTransport()
     client = McpRgisDocumentsClient(transport)
 
     await client.sync_parcel_documents("50:32:0000000:38218")
-    await client.fetch_external_document(
-        "50:32:0000000:38218",
-        document_url="https://docs.cntd.ru/document/123456",
-    )
-    await client.get_document_vri("50:32:0000000:38218")
-    await client.get_document_vri("50:32:0000000:38218", zone_code="218020020006")
 
     assert transport.calls == [
         (
             "rgis_sync_parcel_documents",
             {"cadastral_number": "50:32:0000000:38218"},
-        ),
-        (
-            "rgis_fetch_external_document",
-            {
-                "cadastral_number": "50:32:0000000:38218",
-                "document_url": "https://docs.cntd.ru/document/123456",
-            },
-        ),
-        (
-            "rgis_get_document_vri",
-            {"cadastral_number": "50:32:0000000:38218"},
-        ),
-        (
-            "rgis_get_document_vri",
-            {
-                "cadastral_number": "50:32:0000000:38218",
-                "zone_code": "218020020006",
-            },
         ),
     ]
 
@@ -142,10 +121,8 @@ async def test_rgis_documents_client_skips_transport_outside_region_50() -> None
     client = McpRgisDocumentsClient(transport)
 
     sync = await client.sync_parcel_documents("52:24:0000000:2216")
-    vri = await client.get_document_vri("52:24:0000000:2216")
 
     assert sync["data"]["applicable"] is False
-    assert vri["data"]["applicable"] is False
     assert transport.calls == []
 
 
@@ -159,20 +136,15 @@ async def test_rgis_documents_client_raises_tool_error_on_failed_envelope() -> N
     assert "access_blocked" in str(excinfo.value)
 
 
-async def test_nspd_documents_client_calls_exact_two_tool_contract() -> None:
+async def test_nspd_documents_client_calls_exact_sync_tool_contract() -> None:
     transport = RecordingTransport()
     client = McpNspdDocumentsClient(transport)
 
     await client.sync_parcel_documents("52:26:0040002:3823")
-    await client.get_zouit_regimes("52:26:0040002:3823")
 
     assert transport.calls == [
         (
             "nspd_sync_parcel_documents",
-            {"cadastral_number": "52:26:0040002:3823"},
-        ),
-        (
-            "nspd_get_zouit_regimes",
             {"cadastral_number": "52:26:0040002:3823"},
         ),
     ]
@@ -182,7 +154,68 @@ async def test_nspd_documents_client_raises_tool_error_on_failed_envelope() -> N
     client = McpNspdDocumentsClient(FailingTransport())
 
     with pytest.raises(McpToolError) as excinfo:
-        await client.get_zouit_regimes("52:26:0040002:3823")
+        await client.sync_parcel_documents("52:26:0040002:3823")
 
-    assert "nspd_get_zouit_regimes" in str(excinfo.value)
+    assert "nspd_sync_parcel_documents" in str(excinfo.value)
     assert "access_blocked" in str(excinfo.value)
+
+
+async def test_geodocs_client_calls_exact_two_tool_contract() -> None:
+    transport = RecordingTransport()
+    client = McpGeodocsClient(transport)
+
+    await client.acquire_documents(
+        "Тестовый район",
+        "pzz",
+        number="ПЗЗ-Т-592",
+        version_date="2021-04-03",
+    )
+    await client.acquire_documents("Тестовый район", "general_plan")
+    await client.query_documents([9001, 9002], "Верни таблицы ВРИ зон")
+    await client.query_documents(
+        [8001],
+        "Верни режимы ЗОУИТ",
+        response_schema={"type": "object"},
+    )
+
+    assert transport.calls == [
+        (
+            "acquire_documents",
+            {
+                "municipality": "Тестовый район",
+                "doc_type": "pzz",
+                "number": "ПЗЗ-Т-592",
+                "version_date": "2021-04-03",
+            },
+        ),
+        (
+            "acquire_documents",
+            {"municipality": "Тестовый район", "doc_type": "general_plan"},
+        ),
+        (
+            "query_documents",
+            {"version_ids": [9001, 9002], "query": "Верни таблицы ВРИ зон"},
+        ),
+        (
+            "query_documents",
+            {
+                "version_ids": [8001],
+                "query": "Верни режимы ЗОУИТ",
+                "response_schema": {"type": "object"},
+            },
+        ),
+    ]
+
+
+def test_geodocs_client_builds_transport_with_long_read_timeout() -> None:
+    client = McpGeodocsClient(url="http://127.0.0.1:8006/mcp")
+
+    assert isinstance(client.transport, StreamableHttpMcpTransport)
+    assert client.transport.url == "http://127.0.0.1:8006/mcp"
+    assert client.transport.read_timeout_seconds == DEFAULT_GEODOCS_READ_TIMEOUT_SECONDS
+    assert client.read_timeout_seconds == DEFAULT_GEODOCS_READ_TIMEOUT_SECONDS
+
+
+def test_geodocs_client_requires_transport_or_url() -> None:
+    with pytest.raises(ValueError, match="transport or a url"):
+        McpGeodocsClient()
