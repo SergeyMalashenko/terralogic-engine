@@ -60,30 +60,38 @@ def _water_layer() -> MapLayer:
 def test_render_overview_map_with_fake_tiles(tmp_path) -> None:
     out = tmp_path / "map.png"
     result = mapimg.render_overview_map(
-        PARCEL, [_water_layer()], out, fetch_tile=_fake_tile
+        PARCEL,
+        [_water_layer()],
+        out,
+        fetch_tile=_fake_tile,
+        parcel_label="50:11:0020310:49 · 1 640 м²",
     )
     assert result.basemap_available
     assert result.layer_labels == ["Водоохранная зона"]
     assert result.warnings == []
     image = Image.open(out)
-    assert image.width == image.height  # квадратный кадр
-    assert image.width <= 1000
+    assert image.size == (1800, 1800)  # квадрат, ширина не менее 1800
     # участок по центру: в центральной области должны найтись
     # красноватые пиксели штриховки
     center = image.width // 2
     pixels = image.load()
     found_hatch = any(
         pixels[x, y][0] > pixels[x, y][2] + 30
-        for x in range(center - 50, center + 50, 2)
-        for y in range(center - 50, center + 50, 2)
+        for x in range(center - 100, center + 100, 2)
+        for y in range(center - 100, center + 100, 2)
     )
     assert found_hatch
-    # заливка зоны полупрозрачна: пиксель зоны вне участка — смесь цвета
-    # зоны с подложкой, а не чистый цвет заливки
-    zone_pixel = pixels[314, 500]
+    # заливка зоны полупрозрачна: в области зоны слева от участка есть
+    # пиксель-смесь цвета зоны с подложкой, а не чистый цвет заливки
     fill_rgb = mapimg._ZONE_STYLES["water_protection"][1][:3]
-    assert zone_pixel[2] > zone_pixel[0]
-    assert zone_pixel != fill_rgb
+    blended = [
+        (x, y)
+        for x in range(100, 700, 20)
+        for y in range(700, 1100, 20)
+        if pixels[x, y][2] > pixels[x, y][0] + 10
+    ]
+    assert blended
+    assert all(pixels[x, y] != fill_rgb for x, y in blended)
 
 
 def test_render_overview_map_offline_keeps_working(tmp_path) -> None:

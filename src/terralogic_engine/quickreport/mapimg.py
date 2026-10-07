@@ -477,9 +477,10 @@ def _draw_parcel(
     viewport: _Viewport,
     geometry: dict[str, Any],
 ) -> None:
-    """Красная штриховка участка + сплошной контур поверх подложки и зон."""
+    """Штриховка участка + контрастный контур (красный с белым гало)."""
     from PIL import Image, ImageDraw
 
+    ui = base.size[0] / 1000
     mask = Image.new("L", base.size, 0)
     mask_draw = ImageDraw.Draw(mask)
     gtype = geometry.get("type")
@@ -507,18 +508,68 @@ def _draw_parcel(
         outlines.append(exterior)
     hatch = Image.new("RGBA", base.size, (0, 0, 0, 0))
     hatch_draw = ImageDraw.Draw(hatch)
-    step = 9
+    step = max(6, round(9 * ui))
     width, height = base.size
     for offset in range(-height, width, step):
         hatch_draw.line(
-            [(offset, 0), (offset + height, height)], fill=_PARCEL_HATCH, width=1
+            [(offset, 0), (offset + height, height)],
+            fill=_PARCEL_HATCH,
+            width=max(1, round(ui)),
         )
     hatch_mask = Image.composite(hatch.split()[3], Image.new("L", base.size, 0), mask)
     base.paste(hatch, (0, 0), hatch_mask)
+    halo_w = max(4, round(5 * ui))
+    line_w = max(2, round(3 * ui))
     for exterior in outlines:
-        outline_draw.line(
-            [*exterior, exterior[0]], fill=(*_PARCEL_OUTLINE, 255), width=3
-        )
+        ring = [*exterior, exterior[0]]
+        outline_draw.line(ring, fill=(255, 255, 255, 255), width=halo_w + line_w)
+        outline_draw.line(ring, fill=(*_PARCEL_OUTLINE, 255), width=line_w)
+
+
+def _draw_parcel_label(
+    base: Any,
+    viewport: _Viewport,
+    geometry: dict[str, Any],
+    label: str,
+) -> None:
+    """Подпись участка (кадастровый номер и площадь) над верхней гранью."""
+    from PIL import ImageDraw
+
+    ui = base.size[0] / 1000
+    outlines = [_ring_pixels(viewport, ring) for ring in _iter_ring_points(geometry)]
+    exteriors = [ring for ring in outlines if len(ring) >= 3]
+    if not exteriors:
+        return
+    top_ring = min(exteriors, key=lambda ring: min(y for _, y in ring))
+    top_y = min(y for _, y in top_ring)
+    center_x = sum(x for x, _ in top_ring) / len(top_ring)
+
+    draw = ImageDraw.Draw(base)
+    font = _load_font(max(14, round(20 * ui)))
+    text_box = draw.textbbox((0, 0), label, font=font)
+    text_w = text_box[2] - text_box[0]
+    text_h = text_box[3] - text_box[1]
+    pad = round(8 * ui)
+    box_w = text_w + 2 * pad
+    box_h = text_h + 2 * pad
+    width = base.size[0]
+    box_x = min(max(center_x - box_w / 2, 4.0), width - box_w - 4.0)
+    box_y = top_y - box_h - round(10 * ui)
+    if box_y < 4:  # граница у верхнего края — подпись внутрь участка
+        box_y = top_y + round(10 * ui)
+    draw.rounded_rectangle(
+        [box_x, box_y, box_x + box_w, box_y + box_h],
+        radius=round(6 * ui),
+        fill=(255, 255, 255, 235),
+        outline=(198, 40, 40, 255),
+        width=max(1, round(2 * ui)),
+    )
+    draw.text(
+        (box_x + pad - text_box[0], box_y + pad - text_box[1]),
+        label,
+        font=font,
+        fill=(60, 30, 30),
+    )
 
 
 def _load_font(size: int) -> Any:
@@ -554,33 +605,58 @@ def _format_meters(meters: float) -> str:
 def _draw_furniture(
     base: Any, viewport: _Viewport, entries: list[tuple[str, Any]]
 ) -> None:
-    """Стрелка севера, масштабная линейка, легенда, атрибуция OSM."""
+    """Стрелка севера, масштабная линейка, легенда, атрибуция OSM.
+
+    Все размеры масштабируются от ширины холста: при 1800 px подписи
+    остаются читаемыми при печати карты на листе A4 (~250 dpi).
+    """
     from PIL import ImageDraw
 
     draw = ImageDraw.Draw(base)
     width, height = base.size
-    font = _load_font(16)
-    font_small = _load_font(13)
+    ui = width / 1000
+    font = _load_font(max(12, round(18 * ui)))
+    font_small = _load_font(max(10, round(14 * ui)))
 
-    # стрелка севера
-    arrow_x, arrow_y = width - 42, 18
+    # стрелка севера (карта всегда севером вверх — Web-Mercator)
+    arrow_x, arrow_y = width - round(42 * ui), round(18 * ui)
+    arrow_half = round(9 * ui)
+    arrow_h = round(26 * ui)
     draw.polygon(
-        [(arrow_x, arrow_y), (arrow_x - 8, arrow_y + 26), (arrow_x + 8, arrow_y + 26)],
+        [
+            (arrow_x, arrow_y),
+            (arrow_x - arrow_half, arrow_y + arrow_h),
+            (arrow_x + arrow_half, arrow_y + arrow_h),
+        ],
         fill=(40, 40, 40, 255),
     )
-    draw.text((arrow_x, arrow_y + 30), "N", font=font, fill=(40, 40, 40), anchor="mm")
+    draw.text(
+        (arrow_x, arrow_y + arrow_h + round(12 * ui)),
+        "N",
+        font=font,
+        fill=(40, 40, 40),
+        anchor="mm",
+    )
 
     # масштабная линейка (слева внизу, над атрибуцией)
     mpp = viewport.meters_per_pixel()
-    target_m = mpp * 110
+    target_m = mpp * 110 * ui
     length_m = _nice_scale_length(target_m)
     length_px = length_m / mpp
-    bar_x, bar_y = 18, height - 34
-    draw.line([(bar_x, bar_y), (bar_x + length_px, bar_y)], fill=(30, 30, 30), width=3)
+    bar_x, bar_y = round(18 * ui), height - round(34 * ui)
+    draw.line(
+        [(bar_x, bar_y), (bar_x + length_px, bar_y)],
+        fill=(30, 30, 30),
+        width=max(2, round(3 * ui)),
+    )
     for tick_x in (bar_x, bar_x + length_px / 2, bar_x + length_px):
-        draw.line([(tick_x, bar_y - 5), (tick_x, bar_y)], fill=(30, 30, 30), width=2)
+        draw.line(
+            [(tick_x, bar_y - round(5 * ui)), (tick_x, bar_y)],
+            fill=(30, 30, 30),
+            width=max(1, round(2 * ui)),
+        )
     draw.text(
-        (bar_x + length_px / 2, bar_y - 10),
+        (bar_x + length_px / 2, bar_y - round(10 * ui)),
         _format_meters(length_m),
         font=font_small,
         fill=(30, 30, 30),
@@ -589,7 +665,7 @@ def _draw_furniture(
 
     # атрибуция подложки (обязательна по лицензии OSM)
     draw.text(
-        (width - 8, height - 8),
+        (width - round(8 * ui), height - round(8 * ui)),
         "© OpenStreetMap contributors",
         font=font_small,
         fill=(70, 70, 70),
@@ -599,19 +675,21 @@ def _draw_furniture(
     if not entries:
         return
     # легенда справа внизу, над атрибуцией
-    sample_w, sample_h, line_h, pad = 26, 14, 22, 8
+    sample_w, sample_h = round(26 * ui), round(14 * ui)
+    line_h, pad = round(24 * ui), round(9 * ui)
     label_widths = []
     for label, _ in entries:
         box = draw.textbbox((0, 0), label, font=font_small)
         label_widths.append(box[2] - box[0])
-    box_w = sample_w + 8 + max(label_widths) + 2 * pad
+    box_w = sample_w + round(8 * ui) + max(label_widths) + 2 * pad
     box_h = len(entries) * line_h + 2 * pad
-    box_x = width - box_w - 10
-    box_y = height - box_h - 28
+    box_x = width - box_w - round(10 * ui)
+    box_y = height - box_h - round(28 * ui)
     draw.rectangle(
         [box_x, box_y, box_x + box_w, box_y + box_h],
-        fill=(255, 255, 255, 225),
+        fill=(255, 255, 255, 255),
         outline=(120, 120, 120),
+        width=max(1, round(ui)),
     )
     for index, (label, sample) in enumerate(entries):
         row_y = box_y + pad + index * line_h
@@ -619,7 +697,7 @@ def _draw_furniture(
         sample_y = row_y + (line_h - sample_h) // 2
         sample(draw, sample_x, sample_y, sample_w, sample_h)
         draw.text(
-            (sample_x + sample_w + 8, row_y + line_h // 2),
+            (sample_x + sample_w + round(8 * ui), row_y + line_h // 2),
             label,
             font=font_small,
             fill=(30, 30, 30),
@@ -641,9 +719,10 @@ def render_overview_map(
     out_path: Path,
     *,
     cache_dir: Path | None = None,
-    size: tuple[int, int] = (1000, 1000),
+    size: tuple[int, int] = (1800, 1800),
     fetch_tile: Callable[[int, int, int, float], bytes | None] | None = None,
     timeout: float = 10.0,
+    parcel_label: str | None = None,
 ) -> MapImageResult:
     """Рисует квадратную PNG-карту: подложка OSM + зоны + участок.
 
@@ -652,6 +731,8 @@ def render_overview_map(
     а итоговая картинка гарантированно лежит внутри этого кадра
     (излишек срезается кадрированием после подбора целочисленного zoom).
     Зоны, выходящие за кадр, просто обрезаются его границами.
+    Карта всегда севером вверх (подложка Web-Mercator). ``parcel_label``
+    (кадастровый номер, площадь) подписывается над верхней гранью участка.
 
     ``fetch_tile(z, x, y, timeout) -> bytes | None`` подменяется в тестах;
     ``None`` у тайла означает «нет подложки» — карта строится на
@@ -695,6 +776,14 @@ def render_overview_map(
     crop = viewport.crop_box()
     if crop is not None:
         base = base.crop(crop)
+        # проекция сдвигается вместе с кадрированием
+        viewport.origin_x += crop[0]
+        viewport.origin_y += crop[1]
+        viewport.width = crop[2] - crop[0]
+        viewport.height = crop[3] - crop[1]
+
+    if parcel_label:
+        _draw_parcel_label(base, viewport, parcel_geometry, parcel_label)
 
     entries: list[tuple[str, Any]] = [(_PARCEL_LABEL, _parcel_sample)]
     for layer in layers:

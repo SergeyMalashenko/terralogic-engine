@@ -198,6 +198,10 @@ class ReportingService:
                 return None, None, ["карта не построена: нет геометрии участка"]
             features = self._run_features(case_id, context.collection_run_id)
             layers = mapimg.collect_map_layers(features)
+            parcel_label = context.parcel.cadastral_number
+            if context.parcel.area_m2:
+                area = f"{context.parcel.area_m2:,.0f}".replace(",", " ")
+                parcel_label = f"{parcel_label} · {area} м²"
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 tmp_path = Path(tmp.name)
             try:
@@ -211,6 +215,7 @@ class ReportingService:
                     tmp_path,
                     cache_dir=cache_dir,
                     fetch_tile=self.tile_fetcher,
+                    parcel_label=parcel_label,
                 )
                 warnings.extend(result.warnings)
                 relative_path = self.store.save_case_artifact(
