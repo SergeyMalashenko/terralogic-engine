@@ -6,6 +6,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import tempfile
 from collections.abc import Iterator, Sequence
@@ -91,9 +92,7 @@ class LocalCaseStore:
                 "ADD COLUMN metrics_json TEXT NOT NULL DEFAULT '{}'"
             )
             changed = True
-        user_version = int(
-            connection.execute("PRAGMA user_version").fetchone()[0] or 0
-        )
+        user_version = int(connection.execute("PRAGMA user_version").fetchone()[0] or 0)
         if user_version < 2:
             if "facts" not in tables:
                 connection.execute(
@@ -112,13 +111,11 @@ class LocalCaseStore:
                     """
                 )
             fact_columns = {
-                str(row[1])
-                for row in connection.execute("PRAGMA table_info(facts)")
+                str(row[1]) for row in connection.execute("PRAGMA table_info(facts)")
             }
             if "fact_type" not in fact_columns:
                 connection.execute(
-                    "ALTER TABLE facts "
-                    "ADD COLUMN fact_type TEXT NOT NULL DEFAULT ''"
+                    "ALTER TABLE facts ADD COLUMN fact_type TEXT NOT NULL DEFAULT ''"
                 )
             connection.execute(
                 """
@@ -443,6 +440,24 @@ class LocalCaseStore:
             target.unlink(missing_ok=True)
             raise
         return snapshot
+
+    def save_case_artifact(
+        self,
+        *,
+        case_id: str,
+        kind: str,
+        filename: str,
+        payload: bytes,
+    ) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", kind):
+            raise ValueError("artifact kind must be a simple directory name")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", filename) or filename.startswith(
+            "."
+        ):
+            raise ValueError("artifact filename must be a plain file name")
+        relative_path = Path(kind) / filename
+        self._atomic_write(self._case_dir(case_id) / relative_path, payload)
+        return relative_path.as_posix()
 
     def load_snapshot(self, case_id: str, snapshot_id: str) -> bytes:
         with self._connection(case_id) as connection:

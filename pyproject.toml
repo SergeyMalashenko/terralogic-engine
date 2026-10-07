@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.27,<2"]
+map = ["Pillow>=10"]
 viewer = [
     "branca>=0.7",
     "folium>=0.19",

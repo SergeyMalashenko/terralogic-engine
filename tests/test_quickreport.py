@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from datetime import UTC, date, datetime
 
 import pytest
@@ -35,6 +36,16 @@ from terralogic_engine.reporting.service import ReportingService
 from terralogic_engine.store.local import LocalCaseStore
 
 from .fakes import FakeDgisClient, FakeNspdClient, FakeOsmClient
+
+
+def _fake_tile(z: int, x: int, y: int, timeout: float) -> bytes:
+    """Однотонный тайл подложки вместо сетевого OSM."""
+    from PIL import Image
+
+    image = Image.new("RGB", (256, 256), (238, 240, 233))
+    buffer = io.BytesIO()
+    image.save(buffer, "PNG")
+    return buffer.getvalue()
 
 
 @pytest.fixture()
@@ -234,8 +245,7 @@ def test_render_quickreport_structure(rules, guidance):
 
     assert markdown.startswith("# Экспресс-оценка земельного участка\n")
     assert (
-        "Отчёт от 07.10.2026 · Данные от 06.10.2026 · "
-        "Методика оценки — версия 0.1-stub"
+        "Отчёт от 07.10.2026 · Данные от 06.10.2026 · Методика оценки — версия 0.1-stub"
     ) in markdown
     assert "**Кадастровый номер 50:11:0020310:49**" in markdown
     # скор в заголовке вердикта + градация + summary
@@ -389,7 +399,9 @@ async def test_prepare_quickreport_persists_markdown(tmp_path) -> None:
         )
     )
     analysis = AnalysisPipeline(store=store).analyze("case-quickreport")
-    service = ReportingService(store=store, acquisition=acquisition)
+    service = ReportingService(
+        store=store, acquisition=acquisition, tile_fetcher=_fake_tile
+    )
 
     result = service.prepare_quickreport("case-quickreport")
 
@@ -415,3 +427,67 @@ async def test_prepare_quickreport_persists_markdown(tmp_path) -> None:
         tmp_path / "store" / "cases" / "case-quickreport" / result.relative_path
     )
     assert report_file.read_text("utf-8") == result.markdown
+
+
+async def test_prepare_quickreport_builds_map_artifact(tmp_path) -> None:
+    store = LocalCaseStore(tmp_path / "store")
+    acquisition = AcquisitionPipeline(
+        store=store,
+        nspd=FakeNspdClient(),
+        osm=FakeOsmClient(),
+        dgis=FakeDgisClient(),
+    )
+    await acquisition.collect(
+        CollectionRequest(
+            case_id="case-quickreport",
+            cadastral_number="52:26:0040002:3823",
+            refresh_policy="always",
+        )
+    )
+    AnalysisPipeline(store=store).analyze("case-quickreport")
+    service = ReportingService(
+        store=store, acquisition=acquisition, tile_fetcher=_fake_tile
+    )
+
+    result = service.prepare_quickreport("case-quickreport")
+
+    assert result.map_relative_path is not None
+    assert result.map_relative_path.startswith("maps/quickreport-")
+    map_file = (
+        tmp_path / "store" / "cases" / "case-quickreport" / result.map_relative_path
+    )
+    assert map_file.read_bytes().startswith(b"\x89PNG")
+    assert (
+        f"![Схема участка и зон (предварительная)](../{result.map_relative_path})"
+        in (result.markdown)
+    )
+    assert "© OpenStreetMap contributors" in result.markdown
+
+
+async def test_prepare_quickreport_offline_still_builds_map(tmp_path) -> None:
+    store = LocalCaseStore(tmp_path / "store")
+    acquisition = AcquisitionPipeline(
+        store=store,
+        nspd=FakeNspdClient(),
+        osm=FakeOsmClient(),
+        dgis=FakeDgisClient(),
+    )
+    await acquisition.collect(
+        CollectionRequest(
+            case_id="case-quickreport",
+            cadastral_number="52:26:0040002:3823",
+            refresh_policy="always",
+        )
+    )
+    AnalysisPipeline(store=store).analyze("case-quickreport")
+    service = ReportingService(
+        store=store,
+        acquisition=acquisition,
+        tile_fetcher=lambda z, x, y, timeout: None,
+    )
+
+    result = service.prepare_quickreport("case-quickreport")
+
+    assert result.map_relative_path is not None
+    assert "Подложка карты недоступна" in result.markdown
+    assert any("подложка" in warning for warning in result.warnings)

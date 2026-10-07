@@ -2,9 +2,9 @@
 
 Структура документа повторяет образец QuickReport.docx без маркетинговых
 блоков: заголовок с датами и версией методики, вердикт, таблица факторов,
-паспорт участка, окружение с блоком коммуникаций, заглушка карты и
-статический дисклеймер ограничений отчёта. Новых зависимостей нет —
-чистая сборка строк; LLM в генерации не участвует.
+паспорт участка, окружение с блоком коммуникаций, раздел карты (PNG-схема
+из ``mapimg`` либо заглушка) и статический дисклеймер ограничений отчёта.
+Новых зависимостей нет — чистая сборка строк; LLM в генерации не участвует.
 """
 
 from __future__ import annotations
@@ -120,9 +120,7 @@ def _format_limit_value(value: object) -> str | None:
 
 
 def _zone_use_line(use: QuickZoneUse) -> str:
-    head = " ".join(
-        part for part in (use.code, use.name) if part
-    )
+    head = " ".join(part for part in (use.code, use.name) if part)
     limits: list[str] = []
     area_min = _format_limit_value(use.area_min)
     area_max = _format_limit_value(use.area_max)
@@ -182,9 +180,16 @@ def _zone_regulations_lines(context: QuickReportContext) -> list[str]:
 
 
 def render_quickreport(
-    context: QuickReportContext, *, today: date | None = None
+    context: QuickReportContext,
+    *,
+    today: date | None = None,
+    map_lines: list[str] | None = None,
 ) -> str:
-    """Собирает Markdown QuickReport; дата отчёта — today (по умолчанию сегодня)."""
+    """Собирает Markdown QuickReport; дата отчёта — today (по умолчанию сегодня).
+
+    ``map_lines`` — готовые строки раздела «Схема расположения зон»
+    (ссылка на PNG + подпись); без них выводится статическая заглушка.
+    """
     report_date = today or datetime.now(UTC).date()
     parcel = context.parcel
     verdict = context.verdict
@@ -203,10 +208,7 @@ def render_quickreport(
         f"**Кадастровый номер {parcel.cadastral_number}**"
         + (f" | {parcel.address}" if parcel.address else ""),
         "",
-        (
-            f"## Оценка участка — {verdict.score}/{SCORE_SCALE} "
-            f"({verdict.grade_title})"
-        ),
+        (f"## Оценка участка — {verdict.score}/{SCORE_SCALE} ({verdict.grade_title})"),
         "",
         verdict.grade_summary,
         "",
@@ -228,7 +230,7 @@ def render_quickreport(
         "",
         "## Схема расположения зон",
         "",
-        _MAP_PLACEHOLDER,
+        *(map_lines if map_lines else [_MAP_PLACEHOLDER]),
         "",
         "## Ограничения отчёта",
         "",

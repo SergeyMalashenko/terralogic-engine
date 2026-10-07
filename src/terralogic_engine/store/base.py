@@ -55,6 +55,19 @@ class CaseStore(Protocol):
         metadata: dict[str, object] | None = None,
     ) -> SourceSnapshot: ...
 
+    def save_case_artifact(
+        self,
+        *,
+        case_id: str,
+        kind: str,
+        filename: str,
+        payload: bytes,
+    ) -> str:
+        """Persist a binary artifact under ``<case>/<kind>/<filename>``.
+
+        Returns the case-relative POSIX path (e.g. ``maps/overview.png``).
+        """
+
     def load_snapshot(self, case_id: str, snapshot_id: str) -> bytes: ...
 
     def list_snapshots(

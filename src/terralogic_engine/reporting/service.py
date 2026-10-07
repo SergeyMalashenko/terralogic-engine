@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
+
 from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
 from terralogic_engine.analytics.pipeline import AnalysisPipeline
 from terralogic_engine.domain.models import CollectionRequest, RefreshPolicy
 from terralogic_engine.quickreport import (
+    QuickReportContext,
     QuickReportResult,
     build_quick_context,
     methodology_sha256,
@@ -49,10 +54,12 @@ class ReportingService:
         store: CaseStore,
         acquisition: AcquisitionPipeline,
         template_registry: ReportTemplateRegistry | None = None,
+        tile_fetcher: Callable[[int, int, int, float], bytes | None] | None = None,
     ) -> None:
         self.store = store
         self.acquisition = acquisition
         self.template_registry = template_registry or create_default_template_registry()
+        self.tile_fetcher = tile_fetcher
 
     async def prepare_case(
         self,
@@ -128,7 +135,11 @@ class ReportingService:
             case_id,
             collection_run_id=collection_run_id,
         )
-        markdown = render_quickreport(context)
+        map_lines, map_relative_path, map_warnings = self._build_quick_map(
+            case_id, context
+        )
+        context.warnings.extend(map_warnings)
+        markdown = render_quickreport(context, map_lines=map_lines)
         analysis = self.store.get_analysis_result(
             case_id,
             context.collection_run_id,
@@ -156,8 +167,97 @@ class ReportingService:
             content_sha256=report.content_sha256,
             generated_at=report.generated_at,
             markdown=report.markdown,
+            map_relative_path=map_relative_path,
             warnings=context.warnings,
         )
+
+    def _build_quick_map(
+        self, case_id: str, context: QuickReportContext
+    ) -> tuple[list[str] | None, str | None, list[str]]:
+        """PNG-схема участка и зон для раздела карты quick-отчёта.
+
+        Подложка — тайлы OSM (кэш в ``<store-root>/tile-cache``); слои —
+        restriction_zone геометрии снапшотов выбранного run. Любой сбой
+        (нет Pillow, нет сети, нет геометрий) деградирует в заглушку
+        раздела с предупреждением, отчёт при этом собирается всегда.
+        """
+        warnings: list[str] = []
+        try:
+            from terralogic_engine.quickreport import mapimg
+        except ImportError:
+            return (
+                None,
+                None,
+                ["карта не построена: не установлен extra 'map' (Pillow)"],
+            )
+        try:
+            parcel_geometry = self._parcel_geometry_for_run(
+                case_id, context.collection_run_id
+            )
+            if parcel_geometry is None:
+                return None, None, ["карта не построена: нет геометрии участка"]
+            features = self._run_features(case_id, context.collection_run_id)
+            layers = mapimg.collect_map_layers(features)
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+            try:
+                store_root = getattr(self.store, "root", None)
+                cache_dir = (
+                    Path(store_root) / "tile-cache" if store_root is not None else None
+                )
+                result = mapimg.render_overview_map(
+                    parcel_geometry,
+                    layers,
+                    tmp_path,
+                    cache_dir=cache_dir,
+                    fetch_tile=self.tile_fetcher,
+                )
+                warnings.extend(result.warnings)
+                relative_path = self.store.save_case_artifact(
+                    case_id=case_id,
+                    kind="maps",
+                    filename=f"quickreport-{context.collection_run_id}.png",
+                    payload=result.path.read_bytes(),
+                )
+            finally:
+                tmp_path.unlink(missing_ok=True)
+        except Exception as exc:  # noqa: BLE001 — карта не должна ломать отчёт
+            return None, None, [f"карта не построена: {exc}"]
+        caption = (
+            "Подложка — © OpenStreetMap contributors. Схема предварительная: "
+            "границы зон в источниках расходятся; точное нахождение границ "
+            "участка подлежит проверке по градостроительному плану участка (ГПЗУ)."
+        )
+        if not result.basemap_available:
+            caption = f"Подложка карты недоступна (офлайн). {caption}"
+        lines = [
+            f"![Схема участка и зон (предварительная)](../{relative_path})",
+            "",
+            caption,
+        ]
+        return lines, relative_path, warnings
+
+    def _parcel_geometry_for_run(
+        self, case_id: str, run_id: str
+    ) -> dict[str, object] | None:
+        receipts = self.store.list_collection_receipts(case_id)
+        receipt = next((item for item in receipts if item.run_id == run_id), None)
+        if receipt is not None and receipt.aoi_id is not None:
+            aoi = self.store.get_area_of_interest(case_id, receipt.aoi_id)
+            if isinstance(aoi.parcel_geometry, dict) and aoi.parcel_geometry:
+                return aoi.parcel_geometry
+        for feature in self._run_features(case_id, run_id):
+            if feature.feature_class == "parcel" and isinstance(feature.geometry, dict):
+                return feature.geometry
+        return None
+
+    def _run_features(self, case_id: str, run_id: str) -> list:
+        features: list = []
+        for snapshot in self.store.list_snapshots(case_id):
+            if snapshot.run_id != run_id:
+                continue
+            features.extend(self.store.load_features(case_id, snapshot_id=snapshot.id))
+        return features
 
     def get_report_template(
         self,

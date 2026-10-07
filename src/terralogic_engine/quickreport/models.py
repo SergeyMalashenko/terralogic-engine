@@ -98,4 +98,5 @@ class QuickReportResult(BaseModel):
     content_sha256: str
     generated_at: datetime
     markdown: str
+    map_relative_path: str | None = None
     warnings: list[str] = Field(default_factory=list)
