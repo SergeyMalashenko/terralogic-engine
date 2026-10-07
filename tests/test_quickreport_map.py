@@ -66,13 +66,16 @@ def test_render_overview_map_with_fake_tiles(tmp_path) -> None:
     assert result.layer_labels == ["Водоохранная зона"]
     assert result.warnings == []
     image = Image.open(out)
-    assert image.size == (1200, 800)
-    # в области участка должны найтись красноватые пиксели штриховки
+    assert image.width == image.height  # квадратный кадр
+    assert image.width <= 1000
+    # участок по центру: в центральной области должны найтись
+    # красноватые пиксели штриховки
+    center = image.width // 2
     pixels = image.load()
     found_hatch = any(
         pixels[x, y][0] > pixels[x, y][2] + 30
-        for x in range(550, 650, 2)
-        for y in range(350, 450, 2)
+        for x in range(center - 50, center + 50, 2)
+        for y in range(center - 50, center + 50, 2)
     )
     assert found_hatch
 
@@ -203,7 +206,18 @@ def test_viewport_projects_bbox_center_to_image_center() -> None:
     px, py = viewport.project(cx, cy)
     assert abs(px - 600) < 1
     assert abs(py - 400) < 1
-    assert 3 <= viewport.zoom <= 18
+    assert 3 <= viewport.zoom <= 19
+
+
+def test_square_frame_doubles_long_side() -> None:
+    bbox = (37.30, 55.85, 37.31, 55.851)  # 0.010 x 0.001
+    frame = mapimg._square_frame(bbox)
+    assert frame == pytest.approx(
+        (37.295, 55.8405, 37.315, 55.8605)
+    )  # сторона 0.020, центр сохранён
+    # вырожденный bbox поднимается до минимальной стороны
+    tiny = mapimg._square_frame((37.3, 55.85, 37.3, 55.85))
+    assert (tiny[2] - tiny[0]) == pytest.approx(2 * mapimg._MIN_FRAME_SIDE_DEG)
 
 
 def test_geometry_bbox_handles_multipolygon() -> None:

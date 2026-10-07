@@ -23,9 +23,13 @@ TILE_SIZE = 256
 TILE_URL_TEMPLATE = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 TILE_USER_AGENT = "TerraLogicX-quickreport/1.0 (local report renderer)"
 MIN_ZOOM = 3
-MAX_ZOOM = 18
-MAP_PADDING_PX = 70
+MAX_ZOOM = 19
 MISSING_TILE_COLOR = (232, 232, 228)
+
+# минимальная сторона кадра (~250–330 м в зависимости от широты),
+# чтобы крошечный участок не превращал карту в квадрат тайла
+_MIN_FRAME_SIDE_DEG = 0.003
+_FRAME_FACTOR = 2.0
 
 _MAX_FULL_COVERAGE_PERCENT = 99.0
 
@@ -248,6 +252,23 @@ def select_visible_layers(
     return result
 
 
+def _square_frame(
+    bbox: tuple[float, float, float, float], factor: float = _FRAME_FACTOR
+) -> tuple[float, float, float, float]:
+    """Квадратный кадр: bbox → квадрат по длинной стороне → factor× от центра."""
+    min_lon, min_lat, max_lon, max_lat = bbox
+    side = max(max_lon - min_lon, max_lat - min_lat, _MIN_FRAME_SIDE_DEG)
+    center_lon = (min_lon + max_lon) / 2
+    center_lat = (min_lat + max_lat) / 2
+    half = side * factor / 2
+    return (
+        center_lon - half,
+        center_lat - half,
+        center_lon + half,
+        center_lat + half,
+    )
+
+
 def _mercator(lon: float, lat: float) -> tuple[float, float]:
     """lon/lat → доли мирового квадрата (0..1) в Web-Mercator."""
     lat = max(min(lat, 85.05112878), -85.05112878)
@@ -275,20 +296,35 @@ class _Viewport:
         self.origin_x = self.center_x * scale - width / 2
         self.origin_y = self.center_y * scale - height / 2
         self.center_lat = (min_lat + max_lat) / 2
+        self.bbox = bbox
 
     @staticmethod
     def _fit_zoom(span_x: float, span_y: float, width: int, height: int) -> int:
-        usable_w = max(width - 2 * MAP_PADDING_PX, 50)
-        usable_h = max(height - 2 * MAP_PADDING_PX, 50)
-        zoom = MAX_ZOOM
-        for candidate in range(MAX_ZOOM, MIN_ZOOM - 1, -1):
+        """Минимальный zoom, при котором кадр bbox покрывает холст целиком.
+
+        Излишек затем срезается кадрированием — итоговое изображение
+        гарантированно лежит внутри кадра bbox.
+        """
+        for candidate in range(MIN_ZOOM, MAX_ZOOM + 1):
             scale = TILE_SIZE * (2**candidate)
-            if span_x * scale <= usable_w and span_y * scale <= usable_h:
-                zoom = candidate
-                break
-        else:
-            zoom = MIN_ZOOM
-        return zoom
+            if span_x * scale >= width and span_y * scale >= height:
+                return candidate
+        return MAX_ZOOM
+
+    def crop_box(self) -> tuple[int, int, int, int] | None:
+        """Квадратный кадрирующий прямоугольник: пересечение холста с bbox."""
+        scale = TILE_SIZE * (2**self.zoom)
+        min_lon, min_lat, max_lon, max_lat = self.bbox
+        x0, y1 = _mercator(min_lon, min_lat)
+        x1, y0 = _mercator(max_lon, max_lat)
+        span_w = (x1 - x0) * scale
+        span_h = (y1 - y0) * scale
+        side = math.floor(min(self.width, self.height, span_w, span_h))
+        if side >= min(self.width, self.height):
+            return None
+        left = round((self.width - side) / 2)
+        top = round((self.height - side) / 2)
+        return (left, top, left + side, top + side)
 
     def project(self, lon: float, lat: float) -> tuple[float, float]:
         x, y = _mercator(lon, lat)
@@ -605,12 +641,17 @@ def render_overview_map(
     out_path: Path,
     *,
     cache_dir: Path | None = None,
-    size: tuple[int, int] = (1200, 800),
+    size: tuple[int, int] = (1000, 1000),
     fetch_tile: Callable[[int, int, int, float], bytes | None] | None = None,
     timeout: float = 10.0,
-    max_frame_ratio: float = 14.0,
 ) -> MapImageResult:
-    """Рисует PNG-карту: подложка OSM + зоны + участок со штриховкой.
+    """Рисует квадратную PNG-карту: подложка OSM + зоны + участок.
+
+    Кадр: bbox участка приводится к квадрату по длинной стороне и
+    увеличивается вдвое от центра — участок всегда по центру изображения,
+    а итоговая картинка гарантированно лежит внутри этого кадра
+    (излишек срезается кадрированием после подбора целочисленного zoom).
+    Зоны, выходящие за кадр, просто обрезаются его границами.
 
     ``fetch_tile(z, x, y, timeout) -> bytes | None`` подменяется в тестах;
     ``None`` у тайла означает «нет подложки» — карта строится на
@@ -622,25 +663,7 @@ def render_overview_map(
     parcel_bbox = _geometry_bbox(parcel_geometry)
     if parcel_bbox is None:
         raise ValueError("parcel geometry has no coordinates")
-    p_min_lon, p_min_lat, p_max_lon, p_max_lat = parcel_bbox
-    min_lon, min_lat, max_lon, max_lat = parcel_bbox
-    for layer in layers:
-        bbox = _geometry_bbox(layer.geometry)
-        if bbox is None:
-            continue
-        min_lon, min_lat = min(min_lon, bbox[0]), min(min_lat, bbox[1])
-        max_lon, max_lat = max(max_lon, bbox[2]), max(max_lat, bbox[3])
-    # кадр ограничен окрестностью участка: далекие части вытянутых зон
-    # не должны делать сам участок неразличимым
-    center_lon = (p_min_lon + p_max_lon) / 2
-    center_lat = (p_min_lat + p_max_lat) / 2
-    span_lon = min(max_lon - min_lon, (p_max_lon - p_min_lon) * max_frame_ratio)
-    span_lat = min(max_lat - min_lat, (p_max_lat - p_min_lat) * max_frame_ratio)
-    span_lon = max(span_lon, 0.001)
-    span_lat = max(span_lat, 0.001)
-    min_lon, max_lon = center_lon - span_lon / 2, center_lon + span_lon / 2
-    min_lat, max_lat = center_lat - span_lat / 2, center_lat + span_lat / 2
-    viewport = _Viewport((min_lon, min_lat, max_lon, max_lat), *size)
+    viewport = _Viewport(_square_frame(parcel_bbox), *size)
 
     base, requested, fetched = _compose_basemap(
         viewport, cache_dir=cache_dir, fetch_tile=fetcher, timeout=timeout
@@ -666,6 +689,10 @@ def render_overview_map(
     base = overlay
 
     _draw_parcel(base, viewport, parcel_geometry)
+
+    crop = viewport.crop_box()
+    if crop is not None:
+        base = base.crop(crop)
 
     entries: list[tuple[str, Any]] = [(_PARCEL_LABEL, _parcel_sample)]
     for layer in layers:
