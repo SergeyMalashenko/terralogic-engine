@@ -42,31 +42,31 @@ _FONT_CANDIDATES = (
 
 # source_type GeoFeature → (легенда, заливка RGBA, контур RGB)
 _ZONE_STYLES: dict[str, tuple[str, tuple[int, int, int, int], tuple[int, int, int]]] = {
-    "water_protection": ("Водоохранная зона", (66, 133, 244, 70), (36, 92, 190)),
+    "water_protection": ("Водоохранная зона", (66, 133, 244, 100), (36, 92, 190)),
     "coastal_protection": (
         "Прибрежная защитная полоса",
-        (234, 67, 53, 70),
+        (234, 67, 53, 100),
         (180, 40, 30),
     ),
     "drinking_water_protection": (
         "Зона санитарной охраны",
-        (0, 150, 136, 70),
+        (0, 150, 136, 100),
         (0, 110, 100),
     ),
     "sanitary_protection": (
         "Санитарно-защитная зона",
-        (171, 71, 188, 70),
+        (171, 71, 188, 100),
         (130, 45, 145),
     ),
-    "protected_areas": ("ООПТ", (67, 160, 71, 70), (40, 120, 45)),
-    "flooding": ("Зона затопления", (3, 169, 244, 70), (2, 130, 190)),
+    "protected_areas": ("ООПТ", (67, 160, 71, 100), (40, 120, 45)),
+    "flooding": ("Зона затопления", (3, 169, 244, 100), (2, 130, 190)),
     "pipeline_protection": (
         "Охранная зона трубопроводов",
-        (255, 152, 0, 70),
+        (255, 152, 0, 100),
         (210, 120, 0),
     ),
 }
-_PARCEL_ZOUIT_STYLE = ("Зона с особыми условиями", (255, 193, 7, 80), (200, 145, 0))
+_PARCEL_ZOUIT_STYLE = ("Зона с особыми условиями", (255, 193, 7, 110), (200, 145, 0))
 _PARCEL_OUTLINE = (198, 40, 40)
 _PARCEL_HATCH = (198, 40, 40, 110)
 _PARCEL_LABEL = "Земельный участок"
@@ -675,9 +675,11 @@ def render_overview_map(
         )
     base = base.convert("RGBA")
 
-    from PIL import ImageDraw
+    from PIL import Image, ImageDraw
 
-    overlay = base.copy()
+    # ImageDraw на RGBA-холсте заменяет пиксели вместе с альфой, поэтому
+    # заливки рисуются на прозрачном оверлее и применяются через composite
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay)
     drawn_labels: list[str] = []
     for layer in layers:
@@ -686,7 +688,7 @@ def render_overview_map(
         )
         if layer.label not in drawn_labels:
             drawn_labels.append(layer.label)
-    base = overlay
+    base = Image.alpha_composite(base, overlay)
 
     _draw_parcel(base, viewport, parcel_geometry)
 
@@ -699,6 +701,11 @@ def render_overview_map(
         if layer.label not in [label for label, _ in entries]:
             fill = layer.fill
             outline = layer.outline
+            # образец в легенде — заливка, смешанная с белым (как на карте)
+            alpha = fill[3] / 255
+            blended = tuple(
+                round(channel * alpha + 255 * (1 - alpha)) for channel in fill[:3]
+            )
 
             def _sample(
                 draw: Any,
@@ -706,7 +713,7 @@ def render_overview_map(
                 y: int,
                 w: int,
                 h: int,
-                fill: tuple = fill,
+                fill: tuple = blended,
                 outline: tuple = outline,
             ) -> None:
                 draw.rectangle([x, y, x + w, y + h], fill=fill, outline=(*outline, 255))

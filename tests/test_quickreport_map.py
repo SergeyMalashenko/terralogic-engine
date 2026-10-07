@@ -78,6 +78,12 @@ def test_render_overview_map_with_fake_tiles(tmp_path) -> None:
         for y in range(center - 50, center + 50, 2)
     )
     assert found_hatch
+    # заливка зоны полупрозрачна: пиксель зоны вне участка — смесь цвета
+    # зоны с подложкой, а не чистый цвет заливки
+    zone_pixel = pixels[314, 500]
+    fill_rgb = mapimg._ZONE_STYLES["water_protection"][1][:3]
+    assert zone_pixel[2] > zone_pixel[0]
+    assert zone_pixel != fill_rgb
 
 
 def test_render_overview_map_offline_keeps_working(tmp_path) -> None:
