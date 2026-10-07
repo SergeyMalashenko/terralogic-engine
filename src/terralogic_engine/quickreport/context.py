@@ -18,6 +18,8 @@ from .models import (
     QuickReportContext,
     QuickSurroundings,
     QuickVerdict,
+    QuickZoneRegulations,
+    QuickZoneUse,
 )
 from .rules import (
     ScoringRule,
@@ -30,6 +32,60 @@ from .rules import (
 )
 
 _MAX_SURROUNDING_LINES = 6
+_HOUSING_CODE_PREFIXES = ("1", "2")
+
+
+def _is_housing_use(code: str | None) -> bool:
+    """Коды классификатора ВРИ групп 1.* (садоводство/огородничество) и 2.* (жильё)."""
+    if not code:
+        return False
+    head = code.lstrip().split(".", 1)[0].rstrip("*")
+    return head in _HOUSING_CODE_PREFIXES
+
+
+def _zone_regulations(base: ReportContext) -> QuickZoneRegulations | None:
+    """ВРИ территориальной зоны участка из документального контура (ПЗЗ)."""
+    documents = base.documents
+    if documents is None or documents.pzz is None:
+        return None
+    found = [zone for zone in documents.pzz.zones if zone.found]
+    if not found:
+        return None
+    passport_zone = base.urban_planning.parcel_zones[0].zone if (
+        base.urban_planning.parcel_zones
+    ) else None
+    zone = next(
+        (item for item in found if item.zone_code == passport_zone),
+        found[0],
+    )
+    housing = [
+        QuickZoneUse(
+            code=item.code,
+            name=item.name,
+            area_min=item.area_min,
+            area_max=item.area_max,
+            building_percentage=item.building_percentage,
+            margin=item.margin,
+        )
+        for item in zone.items
+        if _is_housing_use(item.code)
+    ]
+    # одна и та же строка ВРИ встречается в пересекающихся таблицах документа
+    seen: set[tuple[str | None, str | None]] = set()
+    unique_housing: list[QuickZoneUse] = []
+    for use in housing:
+        key = (use.code, use.name)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_housing.append(use)
+    return QuickZoneRegulations(
+        zone_code=zone.zone_code,
+        doc_number=documents.pzz.number,
+        doc_version_date=documents.pzz.version_date,
+        total_uses=len(zone.items),
+        housing_uses=unique_housing,
+    )
 
 
 def _rule_for_zone(
@@ -174,6 +230,7 @@ def build_quick_context_from_report(
             grade_summary=grade.summary,
         ),
         factors=factors,
+        zone_regulations=_zone_regulations(base),
         surroundings=_surroundings(base, guidance),
         warnings=warnings,
     )

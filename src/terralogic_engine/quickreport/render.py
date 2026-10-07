@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from .models import QuickFactor, QuickReportContext
+from .models import QuickFactor, QuickReportContext, QuickZoneUse
 
 SCORE_SCALE = 100
 
@@ -111,6 +111,76 @@ def _surroundings_lines(context: QuickReportContext) -> list[str]:
     return lines
 
 
+def _format_limit_value(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return _format_number(float(value))
+    return " ".join(str(value).split()) or None
+
+
+def _zone_use_line(use: QuickZoneUse) -> str:
+    head = " ".join(
+        part for part in (use.code, use.name) if part
+    )
+    limits: list[str] = []
+    area_min = _format_limit_value(use.area_min)
+    area_max = _format_limit_value(use.area_max)
+    if area_min or area_max:
+        limits.append(f"участок {area_min or '—'}–{area_max or '—'} м²")
+    if use.building_percentage:
+        limits.append(f"застройка до {_cell(str(use.building_percentage))}")
+    margin = _format_limit_value(use.margin)
+    if margin:
+        limits.append(f"отступ от границ {margin} м")
+    suffix = f" — {', '.join(limits)}" if limits else ""
+    return f"- **{_cell(head)}**{suffix}"
+
+
+def _zone_regulations_lines(context: QuickReportContext) -> list[str]:
+    regulations = context.zone_regulations
+    if regulations is None:
+        return [
+            (
+                "Сведения о территориальной зоне из документа ПЗЗ не получены: "
+                "документ не найден или не обработан. Проверка по первичному "
+                "документу — в подробном заключении."
+            )
+        ]
+    doc = "ПЗЗ"
+    if regulations.doc_number:
+        doc += f" № {regulations.doc_number}"
+    if regulations.doc_version_date:
+        doc += f", редакция от {regulations.doc_version_date}"
+    lines = [
+        f"Зона {regulations.zone_code} — по данным {doc}.",
+        (
+            f"Всего видов разрешённого использования в таблице зоны: "
+            f"{regulations.total_uses}."
+        ),
+    ]
+    if regulations.housing_uses:
+        lines.extend(
+            [
+                "",
+                "Виды использования для строительства дома и ведения хозяйства:",
+                "",
+            ]
+        )
+        lines.extend(_zone_use_line(use) for use in regulations.housing_uses)
+    lines.extend(
+        [
+            "",
+            (
+                "Полная таблица видов разрешённого использования, включая "
+                "условно разрешённые и вспомогательные, приводится "
+                "в подробном заключении."
+            ),
+        ]
+    )
+    return lines
+
+
 def render_quickreport(
     context: QuickReportContext, *, today: date | None = None
 ) -> str:
@@ -147,6 +217,10 @@ def render_quickreport(
         "## Паспорт участка",
         "",
         *_passport_lines(context),
+        "",
+        "## Территориальная зона и разрешённое использование",
+        "",
+        *_zone_regulations_lines(context),
         "",
         "## Окружение",
         "",

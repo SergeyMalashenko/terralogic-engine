@@ -8,6 +8,8 @@ from .models import (
     QuickReportResult,
     QuickSurroundings,
     QuickVerdict,
+    QuickZoneRegulations,
+    QuickZoneUse,
 )
 from .render import render_quickreport
 from .rules import (
@@ -29,6 +31,8 @@ __all__ = [
     "QuickRulesError",
     "QuickSurroundings",
     "QuickVerdict",
+    "QuickZoneRegulations",
+    "QuickZoneUse",
     "ScoringRules",
     "ZoneGuidance",
     "build_quick_context",

@@ -20,8 +20,12 @@ from terralogic_engine.quickreport import (
     render_quickreport,
 )
 from terralogic_engine.reporting.models import (
+    DocumentReportContext,
+    DocumentVriItemContext,
+    DocumentVriZoneContext,
     ParcelPlanningZoneReportContext,
     ParcelReportContext,
+    PzzDocumentContext,
     ReportContext,
     SearchAreaReportContext,
     UrbanPlanningReportContext,
@@ -290,6 +294,78 @@ def test_render_quickreport_defaults_today(rules, guidance):
     )
     markdown = render_quickreport(quick)
     assert f"Отчёт от {datetime.now(UTC):%d.%m.%Y}" in markdown
+
+
+# ---------------------------------------------------------------------------
+# Территориальная зона и ВРИ из ПЗЗ
+# ---------------------------------------------------------------------------
+
+
+def _vri_item(code: str, name: str, **limits) -> DocumentVriItemContext:
+    return DocumentVriItemContext(code=code, name=name, **limits)
+
+
+def _with_pzz(base: ReportContext) -> ReportContext:
+    items = [
+        _vri_item(
+            "2.1*",
+            "Для индивидуального жилищного строительства",
+            area_min=500,
+            area_max=500000,
+            building_percentage="40%",
+            margin=3,
+        ),
+        _vri_item("2.2*", "Для ведения личного подсобного хозяйства"),
+        # дубль той же строки из пересекающейся таблицы документа
+        _vri_item("2.1*", "Для индивидуального жилищного строительства"),
+        # нежилищные коды в жилищный блок не попадают
+        _vri_item("4.2", "Торговые центры"),
+    ]
+    base.documents = DocumentReportContext(
+        pzz=PzzDocumentContext(
+            number="1986/8",
+            version_date="2026-08-06",
+            files=["reglament.pdf"],
+            zones=[
+                DocumentVriZoneContext(zone_code="Ж-2", found=True, items=items),
+                DocumentVriZoneContext(zone_code="СХ-1", found=False),
+            ],
+        )
+    )
+    return base
+
+
+def test_zone_regulations_from_pzz(rules, guidance):
+    base = _with_pzz(_base_context())
+    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
+
+    regulations = quick.zone_regulations
+    assert regulations is not None
+    assert regulations.zone_code == "Ж-2"
+    assert regulations.doc_number == "1986/8"
+    assert regulations.doc_version_date == "2026-08-06"
+    assert regulations.total_uses == 4
+    # дубль 2.1* схлопнут, 4.2 отфильтрован
+    assert [use.code for use in regulations.housing_uses] == ["2.1*", "2.2*"]
+
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+    assert "## Территориальная зона и разрешённое использование" in markdown
+    assert "Зона Ж-2 — по данным ПЗЗ № 1986/8, редакция от 2026-08-06." in markdown
+    assert (
+        "- **2.1* Для индивидуального жилищного строительства** — участок "
+        "500–500 000 м², застройка до 40%, отступ от границ 3 м"
+    ) in markdown
+    assert markdown.count("2.1* Для индивидуального") == 1
+    assert "4.2" not in markdown
+
+
+def test_zone_regulations_absent_without_documents(rules, guidance):
+    quick = build_quick_context_from_report(
+        _base_context(), rules=rules, guidance=guidance
+    )
+    assert quick.zone_regulations is None
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+    assert "Сведения о территориальной зоне из документа ПЗЗ не получены" in markdown
 
 
 # ---------------------------------------------------------------------------

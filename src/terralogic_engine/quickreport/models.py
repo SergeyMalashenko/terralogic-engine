@@ -49,6 +49,27 @@ class QuickSurroundings(BaseModel):
     communications_note: str | None = None
 
 
+class QuickZoneUse(BaseModel):
+    """Строка ВРИ из таблицы ПЗЗ для отчёта (без сырого текста)."""
+
+    code: str | None = None
+    name: str | None = None
+    area_min: int | float | str | None = None
+    area_max: int | float | str | None = None
+    building_percentage: str | None = None
+    margin: int | float | str | None = None
+
+
+class QuickZoneRegulations(BaseModel):
+    """Территориальная зона участка и её ВРИ по документу ПЗЗ."""
+
+    zone_code: str
+    doc_number: str | None = None
+    doc_version_date: str | None = None
+    total_uses: int = 0
+    housing_uses: list[QuickZoneUse] = Field(default_factory=list)
+
+
 class QuickReportContext(BaseModel):
     """Полный контекст QuickReport: паспорт, вердикт, факторы, окружение."""
 
@@ -59,6 +80,7 @@ class QuickReportContext(BaseModel):
     parcel: QuickPassport
     verdict: QuickVerdict
     factors: list[QuickFactor] = Field(default_factory=list)
+    zone_regulations: QuickZoneRegulations | None = None
     surroundings: QuickSurroundings
     warnings: list[str] = Field(default_factory=list)
 
