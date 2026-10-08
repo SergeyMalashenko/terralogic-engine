@@ -164,6 +164,52 @@ def vri_query(zone_codes: Sequence[str]) -> str:
     return VRI_QUERY_ALL_ZONES
 
 
+def municipality_pzz_fallback(
+    rgis_sync_envelope: Mapping[str, Any] | None,
+    candidates: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    """Fallback-кандидат «ПЗЗ муниципалитета без номера» для acquire.
+
+    Sync может не привести ссылку на ПЗЗ (карточка ИСОГД пустая или битая),
+    хотя документ уже лежит в общей базе. Контур тогда дёргает
+    acquire_documents по муниципалитету без номера: cache-first вернёт
+    скачанные версии ПЗЗ муниципалитета, а внешний агентный поиск без
+    номера не запускается (чистый not_found). Работает только по итогам
+    применимого RGIS-sync (регион 50): без него муниципалитет участка
+    контуру неизвестен.
+    """
+
+    if any(str(candidate.get("doc_type") or "") == "pzz" for candidate in candidates):
+        return None
+    data = (
+        rgis_sync_envelope.get("data")
+        if isinstance(rgis_sync_envelope, Mapping)
+        else None
+    )
+    if not isinstance(data, Mapping) or data.get("applicable") is not True:
+        return None
+    municipality: str | None = None
+    value = data.get("municipality")
+    if isinstance(value, str) and value.strip():
+        municipality = value.strip()
+    for document in _documents_list(rgis_sync_envelope):
+        if str(document.get("doc_type") or "") == "pzz":
+            return None
+        if municipality is None:
+            value = document.get("municipality")
+            if isinstance(value, str) and value.strip():
+                municipality = value.strip()
+    if municipality is None:
+        return None
+    return {
+        "version_id": None,
+        "doc_type": "pzz",
+        "municipality": municipality,
+        "number": None,
+        "version_date": None,
+    }
+
+
 def _documents_by_version(
     result: Mapping[str, Any],
 ) -> dict[int, Mapping[str, Any]]:

@@ -26,6 +26,7 @@ from terralogic_engine.acquisition.geodocs_adapter import (
     ZOUIT_REGIMES_QUERY,
     acquire_candidates,
     downloaded_pzz_version_ids,
+    municipality_pzz_fallback,
     sync_version_ids,
     sync_zone_codes,
     vri_envelope_from_query,
@@ -704,6 +705,9 @@ class AcquisitionPipeline:
                 [rgis_sync_envelope, nspd_sync_envelope],
                 limit=profile.documents_acquire_limit,
             )
+            fallback = municipality_pzz_fallback(rgis_sync_envelope, candidates)
+            if fallback is not None:
+                candidates.append(fallback)
             for candidate in candidates:
                 try:
                     acquire_result = await self.geodocs.acquire_documents(

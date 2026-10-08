@@ -557,6 +557,56 @@ async def test_pipeline_collects_document_contour(tmp_path) -> None:
     assert '"coordinates"' not in context.model_dump_json()
 
 
+async def test_pipeline_geodocs_municipality_fallback_without_pzz_ref(
+    tmp_path,
+) -> None:
+    """Без ссылки на ПЗЗ от sync контур дёргает acquire по муниципалитету.
+
+    Карточка ПЗЗ в ИСОГД может отсутствовать или не парситься, хотя документ
+    уже лежит в общей базе: fallback-кандидат без номера заставляет geodocs
+    проверить кэш по муниципалитету (внешний поиск без номера не запускается).
+    """
+    store = LocalCaseStore(tmp_path / "store")
+    sync = rgis_documents_sync_result()
+    sync["data"]["documents"] = [
+        document
+        for document in sync["data"]["documents"]
+        if document["doc_type"] != "pzz"
+    ]
+    geodocs = FakeGeodocsClient()
+    pipeline = AcquisitionPipeline(
+        store=store,
+        nspd=FakeNspdClient(),
+        osm=FakeOsmClient(),
+        dgis=FakeDgisClient(),
+        rgis=FakeRgisClient(),
+        rgis_documents=FakeRgisDocumentsClient(sync_result=sync),
+        nspd_documents=FakeNspdDocumentsClient(),
+        geodocs=geodocs,
+    )
+    receipt = await pipeline.collect(
+        CollectionRequest(
+            case_id="case-fallback",
+            cadastral_number="50:32:0000000:38218",
+            profile_version="3.1",
+            refresh_policy="always",
+        )
+    )
+
+    assert receipt.status == "complete"
+    assert geodocs.acquire_calls == [
+        {
+            "municipality": "Тестовый район",
+            "doc_type": "pzz",
+            "number": None,
+            "version_date": None,
+            "title": None,
+        }
+    ]
+    # acquire вернул версию из кэша → запрос ВРИ пошёл по ней
+    assert geodocs.query_calls[0]["version_ids"] == [9001]
+
+
 async def test_pipeline_profile_30_keeps_documents_sync_only(tmp_path) -> None:
     store = LocalCaseStore(tmp_path / "store")
     geodocs = FakeGeodocsClient()
