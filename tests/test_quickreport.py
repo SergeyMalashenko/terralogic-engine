@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import sys
 from datetime import UTC, date, datetime
 
 import pytest
@@ -482,6 +483,68 @@ async def test_prepare_quickreport_builds_map_artifact(tmp_path) -> None:
         in (result.markdown)
     )
     assert "© OpenStreetMap contributors" in result.markdown
+
+
+async def test_prepare_quickreport_builds_pdf_artifact(tmp_path) -> None:
+    pytest.importorskip("weasyprint", reason="extra 'pdf' не установлен")
+    store = LocalCaseStore(tmp_path / "store")
+    acquisition = AcquisitionPipeline(
+        store=store,
+        nspd=FakeNspdClient(),
+        osm=FakeOsmClient(),
+        dgis=FakeDgisClient(),
+    )
+    await acquisition.collect(
+        CollectionRequest(
+            case_id="case-quickreport",
+            cadastral_number="52:26:0040002:3823",
+            refresh_policy="always",
+        )
+    )
+    AnalysisPipeline(store=store).analyze("case-quickreport")
+    service = ReportingService(
+        store=store, acquisition=acquisition, tile_fetcher=_fake_tile
+    )
+
+    result = service.prepare_quickreport("case-quickreport")
+
+    assert result.pdf_relative_path is not None
+    assert result.pdf_relative_path.startswith("reports/quickreport-")
+    pdf_file = (
+        tmp_path / "store" / "cases" / "case-quickreport" / result.pdf_relative_path
+    )
+    assert pdf_file.read_bytes().startswith(b"%PDF")
+    assert not any("pdf не построен" in w for w in result.warnings)
+
+
+async def test_prepare_quickreport_without_pdf_extra_degrades(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalCaseStore(tmp_path / "store")
+    acquisition = AcquisitionPipeline(
+        store=store,
+        nspd=FakeNspdClient(),
+        osm=FakeOsmClient(),
+        dgis=FakeDgisClient(),
+    )
+    await acquisition.collect(
+        CollectionRequest(
+            case_id="case-quickreport",
+            cadastral_number="52:26:0040002:3823",
+            refresh_policy="always",
+        )
+    )
+    AnalysisPipeline(store=store).analyze("case-quickreport")
+    service = ReportingService(
+        store=store, acquisition=acquisition, tile_fetcher=_fake_tile
+    )
+    monkeypatch.setitem(sys.modules, "weasyprint", None)  # import → ImportError
+
+    result = service.prepare_quickreport("case-quickreport")
+
+    assert result.pdf_relative_path is None
+    assert result.markdown.startswith("# Экспресс-оценка")
+    assert any("pdf не построен" in w for w in result.warnings)
 
 
 async def test_prepare_quickreport_offline_still_builds_map(tmp_path) -> None:

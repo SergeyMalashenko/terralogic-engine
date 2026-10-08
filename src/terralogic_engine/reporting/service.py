@@ -140,6 +140,10 @@ class ReportingService:
         )
         context.warnings.extend(map_warnings)
         markdown = render_quickreport(context, map_lines=map_lines)
+        pdf_relative_path, pdf_warnings = self._build_quick_pdf(
+            case_id, context, markdown
+        )
+        context.warnings.extend(pdf_warnings)
         analysis = self.store.get_analysis_result(
             case_id,
             context.collection_run_id,
@@ -168,8 +172,41 @@ class ReportingService:
             generated_at=report.generated_at,
             markdown=report.markdown,
             map_relative_path=map_relative_path,
+            pdf_relative_path=pdf_relative_path,
             warnings=context.warnings,
         )
+
+    def _build_quick_pdf(
+        self, case_id: str, context: QuickReportContext, markdown: str
+    ) -> tuple[str | None, list[str]]:
+        """PDF-версия quick-отчёта рядом с Markdown-артефактом.
+
+        Любой сбой (нет extra 'pdf', ошибка рендера) деградирует
+        в предупреждение — Markdown-отчёт при этом сохраняется всегда.
+        """
+        from terralogic_engine.quickreport.pdf import markdown_to_pdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            store_root = getattr(self.store, "root", None)
+            base_dir = (
+                Path(store_root) / "cases" / case_id / "reports"
+                if store_root is not None
+                else Path.cwd()
+            )
+            warnings = markdown_to_pdf(markdown, tmp_path, base_dir=base_dir)
+            if warnings:
+                return None, warnings
+            relative_path = self.store.save_case_artifact(
+                case_id=case_id,
+                kind="reports",
+                filename=f"quickreport-{context.collection_run_id}.pdf",
+                payload=tmp_path.read_bytes(),
+            )
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        return relative_path, []
 
     def _build_quick_map(
         self, case_id: str, context: QuickReportContext
