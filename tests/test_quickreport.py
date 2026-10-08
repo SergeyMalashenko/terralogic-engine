@@ -369,6 +369,26 @@ def test_zone_regulations_from_pzz(rules, guidance):
     assert "4.2" not in markdown
 
 
+def test_zone_use_line_one_sided_area_limits(rules, guidance):
+    """Односторонний предел площади: «от/до X м²», без «–—»."""
+    base = _with_pzz(_base_context())
+    base.documents.pzz.zones[0].items = [
+        _vri_item(
+            "2.1", "Для индивидуального жилищного строительства", area_min=30000
+        ),
+        _vri_item(
+            "2.2", "Для ведения личного подсобного хозяйства", area_max=4000
+        ),
+    ]
+    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
+
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+
+    assert "участок от 30 000 м²" in markdown
+    assert "участок до 4 000 м²" in markdown
+    assert "–—" not in markdown
+
+
 def test_zone_regulations_absent_without_documents(rules, guidance):
     quick = build_quick_context_from_report(
         _base_context(), rules=rules, guidance=guidance

@@ -124,8 +124,12 @@ def _zone_use_line(use: QuickZoneUse) -> str:
     limits: list[str] = []
     area_min = _format_limit_value(use.area_min)
     area_max = _format_limit_value(use.area_max)
-    if area_min or area_max:
-        limits.append(f"участок {area_min or '—'}–{area_max or '—'} м²")
+    if area_min and area_max:
+        limits.append(f"участок {area_min}–{area_max} м²")
+    elif area_min:
+        limits.append(f"участок от {area_min} м²")
+    elif area_max:
+        limits.append(f"участок до {area_max} м²")
     if use.building_percentage:
         limits.append(f"застройка до {_cell(str(use.building_percentage))}")
     margin = _format_limit_value(use.margin)
