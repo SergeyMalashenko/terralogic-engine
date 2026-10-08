@@ -14,11 +14,13 @@ from terralogic_engine.analytics.models import IntersectionSummary, NearestObjec
 from terralogic_engine.analytics.pipeline import AnalysisPipeline
 from terralogic_engine.domain.models import CollectionRequest
 from terralogic_engine.quickreport import (
+    ConfigurationOutcome,
+    ScoredFactor,
     build_quick_context_from_report,
-    compute_score,
+    compute_verdict,
+    evaluate_configuration,
     load_scoring_rules,
     load_zone_guidance,
-    match_guidance,
     render_quickreport,
 )
 from terralogic_engine.reporting.models import (
@@ -30,6 +32,7 @@ from terralogic_engine.reporting.models import (
     PzzDocumentContext,
     ReportContext,
     SearchAreaReportContext,
+    SourceEvidenceContext,
     UrbanPlanningReportContext,
     ZouitReportContext,
 )
@@ -65,13 +68,14 @@ def guidance():
 
 
 def test_package_assets_load_and_keys_are_consistent(rules, guidance):
-    assert rules.methodology_version == "0.1-stub"
+    assert rules.methodology_version == "6.1"
     assert rules.base_score == 100
-    for rule in rules.rules:
-        if rule.guidance_key == "communications":
-            assert rule.guidance_key in guidance.misc
-        else:
-            assert rule.guidance_key in guidance.zones, rule.guidance_key
+    assert rules.group_cap == 40
+    assert sum(rules.comm_weights.values()) == rules.comm_max == 10
+    # у всех основных типов зон есть текст для таблицы факторов
+    for key in ("water_protection", "coastal_strip", "airport_subzone"):
+        assert key in guidance.zones
+    assert "communications" in guidance.misc
 
 
 def test_coverage_words_thresholds(rules):
@@ -81,33 +85,74 @@ def test_coverage_words_thresholds(rules):
     assert rules.coverage_word(5) == "край участка"
 
 
-def test_grade_for_thresholds(rules):
-    assert rules.grade_for(100).key == "clear"
-    assert rules.grade_for(75).key == "clear"
-    assert rules.grade_for(60).key == "attention"
-    assert rules.grade_for(10).key == "severe"
+def test_classify_groups_and_bands(rules):
+    matched = rules.classify("Охранная зона", "Водоохранная зона р. Банка")
+    assert matched is not None
+    group, factor = matched
+    assert group.key == "water" and factor.id == "water_protection_zone"
+    assert factor.deduction_for(100.0) == 25
+    assert factor.deduction_for(75.0) == 15
+    assert factor.deduction_for(40.0) == 15
+    assert factor.deduction_for(10.0) == 5
+    matched = rules.classify(None, "Шестая подзона приаэродромной территории")
+    assert matched is not None
+    group, factor = matched
+    assert factor.id == "airport_subzone_no_height"
+    assert factor.deduction_for(100.0) == 5
+    matched = rules.classify(None, "Третья подзона приаэродромной территории")
+    assert matched is not None and matched[1].id == "airport_subzone_height"
+    assert matched[1].deduction_for(5.0) == 15
+    matched = rules.classify(None, "Охранная зона ЛЭП 750 кВ")
+    assert matched is not None and matched[1].deduction_for(1.0) == 20
+    assert rules.classify("проезды", "ул. Ленина") is None
 
 
-def test_match_guidance_by_zone_type_and_name(guidance):
-    entry = match_guidance(guidance, zone_type="Водоохранная зона", name="р. Банка")
-    assert entry is not None and entry.key == "water_protection"
-    entry = match_guidance(guidance, zone_type=None, name="Охранная зона ЛЭП 750 кВ")
-    assert entry is not None and entry.key == "power_line"
-    assert match_guidance(guidance, zone_type="проезды", name="ул. Ленина") is None
-
-
-def test_compute_score_arithmetic(rules):
-    by_id = {rule.id: rule for rule in rules.rules}
-    score = compute_score(
-        rules,
-        [
-            (by_id["water_protection"], 100.0),  # −10
-            (by_id["coastal_strip"], 40.0),  # −4
-            (by_id["communications_unknown"], 0.0),  # informational — не вычитает
-        ],
+def test_compute_verdict_arithmetic(rules):
+    # водоохранная 100% (25) + прибрежная (10) → группа 35; U = 10; G = 0
+    scored = [
+        ScoredFactor("water", "Водные", "Водоохранная зона", "ВЗ", "nspd", 100.0, 25.0),
+        ScoredFactor("water", "Водные", "Прибрежная", "Полоса", "nspd", 40.0, 10.0),
+    ]
+    verdict = compute_verdict(
+        rules, scored, u=10.0, a=0.0, c=0.0,
+        stop_reasons=[], suspend_reasons=[], preliminary_flags=[],
     )
-    assert score == 86
-    assert compute_score(rules, [(by_id["water_protection"], 100.0)] * 20) == 0
+    assert verdict.score == 55
+    assert verdict.status.key == "attention"  # вычет группы ≥ 15
+    assert verdict.preliminary is True  # U > 0
+
+    # потолок группы 40: две ЛЭП по 20 → 40, не 40+
+    leps = [
+        ScoredFactor("power_line", "Инфраструктура", "ЛЭП", "ЛЭП-1", "nspd", 5.0, 20.0),
+        ScoredFactor("power_line", "Инфраструктура", "ЛЭП", "ЛЭП-2", "nspd", 5.0, 20.0),
+        ScoredFactor("power_line", "Инфраструктура", "ЛЭП", "ЛЭП-3", "nspd", 5.0, 20.0),
+    ]
+    verdict = compute_verdict(
+        rules, leps, u=0.0, a=0.0, c=0.0,
+        stop_reasons=[], suspend_reasons=[], preliminary_flags=[],
+    )
+    assert verdict.groups[0].deduction == 40
+    assert verdict.score == 60
+    assert verdict.preliminary is False
+
+    # stop и insufficient — без балла
+    verdict = compute_verdict(
+        rules, [], u=10.0, a=0.0, c=0.0,
+        stop_reasons=["стоп"], suspend_reasons=[], preliminary_flags=[],
+    )
+    assert verdict.score is None and verdict.status.key == "stop"
+    verdict = compute_verdict(
+        rules, [], u=10.0, a=0.0, c=0.0,
+        stop_reasons=[], suspend_reasons=["нет сведений"], preliminary_flags=[],
+    )
+    assert verdict.score is None and verdict.status.key == "insufficient"
+
+    # ok: 95 ≥ 85, групп ≥ 15 нет
+    verdict = compute_verdict(
+        rules, [ScoredFactor("water", "Водные", "Водоохранная", "ВЗ", "nspd", 10.0, 5.0)],
+        u=0.0, a=0.0, c=0.0, stop_reasons=[], suspend_reasons=[], preliminary_flags=[],
+    )
+    assert verdict.score == 95 and verdict.status.key == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -182,19 +227,40 @@ def _base_context() -> ReportContext:
                 )
             ],
         ),
+        sources=[
+            SourceEvidenceContext(
+                source="nspd",
+                snapshot_id="nspd-1",
+                retrieved_at=now,
+                adapter_version="test",
+                content_sha256="0" * 64,
+            ),
+            SourceEvidenceContext(
+                source="rgis",
+                snapshot_id="rgis-1",
+                retrieved_at=now,
+                adapter_version="test",
+                content_sha256="0" * 64,
+            ),
+        ],
         warnings=["исходное предупреждение"],
     )
 
 
+_CONFIG_OK = ConfigurationOutcome(c=0, detail="тест: 12×12 размещается")
+
+
 def test_build_quick_context_from_report(rules, guidance):
     quick = build_quick_context_from_report(
-        _base_context(), rules=rules, guidance=guidance
+        _base_context(), rules=rules, guidance=guidance, configuration=_CONFIG_OK
     )
 
-    assert quick.methodology_version == "0.1-stub"
-    # −10 (ВЗП 100%) −4 (полоса 40%) = 86 → clear
-    assert quick.verdict.score == 86
-    assert quick.verdict.grade_key == "clear"
+    assert quick.methodology_version == "6.1"
+    # водоохранная 100% (25) + прибрежная 40% (10) = 35; U = 10; G = 0 → 55
+    assert quick.verdict.score == 55
+    assert quick.verdict.status_key == "attention"
+    assert quick.verdict.preliminary is True  # U > 0
+    assert any("Водные ограничения" in reason for reason in quick.verdict.reasons)
 
     zone_factors = [f for f in quick.factors if not f.informational]
     assert [f.rule_id for f in zone_factors] == ["water_protection", "coastal_strip"]
@@ -214,22 +280,118 @@ def test_build_quick_context_from_report(rules, guidance):
     assert "исходное предупреждение" in quick.warnings
 
 
-def test_unmatched_zone_goes_to_warnings(rules, guidance):
+def test_unmatched_zone_suspends_score(rules, guidance):
     base = _base_context()
     base.zouit.append(_zouit("Проезд общего пользования", "проезды", 15.0))
-    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
     assert any("Проезд общего пользования" in w for w in quick.warnings)
-    # нераспознанная зона балл не меняет
-    assert quick.verdict.score == 86
+    # фактор без правила → приостановка выдачи (п. 3.3)
+    assert quick.verdict.score is None
+    assert quick.verdict.status_key == "insufficient"
+    assert any("Проезд общего пользования" in r for r in quick.verdict.reasons)
 
 
 def test_no_zones_gives_max_score(rules, guidance):
     base = _base_context()
     base.zouit = []
-    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
-    assert quick.verdict.score == 100
-    assert quick.verdict.grade_key == "clear"
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+    # ограничений нет, но все коммуникации неизвестны: 100 − U(10) = 90
+    assert quick.verdict.score == 90
+    assert quick.verdict.status_key == "ok"
+    assert quick.verdict.preliminary is True
     assert [f.rule_id for f in quick.factors] == ["communications_unknown"]
+
+
+def test_unknown_configuration_suspends_score(rules, guidance):
+    """Без геометрической проверки числовая оценка не выдаётся (п. 4.4)."""
+    quick = build_quick_context_from_report(
+        _base_context(), rules=rules, guidance=guidance, configuration=None
+    )
+    assert quick.verdict.score is None
+    assert quick.verdict.status_key == "insufficient"
+    assert any("конфигурация" in r for r in quick.verdict.reasons)
+
+
+# ---------------------------------------------------------------------------
+# Методика 6.1: A (минимальная площадь), стоп-фактор, геометрия
+# ---------------------------------------------------------------------------
+
+
+def test_area_at_minimum_deducts_five(rules, guidance):
+    """S == Smin по регламенту → A = 5 (п. 4.3)."""
+    base = _with_pzz(_base_context())  # Ж-2, ИЖС 2.1*: min 500 м², отступ 3 м
+    base.parcel.declared_area_m2 = 500.0
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+    # водная группа 35 + U 10 + G 5 → 50
+    assert quick.verdict.score == 50
+    assert any("минимальной границе" in r for r in quick.verdict.reasons)
+
+
+def test_area_below_minimum_suspends(rules, guidance):
+    """S < Smin → ручная проверка, оценка не выдаётся (п. 4.3)."""
+    base = _with_pzz(_base_context())
+    base.parcel.declared_area_m2 = 400.0
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+    assert quick.verdict.score is None
+    assert quick.verdict.status_key == "insufficient"
+    assert any("ниже минимальной" in r for r in quick.verdict.reasons)
+
+
+def test_stop_factor_without_housing_use(rules, guidance):
+    """В таблице зоны нет жилищных ВРИ → стоп-фактор, без балла (раздел 5)."""
+    base = _with_pzz(_base_context())
+    base.documents.pzz.zones[0].items = [_vri_item("4.2", "Торговые центры")]
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+    assert quick.verdict.score is None
+    assert quick.verdict.status_key == "stop"
+    assert any("отсутствует в регламенте" in r for r in quick.verdict.reasons)
+
+
+def _rectangle(width: float, depth: float) -> dict:
+    return {
+        "type": "Polygon",
+        "coordinates": [[(0, 0), (width, 0), (width, depth), (0, depth), (0, 0)]],
+    }
+
+
+def _square(side: float) -> dict:
+    return _rectangle(side, side)
+
+
+def _eval_config(geometry: dict, margin: float) -> int:
+    outcome = evaluate_configuration(
+        geometry,
+        margin,
+        source_crs="EPSG:32637",
+        metric_crs="EPSG:32637",
+        test_m=10,
+        control_m=12,
+        grid_step_m=1.0,
+        fine_grid_step_m=0.5,
+        tight_c=5,
+        no_fit_c=10,
+    )
+    assert outcome is not None
+    return outcome.c
+
+
+def test_evaluate_configuration_variants():
+    # 100×100 с отступом 3 м — контрольный квадрат размещается
+    assert _eval_config(_square(100), 3) == 0
+    # 16×16 с отступом 3 м → область 10×10: 12×12 не входит, 10×10 входит
+    assert _eval_config(_square(16), 3) == 5
+    # полоса 26×4 с отступом 3 м → область после отступов пуста
+    assert _eval_config(_rectangle(26, 4), 3) == 10
 
 
 # ---------------------------------------------------------------------------
@@ -239,19 +401,25 @@ def test_no_zones_gives_max_score(rules, guidance):
 
 def test_render_quickreport_structure(rules, guidance):
     quick = build_quick_context_from_report(
-        _base_context(), rules=rules, guidance=guidance
+        _base_context(), rules=rules, guidance=guidance, configuration=_CONFIG_OK
     )
 
     markdown = render_quickreport(quick, today=date(2026, 10, 7))
 
     assert markdown.startswith("# Экспресс-оценка земельного участка\n")
     assert (
-        "Отчёт от 07.10.2026 · Данные от 06.10.2026 · Методика оценки — версия 0.1-stub"
+        "Отчёт от 07.10.2026 · Данные от 06.10.2026 · Методика оценки — версия 6.1"
     ) in markdown
     assert "**Кадастровый номер 50:11:0020310:49**" in markdown
-    # скор в заголовке вердикта + градация + summary
-    assert "## Оценка участка — 86/100 (без существенных ограничений)" in markdown
-    assert "Рекомендуется стандартная проверка перед покупкой." in markdown
+    # балл + статус + отметка «предварительная» (U > 0) + причины + пояснение
+    assert (
+        "## Оценка участка — 55/100 (Требует повышенного внимания, предварительная)"
+        in markdown
+    )
+    assert "Возможность реализовать ваш замысел требует подробного анализа." in markdown
+    assert "Основные причины:" in markdown
+    assert "Водные ограничения водного объекта" in markdown
+    assert "Чем выше балл, тем меньше выявленных ограничений" in markdown
     # таблица факторов: заголовок и обе зоны, informational-строки нет
     assert "| № | Зона | Охват участка | Что это значит для вас |" in markdown
     assert "| 1 | Водоохранная зона р. Банка | Практически весь участок |" in markdown
@@ -290,18 +458,23 @@ def test_render_quickreport_structure(rules, guidance):
 def test_render_quickreport_without_zones(rules, guidance):
     base = _base_context()
     base.zouit = []
-    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
 
     markdown = render_quickreport(quick, today=date(2026, 10, 7))
 
-    assert "## Оценка участка — 100/100 (без существенных ограничений)" in markdown
+    assert (
+        "## Оценка участка — 90/100 (Можно продолжить рассмотрение, предварительная)"
+        in markdown
+    )
     assert "| 1 |" not in markdown
     assert "на участок не попадают" in markdown
 
 
 def test_render_quickreport_defaults_today(rules, guidance):
     quick = build_quick_context_from_report(
-        _base_context(), rules=rules, guidance=guidance
+        _base_context(), rules=rules, guidance=guidance, configuration=_CONFIG_OK
     )
     markdown = render_quickreport(quick)
     assert f"Отчёт от {datetime.now(UTC):%d.%m.%Y}" in markdown
@@ -429,7 +602,7 @@ async def test_prepare_quickreport_persists_markdown(tmp_path) -> None:
     assert result.case_id == "case-quickreport"
     assert result.collection_run_id == receipt.run_id
     assert result.analysis_id == analysis.id
-    assert result.methodology_version == "0.1-stub"
+    assert result.methodology_version == "6.1"
     assert result.markdown.startswith("# Экспресс-оценка земельного участка\n")
     assert "52:26:0040002:3823" in result.markdown
     persisted = store.get_latest_generated_report("case-quickreport", receipt.run_id)

@@ -1,25 +1,34 @@
-# Методика скоринга участка «TerraLogicX Express».
-# Заглушка v0: равномерные веса. Замена на методику 5.0 — правка этого файла,
-# интерфейс (правила, пороги, версия) не меняется.
-methodology_version: "0.1-stub"
+# Методика скоринга участка «TerraLogicX Express» — версия 6.1 (2026-10-08).
+# Цель: индивидуальный жилой дом. Оценка = max(0; 100 − Σ вычетов групп
+# ограничений (потолок 40 на группу) − U (коммуникации) − G (площадь/
+# конфигурация, G = max(A; C)). zso1980 и прочие нерасшифрованные признаки
+# источников из рассмотрения исключены (решение владельца 2026-10-08).
+methodology_version: "6.1"
+target: "индивидуальный жилой дом"
 
 base_score: 100
 score_min: 0
 score_max: 100
+group_cap: 40
 
-grades:
-  - min: 75
-    key: clear
-    title: "без существенных ограничений"
-    summary: "Выявленные особенности вряд ли повлияют на проект дома. Рекомендуется стандартная проверка перед покупкой."
-  - min: 50
-    key: attention
-    title: "требует повышенного внимания"
+# Статусы первичного отбора — по приоритету, первое выполненное условие.
+statuses:
+  - key: stop
+    title: "Не соответствует заявленной цели"
+    summary: "Выявлен подтверждённый стоп-фактор: целевое использование несовместимо с режимом участка. Числовая оценка не выдаётся."
+  - key: insufficient
+    title: "Недостаточно данных для отбора"
+    summary: "Ключевые сведения не получены либо выявлен фактор, требующий ручной проверки. Числовая оценка приостановлена до уточнения."
+  - key: attention
+    title: "Требует повышенного внимания"
     summary: "Участок имеет ограничения, которые могут повлиять на проект дома и расходы. Возможность реализовать ваш замысел требует подробного анализа."
-  - min: 0
-    key: severe
-    title: "серьёзные ограничения"
-    summary: "Выявленные факторы с высокой вероятностью влияют на возможность строительства и бюджет. Обязательна детальная проверка до любых решений."
+  - key: ok
+    title: "Можно продолжить рассмотрение"
+    summary: "Выявленные особенности вряд ли повлияют на проект дома. Рекомендуется стандартная проверка перед покупкой."
+
+thresholds:
+  attention_score_below: 85      # оценка ниже 85 → повышенное внимание
+  attention_group_deduction: 15  # вычет любой группы ≥ 15 → повышенное внимание
 
 coverage_words:
   - min_pct: 80
@@ -29,72 +38,102 @@ coverage_words:
   - min_pct: 0
     word: "край участка"
 
-rules:
-  - id: water_protection
-    title: "Водоохранная зона"
-    when: { zone_type: water_protection }
-    weight: 10
-    guidance: water_protection
+# U — неопределённость коммуникаций (состояния вопросов пока только
+# «неизвестно»: источников подключения в контуре нет).
+communications:
+  electricity: 4
+  water: 3
+  sewage: 3
+  max: 10
 
-  - id: coastal_strip
-    title: "Прибрежная защитная полоса"
-    when: { zone_type: coastal_strip }
-    weight: 10
-    guidance: coastal_strip
+# A — площадь на минимальной границе по регламенту ПЗЗ (S == Smin).
+area:
+  equal_deduction: 5
 
-  - id: airport_subzone
-    title: "Подзона приаэродромной территории"
-    when: { zone_type: airport_subzone }
-    weight: 10
-    guidance: airport_subzone
+# C — размещение тестового контура после применимых отступов.
+configuration:
+  test_square_m: 10      # тестовое пятно дома
+  control_square_m: 12   # контрольный контур с резервом 1 м
+  tight_deduction: 5     # 10×10 входит, 12×12 нет
+  no_fit_deduction: 10   # 10×10 не входит
+  grid_step_m: 1.0       # базовая сетка поиска
+  fine_grid_step_m: 0.5  # подтверждающий поиск при отрицательном результате
 
-  - id: oopt
-    title: "Особо охраняемая природная территория"
-    when: { zone_type: oopt }
-    weight: 10
-    guidance: oopt
+# Шесть групп ограничений; match — любая подстрока (casefold) в типе или
+# названии зоны, match_all — все подстроки; bands — по охвату участка в %,
+# иначе фиксированный deduction. Порядок факторов внутри группы важен:
+# первое совпадение выигрывает.
+groups:
+  - key: water
+    title: "Водные ограничения водного объекта"
+    factors:
+      - id: water_protection_zone
+        title: "Водоохранная зона"
+        match: ["водоохранн"]
+        bands:
+          - { above: 75, deduction: 25 }
+          - { at_least: 25, deduction: 15 }
+          - { above: 0, deduction: 5 }
+      - id: coastal_strip
+        title: "Прибрежная защитная полоса"
+        match: ["прибрежн"]
+        deduction: 10
+  - key: airport
+    title: "Приаэродромная территория"
+    factors:
+      - id: airport_subzone_no_height
+        title: "Подзона без высотных ограничений"
+        match_all: ["приаэродромн", "шестая подзона"]
+        bands:
+          - { above: 75, deduction: 5 }
+          - { at_least: 25, deduction: 3 }
+          - { above: 0, deduction: 1 }
+      - id: airport_subzone_height
+        title: "Подзона с высотными ограничениями"
+        match: ["приаэродромн"]
+        deduction: 15
+  - key: power_line
+    title: "Охранные зоны инфраструктуры"
+    factors:
+      - id: lep_zone
+        title: "Охранная зона ЛЭП"
+        match: ["лэп", "электропередач", "электросетев"]
+        deduction: 20
+  - key: sanitary
+    title: "Санитарные зоны"
+    factors:
+      - id: sanitary_protection
+        title: "Зона санитарной охраны"
+        match: ["санитарной охраны"]
+        deduction: 30
+      - id: sanitary_guard
+        title: "Санитарно-защитная зона"
+        match: ["санитарно-защитн"]
+        deduction: 15
+  - key: forest
+    title: "Лесные ограничения"
+    factors:
+      - id: forest_protection
+        title: "Особо защитные участки лесов / защитные леса"
+        match: ["особо защитн", "защитные леса", "защитный лес"]
+        deduction: 30
 
-  - id: cultural_heritage
-    title: "Зона охраны объекта культурного наследия"
-    when: { zone_type: cultural_heritage }
-    weight: 10
-    guidance: cultural_heritage
-
-  - id: power_line
-    title: "Охранная зона линии электропередачи"
-    when: { zone_type: power_line }
-    weight: 10
-    guidance: power_line
-    coverage: { fixed_100: true }
-
-  - id: pipeline
-    title: "Охранная зона магистрального трубопровода"
-    when: { zone_type: pipeline }
-    weight: 10
-    guidance: pipeline
-    coverage: { fixed_100: true }
-
-  - id: sanitary_zone
-    title: "Санитарно-защитная зона"
-    when: { zone_type: sanitary_zone }
-    weight: 10
-    guidance: sanitary_zone
-
-  - id: forest_protection
-    title: "Защитный лес / лесные участки"
-    when: { zone_type: forest_protection }
-    weight: 10
-    guidance: forest_protection
-
-  - id: zsoutu
-    title: "Зона с особыми условиями использования территории"
-    when: { zone_type: zsoutu }
-    weight: 10
-    guidance: zsoutu
-
-  - id: communications_unknown
-    title: "Коммуникации не проверены"
-    when: { communications: unknown }
-    weight: 0
-    informational: true
-    guidance: communications
+# Клиентские формулировки методики 6.1 (разделы 4.2–4.4 и 7).
+texts:
+  score_explanation: "Чем выше балл, тем меньше выявленных ограничений и факторов, требующих уточнения. Оценка учитывает площадь, конфигурацию и неизвестность коммуникаций, но не подтверждает возможность строительства."
+  preliminary_mark: "предварительная"
+  communications_unknown: "Сведения об электроснабжении, водоснабжении и отведении бытовых стоков не установлены. Условия и возможные затраты требуют уточнения."
+  area_at_minimum: "Площадь на минимальной границе по ПЗЗ — проверьте размещение дома с необходимыми отступами."
+  area_below_minimum: "Площадь участка ниже минимальной по применимому регламенту — требуется ручная проверка правового режима."
+  geometry_ok: "В первичной геометрической проверке тестовое пятно дома 10 × 10 м размещается с резервом. Это не подтверждает размещение вашего проекта."
+  geometry_tight: "Тестовое пятно дома размещается, но запас для изменения его расположения ограничен."
+  geometry_no_fit: "Форма и размеры участка ограничивают размещение тестового пятна дома 10 × 10 м. Нужен разбор вариантов под ваши параметры."
+  geometry_unknown: "конфигурация участка не проверена"
+  stop_no_target_use: "Целевое использование (индивидуальный жилой дом) отсутствует в регламенте территориальной зоны."
+  no_land_category: "нет категории земель"
+  no_permitted_use: "нет вида разрешённого использования"
+  no_zoning: "нет сведений о территориальном зонировании"
+  no_zone_checks: "обязательные проверки зон не выполнены (сбой источников)"
+  unruled_zone: "фактор без утверждённого правила расчёта — ручная проверка"
+  pzz_missing: "регламент ПЗЗ не получен"
+  area_min_not_set: "минимальная площадь регламентом не установлена"

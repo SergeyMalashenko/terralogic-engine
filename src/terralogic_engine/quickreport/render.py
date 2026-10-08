@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from .models import QuickFactor, QuickReportContext, QuickZoneUse
+from .models import QuickFactor, QuickReportContext, QuickVerdict, QuickZoneUse
 
 SCORE_SCALE = 100
 
@@ -183,6 +183,26 @@ def _zone_regulations_lines(context: QuickReportContext) -> list[str]:
     return lines
 
 
+def _verdict_lines(verdict: QuickVerdict) -> list[str]:
+    """Блок оценки по методике 6.1: балл/нерасчёт, статус, причины, пояснение."""
+    if verdict.score is None:
+        head = f"## Оценка не рассчитана — {verdict.status_title}"
+    else:
+        marks = [verdict.status_title]
+        if verdict.preliminary:
+            marks.append("предварительная")
+        head = f"## Оценка участка — {verdict.score}/{SCORE_SCALE} ({', '.join(marks)})"
+    lines = [head, "", verdict.status_summary]
+    if verdict.reasons:
+        lines.extend(["", "Основные причины:"])
+        lines.extend(f"- {reason}" for reason in verdict.reasons)
+    if verdict.geometry_note:
+        lines.extend(["", verdict.geometry_note])
+    if verdict.explanation:
+        lines.extend(["", verdict.explanation])
+    return lines
+
+
 def render_quickreport(
     context: QuickReportContext,
     *,
@@ -212,9 +232,7 @@ def render_quickreport(
         f"**Кадастровый номер {parcel.cadastral_number}**"
         + (f" | {parcel.address}" if parcel.address else ""),
         "",
-        (f"## Оценка участка — {verdict.score}/{SCORE_SCALE} ({verdict.grade_title})"),
-        "",
-        verdict.grade_summary,
+        *_verdict_lines(verdict),
         "",
         "## Факторы, требующие внимания",
         "",

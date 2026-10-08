@@ -213,6 +213,21 @@ def _parcel_context(
     )
 
 
+_SOURCE_TYPE_ZONE_NAMES = {
+    "water_protection": "Водоохранная зона",
+    "coastal_protection": "Прибрежная защитная полоса",
+}
+
+
+def _zone_display_name(name: str, feature: GeoFeature | None) -> str:
+    """Имя зоны; числовой id вместо имени → читаемое имя по source_type."""
+    if name and not name.strip().isdigit():
+        return name
+    if feature is not None and feature.source_type in _SOURCE_TYPE_ZONE_NAMES:
+        return _SOURCE_TYPE_ZONE_NAMES[feature.source_type]
+    return name
+
+
 def _zouit_context(
     features: Iterable[GeoFeature],
     analysis: AnalysisResult,
@@ -230,7 +245,7 @@ def _zouit_context(
             ZouitReportContext(
                 feature_id=item.feature_id,
                 source=item.source,
-                name=item.name,
+                name=_zone_display_name(item.name, feature),
                 registry_number=(
                     str(properties["registry_number"])
                     if properties.get("registry_number") not in (None, "")

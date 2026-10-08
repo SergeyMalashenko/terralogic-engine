@@ -21,12 +21,16 @@ class QuickFactor(BaseModel):
 
 
 class QuickVerdict(BaseModel):
-    """Скоринг участка и градация из scoring_rules.yaml."""
+    """Вердикт методики 6.1: балл (None — не рассчитан), статус, причины."""
 
-    score: int
-    grade_key: str
-    grade_title: str
-    grade_summary: str
+    score: int | None
+    status_key: str
+    status_title: str
+    status_summary: str
+    preliminary: bool = False
+    reasons: list[str] = Field(default_factory=list)
+    explanation: str = ""
+    geometry_note: str | None = None
 
 
 class QuickPassport(BaseModel):
