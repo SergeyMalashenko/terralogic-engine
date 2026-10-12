@@ -322,6 +322,7 @@ class ScoredFactor:
     source: str
     coverage: float
     deduction: float
+    display_name: str = ""  # короткое имя для отчёта; пустое → factor_title
 
 
 @dataclass(frozen=True)
@@ -329,7 +330,7 @@ class GroupDeduction:
     key: str
     title: str
     deduction: float  # после потолка группы
-    zone_names: tuple[str, ...]
+    zone_names: tuple[str, ...]  # короткие отображаемые имена зон группы
 
 
 @dataclass(frozen=True)
@@ -371,20 +372,21 @@ def compute_verdict(
     notes: list[str] = []
     totals: dict[str, GroupDeduction] = {}
     for factor in scored_factors:
+        display = factor.display_name or factor.factor_title
         current = totals.get(factor.group_key)
         if current is None:
             totals[factor.group_key] = GroupDeduction(
                 key=factor.group_key,
                 title=factor.group_title,
                 deduction=factor.deduction,
-                zone_names=(factor.zone_name,),
+                zone_names=(display,),
             )
         else:
             merged = GroupDeduction(
                 key=current.key,
                 title=current.title,
                 deduction=current.deduction + factor.deduction,
-                zone_names=(*current.zone_names, factor.zone_name),
+                zone_names=(*current.zone_names, display),
             )
             totals[factor.group_key] = merged
     groups = tuple(
@@ -446,8 +448,12 @@ def compute_verdict(
     for group in sorted(groups, key=lambda item: -item.deduction):
         if group.deduction <= 0:
             continue
-        names = " и ".join(dict.fromkeys(group.zone_names))
-        reasons.append(f"{group.title}: {names}")
+        names = [
+            name
+            for name in dict.fromkeys(group.zone_names)
+            if name != group.title
+        ]
+        reasons.append(f"{group.title}: {' и '.join(names)}" if names else group.title)
     if a and a > 0:
         reasons.append(rules.texts.get("area_at_minimum", ""))
     if c == rules.config_nofit_deduction:

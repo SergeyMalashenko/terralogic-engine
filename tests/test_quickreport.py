@@ -306,6 +306,44 @@ def test_no_zones_gives_max_score(rules, guidance):
     assert [f.rule_id for f in quick.factors] == ["communications_unknown"]
 
 
+def test_factors_collapse_duplicate_zone_names(rules, guidance):
+    """Краткая и полная версии одной зоны + дубли слоёв — одна строка таблицы."""
+    base = _base_context()
+    base.zouit = [
+        _zouit("Водоохранная зона", "Водоохранная зона", 100.0),
+        _zouit("Водоохранная зона реки Оки в округах Серпухов и Ступино", None, 95.0),
+        _zouit("Водоохранная зона", None, 100.0),
+        _zouit("Приаэродромная территория", None, 100.0),
+        _zouit(
+            "Шестая подзона приаэродромной территории аэродрома Москва (Шереметьево)",
+            None,
+            100.0,
+        ),
+    ]
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+
+    zone_factors = [f for f in quick.factors if not f.informational]
+    # одна строка на тип зоны, короткое каноническое имя, максимальный охват
+    assert [f.zone_name for f in zone_factors] == [
+        "Водоохранная зона",
+        "Приаэродромная территория",
+    ]
+    assert zone_factors[0].coverage_percent == 100.0
+    # причины вердикта без дублей и без «Группа: Группа»
+    assert "Водные ограничения водного объекта: Водоохранная зона" in (
+        quick.verdict.reasons
+    )
+    assert "Приаэродромная территория" in quick.verdict.reasons
+    assert not any("Шереметьево" in reason for reason in quick.verdict.reasons)
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+    assert "| 1 | Водоохранная зона | Практически весь участок |" in markdown
+    assert "| 2 | Приаэродромная территория | Практически весь участок |" in markdown
+    assert "| 3 |" not in markdown
+    assert "Шереметьево" not in markdown
+
+
 def test_unknown_configuration_suspends_score(rules, guidance):
     """Без геометрической проверки числовая оценка не выдаётся (п. 4.4)."""
     quick = build_quick_context_from_report(
@@ -420,9 +458,10 @@ def test_render_quickreport_structure(rules, guidance):
     assert "Основные причины:" in markdown
     assert "Водные ограничения водного объекта" in markdown
     assert "Чем выше балл, тем меньше выявленных ограничений" in markdown
-    # таблица факторов: заголовок и обе зоны, informational-строки нет
+    # таблица факторов: заголовок и обе зоны (короткие канонические имена),
+    # informational-строки нет
     assert "| № | Зона | Охват участка | Что это значит для вас |" in markdown
-    assert "| 1 | Водоохранная зона р. Банка | Практически весь участок |" in markdown
+    assert "| 1 | Водоохранная зона | Практически весь участок |" in markdown
     assert "| 2 | Прибрежная защитная полоса | Часть участка |" in markdown
     assert "| 3 |" not in markdown
     assert "Коммуникации не проверены |" not in markdown

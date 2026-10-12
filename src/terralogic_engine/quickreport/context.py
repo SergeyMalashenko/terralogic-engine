@@ -107,25 +107,33 @@ def _factors(
     guidance: ZoneGuidance,
     warnings: list[str],
 ) -> list[QuickFactor]:
-    factors: list[QuickFactor] = []
+    """Строки таблицы факторов — по одной на тип зоны.
+
+    Записи одной зоны под кратким и полным наименованием, дубли слоёв и
+    источников схлопываются в одну строку с коротким каноническим
+    названием (title из zone_guidance); охват — максимальный среди
+    объединённых записей (консервативный показ).
+    """
+    collapsed: dict[str, QuickFactor] = {}
     for zone in base.zouit:
         entry = match_guidance(guidance, zone_type=zone.zone_type, name=zone.name)
         if entry is None:
             warnings.append(f"зона без текста guidance: {zone.name}")
             continue
         coverage = zone.parcel_coverage_percent
-        factors.append(
-            QuickFactor(
+        existing = collapsed.get(entry.key)
+        if existing is None or coverage > existing.coverage_percent:
+            collapsed[entry.key] = QuickFactor(
                 rule_id=entry.key,
                 title=entry.title,
-                zone_name=zone.name,
+                zone_name=entry.title,
                 coverage_percent=coverage,
                 coverage_word=rules.coverage_word(coverage),
                 guidance=entry.guidance,
                 action=entry.action,
                 informational=False,
             )
-        )
+    factors = list(collapsed.values())
     comm_note = guidance.misc.get("communications")
     if comm_note:
         factors.append(
@@ -159,6 +167,7 @@ def _zone_merge_key(zone: ZouitReportContext) -> str:
 def _classify_zones(
     base: ReportContext,
     rules: ScoringRules,
+    guidance: ZoneGuidance,
 ) -> tuple[list[ScoredFactor], list[str], bool, list[str]]:
     """Группы ограничений по п. 3.1; (факторы, нераспознанные, консервативно, notes).
 
@@ -169,6 +178,7 @@ def _classify_zones(
     контур территории отбрасывается (первичный реестр важнее витрин).
     Нераспознанная зона приписывается классифицированному близнецу из того
     же источника с равным охватом (дубль слоя), иначе — фактор без правила.
+    display_name — короткое имя зоны для отчёта (title из guidance).
     """
     parts: dict[str, dict[str, float]] = {}
     representative: dict[str, ZouitReportContext] = {}
@@ -195,6 +205,7 @@ def _classify_zones(
             unmatched.append((zone, source, coverage))
             continue
         group, factor = matched
+        entry = match_guidance(guidance, zone_type=zone.zone_type, name=zone.name)
         classified.append(
             ScoredFactor(
                 group_key=group.key,
@@ -204,6 +215,7 @@ def _classify_zones(
                 source=source,
                 coverage=coverage,
                 deduction=factor.deduction_for(coverage),
+                display_name=entry.title if entry is not None else factor.title,
             )
         )
 
@@ -416,7 +428,9 @@ def build_quick_context_from_report(
     factors = _factors(base, rules, guidance, warnings)
     regulations = _zone_regulations(base)
 
-    scored, unmatched, conservative, classify_notes = _classify_zones(base, rules)
+    scored, unmatched, conservative, classify_notes = _classify_zones(
+        base, rules, guidance
+    )
     warnings.extend(classify_notes)
     stop_reasons: list[str] = []
     if regulations is not None and not regulations.housing_uses:
