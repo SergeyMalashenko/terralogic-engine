@@ -175,6 +175,104 @@ def _zone_merge_key(zone: ZouitReportContext) -> str:
     return " ".join(zone.name.casefold().split())
 
 
+def _zone_tokens(name: str) -> tuple[str, ...]:
+    """Нормализованные токены наименования зоны (casefold, одиночные пробелы)."""
+    return tuple(" ".join(name.casefold().split()).split())
+
+
+def _merge_short_full_names(
+    parts: dict[str, dict[str, float]],
+    representative: dict[str, ZouitReportContext],
+    registry_of: dict[str, str | None],
+    notes: list[str],
+) -> None:
+    """Слияние краткого и полного наименований одной зоны (п. 3.1).
+
+    Краткое наименование — токен-префикс полного («Водоохранная зона» ⊂
+    «Водоохранная зона р. Пахра»): записи описывают одну зону под кратким
+    (витрина) и полным (реестр) описанием и объединяются, охват — максимум,
+    представитель — полное наименование. Разные зоны одного типа («…р. Пахра»
+    и «…р. Москва») префиксом не связаны и не объединяются. Конфликт
+    реестровых номеров (оба есть и различаются) запрещает слияние; краткое
+    наименование-префикс нескольких полных остаётся отдельной записью.
+    """
+    for short_key in sorted(
+        parts, key=lambda key: len(_zone_tokens(representative[key].name))
+    ):
+        if short_key not in parts:
+            continue
+        short_tokens = _zone_tokens(representative[short_key].name)
+        if len(short_tokens) < 2:
+            continue
+        candidates: list[str] = []
+        for key, zone in representative.items():
+            if key == short_key or key not in parts:
+                continue
+            tokens = _zone_tokens(zone.name)
+            is_prefix = (
+                len(tokens) > len(short_tokens)
+                and tokens[: len(short_tokens)] == short_tokens
+            )
+            if not is_prefix:
+                continue
+            short_reg = registry_of.get(short_key)
+            long_reg = registry_of.get(key)
+            if short_reg and long_reg and short_reg != long_reg:
+                continue
+            candidates.append(key)
+        if len(candidates) != 1:
+            if len(candidates) > 1:
+                notes.append(
+                    f"краткое наименование {representative[short_key].name!r} "
+                    "соответствует нескольким зонам — оставлено отдельной записью"
+                )
+            continue
+        long_key = candidates[0]
+        for source, coverage in parts.pop(short_key).items():
+            slots = parts[long_key]
+            slots[source] = max(slots.get(source, 0.0), coverage)
+        notes.append(
+            f"слияние краткого и полного наименования: "
+            f"{representative[short_key].name!r} объединено с {representative[long_key].name!r}"
+        )
+        registry_of[long_key] = registry_of.get(long_key) or registry_of.get(short_key)
+
+
+def _drop_category_echoes(
+    parts: dict[str, dict[str, float]],
+    representative: dict[str, ZouitReportContext],
+    registry_of: dict[str, str | None],
+    notes: list[str],
+) -> None:
+    """Слой-витрина, повторяющий тип первичной записи реестра, отбрасывается.
+
+    Витрина (запись без реестрового номера) отдаёт пересечение под кратким
+    наименованием категории («Охранная зона транспорта», «Зоны охраны
+    объектов культурного наследия»), которое совпадает с типом zone_type
+    первичной записи реестра ЗОУИТ. Это краткое описание того же объекта,
+    а не самостоятельная зона: первичная запись важнее витрины (п. 3.1).
+    Совпадение только по охвату без совпадения наименования основанием
+    не является — разные зоны могут иметь равный охват.
+    """
+    registered_types = {
+        " ".join(zone.zone_type.casefold().split())
+        for key, zone in representative.items()
+        if key in parts and registry_of.get(key) and (zone.zone_type or "").strip()
+    }
+    for key in list(parts):
+        if registry_of.get(key):
+            continue
+        zone = representative[key]
+        name_norm = " ".join(zone.name.casefold().split())
+        if name_norm and name_norm in registered_types:
+            coverage = max(parts.pop(key).values())
+            notes.append(
+                f"слой {zone.name!r} ({coverage:g}%) совпадает с типом первичной "
+                "записи реестра — краткое наименование той же зоны, "
+                "отдельным фактором не считается"
+            )
+
+
 def _classify_zones(
     base: ReportContext,
     rules: ScoringRules,
@@ -183,37 +281,44 @@ def _classify_zones(
     """Группы ограничений по п. 3.1; (факторы, нераспознанные, консервативно, notes).
 
     Слияние: по реестровому номеру, иначе по нормализованному названию;
-    внутри источника и между источниками — максимум охвата (дубли слоёв и
-    версии границ неотличимы без геометрии; расхождение версий — отметка
-    «предварительная»). В группе airport при наличии записи-подзоны общий
-    контур территории отбрасывается (первичный реестр важнее витрин).
-    Нераспознанная зона приписывается классифицированному близнецу из того
-    же источника с равным охватом (дубль слоя), иначе — фактор без правила.
-    display_name — короткое имя зоны для отчёта (title из guidance).
+    затем — краткое наименование-префикс полного и слои-витрины, повторяющие
+    тип первичной записи реестра (_merge_short_full_names,
+    _drop_category_echoes). Внутри источника и между источниками — максимум
+    охвата (дубли слоёв и версии границ неотличимы без геометрии; расхождение
+    версий — отметка «предварительная»). В группе airport при наличии
+    записи-подзоны общий контур территории отбрасывается (первичный реестр
+    важнее витрин). Нераспознанная зона — фактор без правила (группа 6);
+    совпадение охвата с классифицированной зоной основанием для слияния
+    не является. display_name — короткое имя зоны для отчёта (title guidance).
     """
     parts: dict[str, dict[str, float]] = {}
     representative: dict[str, ZouitReportContext] = {}
+    registry_of: dict[str, str | None] = {}
     for zone in base.zouit:
         key = _zone_merge_key(zone)
         source = str(getattr(zone.source, "value", zone.source))
         slots = parts.setdefault(key, {})
         slots[source] = max(slots.get(source, 0.0), zone.parcel_coverage_percent)
         representative.setdefault(key, zone)
+        registry = (zone.registry_number or "").strip()
+        registry_of.setdefault(key, registry or None)
 
     notes: list[str] = []
+    _merge_short_full_names(parts, representative, registry_of, notes)
+    _drop_category_echoes(parts, representative, registry_of, notes)
+
     conservative = False
     classified: list[ScoredFactor] = []
-    unmatched: list[tuple[ZouitReportContext, str, float]] = []
+    still_unmatched: list[str] = []
     for key, by_source in parts.items():
         coverage = min(100.0, max(by_source.values()))
         spread = max(by_source.values()) - min(by_source.values())
         if len(by_source) > 1 and spread > 1.0:
             conservative = True
         zone = representative[key]
-        source = str(getattr(zone.source, "value", zone.source))
         matched = rules.classify(zone.zone_type, zone.name)
         if matched is None:
-            unmatched.append((zone, source, coverage))
+            still_unmatched.append(zone.name)
             continue
         group, factor = matched
         entry = match_guidance(guidance, zone_type=zone.zone_type, name=zone.name)
@@ -223,30 +328,12 @@ def _classify_zones(
                 group_title=group.title,
                 factor_title=factor.title,
                 zone_name=zone.name,
-                source=source,
+                source=str(getattr(zone.source, "value", zone.source)),
                 coverage=coverage,
                 deduction=factor.deduction_for(coverage),
                 display_name=entry.title if entry is not None else factor.title,
             )
         )
-
-    # нераспознанные зоны: близнец с равным охватом из того же источника
-    still_unmatched: list[str] = []
-    for zone, source, coverage in unmatched:
-        twin = next(
-            (
-                item
-                for item in classified
-                if item.source == source and abs(item.coverage - coverage) <= 0.5
-            ),
-            None,
-        )
-        if twin is None:
-            still_unmatched.append(zone.name)
-        else:
-            notes.append(
-                f"зона {zone.name!r} принята как дубль слоя {twin.zone_name!r}"
-            )
 
     # приаэродромная: запись-подзона (реестр ЗОУИТ) вытесняет общий контур
     airport = [item for item in classified if item.group_key == "airport"]

@@ -161,11 +161,19 @@ def test_compute_verdict_arithmetic(rules):
 # ---------------------------------------------------------------------------
 
 
-def _zouit(name: str, zone_type: str | None, coverage: float) -> ZouitReportContext:
+def _zouit(
+    name: str,
+    zone_type: str | None,
+    coverage: float,
+    *,
+    source: str = "nspd",
+    registry_number: str | None = None,
+) -> ZouitReportContext:
     return ZouitReportContext(
         feature_id=f"f-{name}",
-        source="nspd",
+        source=source,
         name=name,
+        registry_number=registry_number,
         zone_type=zone_type,
         relation="intersects",
         intersection_area_m2=coverage * 10,
@@ -343,6 +351,98 @@ def test_factors_collapse_duplicate_zone_names(rules, guidance):
     assert "| 2 | Приаэродромная территория | Практически весь участок |" in markdown
     assert "| 3 |" not in markdown
     assert "Шереметьево" not in markdown
+
+
+def test_scoring_merges_short_and_full_zone_names(rules, guidance):
+    """Краткое наименование-префикс полного — одна зона, двойного вычета нет."""
+    base = _base_context()
+    base.zouit = [
+        _zouit(
+            "Водоохранная зона р. Пахра",
+            "Водоохранная зона",
+            100.0,
+            registry_number="50:00-6.2054",
+        ),
+        _zouit("Водоохранная зона", None, 82.4, source="rgis"),
+    ]
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+
+    protocol = quick.protocol
+    assert protocol is not None
+    assert len(protocol.factors) == 1
+    assert protocol.factors[0].zone_name == "Водоохранная зона р. Пахра"
+    assert protocol.factors[0].coverage_percent == 100.0
+    # один фактор 25, а не 25 + 25 с усечением потолком
+    assert protocol.groups[0].raw_deduction == 25
+    # 100 − 25 (водные) − 10 (U) − 0 (G)
+    assert quick.verdict.score == 65
+    assert any(
+        "слияние краткого и полного наименования" in note
+        for note in protocol.classify_notes
+    )
+
+
+def test_scoring_keeps_distinct_zones_with_equal_coverage(rules, guidance):
+    """Равный охват — не основание для слияния: разные зоны не поглощаются.
+
+    Слой-витрина, повторяющий тип первичной записи реестра («Охранная зона
+    транспорта» = zone_type подзоны аэродрома), — краткое наименование той же
+    зоны и отбрасывается; посторонняя зона с тем же охватом («Зоны и
+    территории ОКН») остаётся фактором без правила и приостанавливает выдачу.
+    """
+    base = _base_context()
+    base.zouit = [
+        _zouit(
+            "Шестая подзона приаэродромной территории аэродрома Москва (Шереметьево)",
+            "Охранная зона транспорта",
+            100.0,
+            registry_number="50:00-6.2819",
+        ),
+        _zouit("Охранная зона транспорта", None, 90.3, source="rgis"),
+        _zouit("Зоны и территории ОКН", None, 90.3, source="rgis"),
+    ]
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+
+    protocol = quick.protocol
+    assert protocol is not None
+    # первичная запись-подзона классифицирована, эхо-витрина не считается фактором
+    assert len(protocol.factors) == 1
+    assert protocol.factors[0].group_key == "airport"
+    # эхо не попало в нераспознанные, посторонняя зона — попала
+    assert protocol.unmatched_zones == ["Зоны и территории ОКН"]
+    assert quick.verdict.score is None
+    assert quick.verdict.status_key == "insufficient"
+    assert any("Зоны и территории ОКН" in r for r in quick.verdict.reasons)
+    assert any(
+        "совпадает с типом первичной записи реестра" in note
+        for note in protocol.classify_notes
+    )
+
+
+def test_scoring_ambiguous_short_name_stays_separate(rules, guidance):
+    """Краткое наименование — префикс двух полных: слияние неоднозначно."""
+    base = _base_context()
+    base.zouit = [
+        _zouit("Водоохранная зона р. Пахра", None, 100.0, registry_number="50:00-6.2054"),
+        _zouit("Водоохранная зона р. Москва", None, 100.0, registry_number="50:00-6.3000"),
+        _zouit("Водоохранная зона", None, 50.0, source="rgis"),
+    ]
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+
+    protocol = quick.protocol
+    assert protocol is not None
+    # три записи остаются: две полные + неоднозначная краткая
+    assert len(protocol.factors) == 3
+    # 25 + 25 + 15 = 65, усечено потолком группы 40
+    assert protocol.groups[0].raw_deduction == 65
+    assert protocol.groups[0].deduction == 40
+    assert any("нескольким зонам" in note for note in protocol.classify_notes)
 
 
 def test_unknown_configuration_suspends_score(rules, guidance):
