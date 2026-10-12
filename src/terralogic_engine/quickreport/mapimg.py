@@ -19,6 +19,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from .rules import ZoneGuidance, load_zone_guidance, match_guidance
+
 TILE_SIZE = 256
 TILE_URL_TEMPLATE = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 TILE_USER_AGENT = "TerraLogicX-quickreport/1.0 (local report renderer)"
@@ -70,6 +72,16 @@ _PARCEL_ZOUIT_STYLE = ("Зона с особыми условиями", (255, 19
 _PARCEL_OUTLINE = (198, 40, 40)
 _PARCEL_HATCH = (198, 40, 40, 110)
 _PARCEL_LABEL = "Земельный участок"
+
+_GUIDANCE: ZoneGuidance | None = None
+
+
+def _guidance() -> ZoneGuidance:
+    """Ленивая загрузка словаря канонических имён зон (zone_guidance.yaml)."""
+    global _GUIDANCE
+    if _GUIDANCE is None:
+        _GUIDANCE = load_zone_guidance()
+    return _GUIDANCE
 
 
 @dataclass
@@ -150,14 +162,17 @@ def collect_map_layers(features: Iterable[Any]) -> list[MapLayer]:
     целиком (охват >= 99% по свойствам источника), не рисуются — сплошная
     заливка всего кадра неинформативна, такие зоны остаются в таблице
     факторов. Дубликаты геометрий (несколько run/снапшотов) схлопываются.
-    Картoчные parcel_zouit-зоны пропускаются, если одноимённый тематический
-    слой (водоохранная, прибрежная полоса, ...) уже собран — у него
-    полная геометрия, а не обрезанная по участку.
+    Слои без собственного стиля получают короткое каноническое имя из
+    zone_guidance (как в таблице факторов): краткая и полная версии
+    наименования одной зоны дают одну подпись в легенде. Картoчные
+    parcel_zouit-зоны пропускаются, если одноимённый (после канонизации)
+    тематический слой уже собран — у него полная геометрия, а не
+    обрезанная по участку.
     """
     layers: list[MapLayer] = []
     seen: set[str] = set()
     styled_labels: set[str] = set()
-    pending_fallback: list[tuple[str, dict[str, Any]]] = []
+    pending_fallback: list[tuple[str, str, dict[str, Any]]] = []
     for feature in features:
         if feature.feature_class != "restriction_zone":
             continue
@@ -178,13 +193,17 @@ def collect_map_layers(features: Iterable[Any]) -> list[MapLayer]:
         if style is None:
             name = properties.get("name") or properties.get("code")
             label = str(name) if name else "Зона с особыми условиями"
-            pending_fallback.append((label, geometry))
+            pending_fallback.append((label, str(feature.source_type), geometry))
             continue
         styled_labels.add(style[0])
         layers.append(
             MapLayer(label=style[0], geometry=geometry, fill=style[1], outline=style[2])
         )
-    for label, geometry in pending_fallback:
+    guidance = _guidance()
+    for label, source_type, geometry in pending_fallback:
+        entry = match_guidance(guidance, zone_type=source_type, name=label)
+        if entry is not None:
+            label = entry.title
         if label in styled_labels:
             continue
         layers.append(
@@ -683,8 +702,8 @@ def _draw_furniture(
         label_widths.append(box[2] - box[0])
     box_w = sample_w + round(8 * ui) + max(label_widths) + 2 * pad
     box_h = len(entries) * line_h + 2 * pad
-    box_x = width - box_w - round(10 * ui)
-    box_y = height - box_h - round(28 * ui)
+    box_x = max(round(10 * ui), width - box_w - round(10 * ui))
+    box_y = max(round(10 * ui), height - box_h - round(28 * ui))
     draw.rectangle(
         [box_x, box_y, box_x + box_w, box_y + box_h],
         fill=(255, 255, 255, 255),

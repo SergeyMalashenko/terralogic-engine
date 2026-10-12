@@ -169,6 +169,52 @@ def test_collect_map_layers_filters_full_coverage_and_dedups() -> None:
     assert all(layer.geometry is not None for layer in layers)
 
 
+def _shifted(geometry: dict, d_lon: float) -> dict:
+    return {
+        "type": "Polygon",
+        "coordinates": [
+            [[x + d_lon, y] for x, y in geometry["coordinates"][0]],
+        ],
+    }
+
+
+def test_collect_map_layers_canonicalizes_fallback_names() -> None:
+    """Длинные/краткие версии имени зоны — одна подпись слоя (как в таблице)."""
+    features = [
+        _feature("coastal_protection", PARCEL),  # стиль «Прибрежная защитная полоса»
+        _feature(
+            "parcel_zouit",
+            ZONE,
+            properties={
+                "name": "Прибрежная защитная полоса реки Оки в округах "
+                "Серпухов, Ступино, Кашира, Коломна",
+                "percent": 50.0,
+            },
+        ),
+        _feature(
+            "parcel_zouit",
+            _shifted(ZONE, 0.001),
+            properties={
+                "name": "Шестая подзона приаэродромной территории "
+                "аэродрома Москва (Шереметьево)",
+                "percent": 50.0,
+            },
+        ),
+        _feature(
+            "parcel_zouit",
+            _shifted(ZONE, 0.002),
+            properties={"name": "Приаэродромная территория", "percent": 60.0},
+        ),
+    ]
+    layers = mapimg.collect_map_layers(features)
+    labels = [layer.label for layer in layers]
+    # длинное имя полосы канонизировано и поглощено стилизованным слоем
+    assert labels.count("Прибрежная защитная полоса") == 1
+    assert not any("реки Оки" in label for label in labels)
+    # подзона и общий контур — одна каноническая подпись, обе геометрии рисуются
+    assert labels.count("Приаэродромная территория") == 2
+
+
 def test_select_visible_layers_drops_region_covering_zones() -> None:
     giant = {
         "type": "Polygon",
