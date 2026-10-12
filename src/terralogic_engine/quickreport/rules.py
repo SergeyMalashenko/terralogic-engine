@@ -331,6 +331,7 @@ class GroupDeduction:
     title: str
     deduction: float  # после потолка группы
     zone_names: tuple[str, ...]  # короткие отображаемые имена зон группы
+    raw_deduction: float = 0.0  # сумма до потолка (протокол скоринга)
 
 
 @dataclass(frozen=True)
@@ -395,6 +396,7 @@ def compute_verdict(
             title=group.title,
             deduction=min(group.deduction, rules.group_cap),
             zone_names=group.zone_names,
+            raw_deduction=group.deduction,
         )
         for group in totals.values()
     )

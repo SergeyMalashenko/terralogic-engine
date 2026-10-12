@@ -22,6 +22,7 @@ from terralogic_engine.quickreport import (
     load_scoring_rules,
     load_zone_guidance,
     render_quickreport,
+    render_service_report,
 )
 from terralogic_engine.reporting.models import (
     DocumentReportContext,
@@ -352,6 +353,57 @@ def test_unknown_configuration_suspends_score(rules, guidance):
     assert quick.verdict.score is None
     assert quick.verdict.status_key == "insufficient"
     assert any("конфигурация" in r for r in quick.verdict.reasons)
+
+
+def test_protocol_and_service_report(rules, guidance):
+    """Протокол скоринга: внутренние цифры расчёта + рендер сервисного отчёта."""
+    quick = build_quick_context_from_report(
+        _base_context(), rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+    protocol = quick.protocol
+    assert protocol is not None
+    # водная группа 35 (сырая = после потолка), U = 10, G = 0 → 55
+    assert protocol.score == 55 and protocol.raw_score == 55
+    assert protocol.restrictions_total == 35
+    assert protocol.u_total == 10
+    assert [group.key for group in protocol.groups] == ["water"]
+    assert protocol.groups[0].raw_deduction == 35
+    assert protocol.groups[0].deduction == 35
+    assert len(protocol.factors) == 2  # водоохранная + прибрежная после слияния
+    assert protocol.area is not None and protocol.area.status == "no_regulations"
+    assert protocol.geometry is not None and protocol.geometry.c == 0
+    assert protocol.g == 0
+    assert "правило 3" in protocol.status_rule
+    assert {source.source for source in protocol.sources} == {"nspd", "rgis"}
+    checks = {check.name: check.result for check in protocol.checks}
+    assert "пересечение выявлено" in checks["Водоохранные зоны и прибрежные защитные полосы"]
+    assert checks["Приаэродромная территория"] == "пересечений не выявлено"
+
+    markdown = render_service_report(quick, today=date(2026, 10, 7))
+    assert markdown.startswith("# Сервисный отчёт скоринга — 50:11:0020310:49\n")
+    assert "Методика 6.1 · sha256 активов:" in markdown
+    assert "**Оценка = max(0; 100 − 35 (ограничения) − 10 (U) − 0 (G)) = 55/100**" in markdown
+    assert "правило 3" in markdown
+    # протокольная таблица зон хранит сырые наименования представителей
+    assert "Водоохранная зона р. Банка" in markdown
+    assert "| Электроснабжение | неизвестно | 4 |" in markdown
+    assert "**U = 10**" in markdown
+    assert "Сформирован 07.10.2026" in markdown
+
+
+def test_service_report_without_score_and_protocol(rules, guidance):
+    """Нерассчитанная оценка и контекст без протокола — читаемая заглушка."""
+    quick = build_quick_context_from_report(
+        _base_context(), rules=rules, guidance=guidance, configuration=None
+    )
+    markdown = render_service_report(quick, today=date(2026, 10, 7))
+    assert "**Оценка не рассчитана**" in markdown
+    assert "конфигурация участка не проверена" in markdown
+    assert "правило 2" in markdown
+
+    quick.protocol = None
+    markdown = render_service_report(quick, today=date(2026, 10, 7))
+    assert "Протокол недоступен" in markdown
 
 
 # ---------------------------------------------------------------------------

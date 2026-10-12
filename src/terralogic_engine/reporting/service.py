@@ -144,6 +144,10 @@ class ReportingService:
             case_id, context, markdown
         )
         context.warnings.extend(pdf_warnings)
+        service_markdown, service_relative_path, service_warnings = (
+            self._build_service_report(case_id, context)
+        )
+        context.warnings.extend(service_warnings)
         analysis = self.store.get_analysis_result(
             case_id,
             context.collection_run_id,
@@ -173,8 +177,32 @@ class ReportingService:
             markdown=report.markdown,
             map_relative_path=map_relative_path,
             pdf_relative_path=pdf_relative_path,
+            service_relative_path=service_relative_path,
+            service_markdown=service_markdown,
             warnings=context.warnings,
         )
+
+    def _build_service_report(
+        self, case_id: str, context: QuickReportContext
+    ) -> tuple[str | None, str | None, list[str]]:
+        """Сервисный отчёт скоринга (протокол для разработчиков) рядом с quick-отчётом.
+
+        Любой сбой деградирует в предупреждение — основной отчёт при этом
+        сохраняется всегда.
+        """
+        try:
+            from terralogic_engine.quickreport.service import render_service_report
+
+            markdown = render_service_report(context)
+            relative_path = self.store.save_case_artifact(
+                case_id=case_id,
+                kind="reports",
+                filename=f"quickreport-{context.collection_run_id}-service.md",
+                payload=markdown.encode("utf-8"),
+            )
+        except Exception as exc:  # noqa: BLE001 — сервисный отчёт не ломает конвейер
+            return None, None, [f"сервисный отчёт не построен: {exc}"]
+        return markdown, relative_path, []
 
     def _build_quick_pdf(
         self, case_id: str, context: QuickReportContext, markdown: str

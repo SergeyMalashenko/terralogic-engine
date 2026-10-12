@@ -22,6 +22,14 @@ from .geometry import ConfigurationOutcome, evaluate_configuration
 from .models import (
     QuickFactor,
     QuickPassport,
+    QuickProtocol,
+    QuickProtocolArea,
+    QuickProtocolCheck,
+    QuickProtocolComm,
+    QuickProtocolFactor,
+    QuickProtocolGeometry,
+    QuickProtocolGroup,
+    QuickProtocolSource,
     QuickReportContext,
     QuickSurroundings,
     QuickVerdict,
@@ -29,13 +37,16 @@ from .models import (
     QuickZoneUse,
 )
 from .rules import (
+    GroupDeduction,
     ScoredFactor,
     ScoringRules,
+    VerdictResult,
     ZoneGuidance,
     compute_verdict,
     load_scoring_rules,
     load_zone_guidance,
     match_guidance,
+    methodology_sha256,
 )
 
 _MAX_SURROUNDING_LINES = 6
@@ -305,26 +316,49 @@ def _area_deduction(
     rules: ScoringRules,
     regulations: QuickZoneRegulations | None,
     target_item: QuickZoneUse | None,
-) -> tuple[float | None, list[str], list[str]]:
-    """A по п. 4.3; (A, notes, suspend_reasons)."""
+) -> tuple[float | None, list[str], list[str], QuickProtocolArea]:
+    """A по п. 4.3; (A, notes, suspend_reasons, протокольная запись)."""
     notes: list[str] = []
     suspend: list[str] = []
-    if regulations is None:
-        return None, [rules.texts.get("pzz_missing", "")], suspend
-    if target_item is None:
-        return None, notes, [
-            "применимость регламента к ВРИ участка не установлена — ручная проверка"
-        ]
-    s_min = _first_number(target_item.area_min)
-    if s_min is None:
-        notes.append(rules.texts.get("area_min_not_set", ""))
-        return 0.0, notes, suspend
     area = base.parcel.declared_area_m2 or base.parcel.calculated_area_m2
+    info = QuickProtocolArea(
+        status="computed",
+        deduction=None,
+        parcel_area_m2=area,
+        target_code=(target_item.code if target_item else None),
+        target_name=(target_item.name if target_item else None),
+    )
+    if regulations is None:
+        note = rules.texts.get("pzz_missing", "")
+        return None, [note], suspend, info.model_copy(
+            update={"status": "no_regulations", "note": note}
+        )
+    if target_item is None:
+        note = "применимость регламента к ВРИ участка не установлена — ручная проверка"
+        return None, notes, [note], info.model_copy(
+            update={"status": "applicability_unknown", "note": note}
+        )
+    s_min = _first_number(target_item.area_min)
+    info = info.model_copy(update={"s_min_m2": s_min})
+    if s_min is None:
+        note = rules.texts.get("area_min_not_set", "")
+        notes.append(note)
+        return 0.0, notes, suspend, info.model_copy(
+            update={"status": "min_not_set", "deduction": 0.0, "note": note}
+        )
     if area == s_min:
-        return rules.area_equal_deduction, notes, suspend
+        deduction = rules.area_equal_deduction
+        return deduction, notes, suspend, info.model_copy(
+            update={"deduction": deduction, "note": "S = Smin"}
+        )
     if area < s_min:
-        return None, notes, [rules.texts.get("area_below_minimum", "")]
-    return 0.0, notes, suspend
+        note = rules.texts.get("area_below_minimum", "")
+        return None, notes, [note], info.model_copy(
+            update={"status": "below_minimum", "note": note}
+        )
+    return 0.0, notes, suspend, info.model_copy(
+        update={"deduction": 0.0, "note": "S > Smin"}
+    )
 
 
 def _sufficiency_blockers(
@@ -362,6 +396,198 @@ def _preliminary_flags(
     if conservative:
         flags.append("консервативный сценарий: расхождение границ зоны между источниками")
     return flags
+
+
+# ---------------------------------------------------------------------------
+# Внутренний протокол расчёта (сервисный отчёт для разработчиков)
+# ---------------------------------------------------------------------------
+
+_MANDATORY_ZONE_CHECKS = (
+    ("water", "Водоохранные зоны и прибрежные защитные полосы"),
+    ("airport", "Приаэродромная территория"),
+    ("power_line", "Охранные зоны объектов электросетевого хозяйства"),
+    ("sanitary", "Санитарные зоны (ЗСО, СЗЗ)"),
+    ("forest", "Лесные ограничения (ОЗУ, защитные леса)"),
+)
+
+
+def _protocol_checks(
+    base: ReportContext,
+    scored: list[ScoredFactor],
+    regulations: QuickZoneRegulations | None,
+) -> list[QuickProtocolCheck]:
+    """Обязательные проверки ключевых зон (п. 4.1) и их результат для протокола."""
+    checks: list[QuickProtocolCheck] = []
+    if regulations is not None:
+        doc = "ПЗЗ"
+        if regulations.doc_number:
+            doc += f" № {regulations.doc_number}"
+        if regulations.doc_version_date:
+            doc += f", редакция от {regulations.doc_version_date}"
+        checks.append(
+            QuickProtocolCheck(
+                name="Территориальное зонирование (ПЗЗ)",
+                result=f"получен: {doc}; зона {regulations.zone_code}",
+            )
+        )
+    elif base.urban_planning.parcel_zones:
+        checks.append(
+            QuickProtocolCheck(
+                name="Территориальное зонирование (ПЗЗ)",
+                result="зона из слоя РГИС; документ ПЗЗ не получен",
+            )
+        )
+    else:
+        checks.append(
+            QuickProtocolCheck(
+                name="Территориальное зонирование (ПЗЗ)", result="не получено"
+            )
+        )
+    sources = {str(getattr(item.source, "value", item.source)) for item in base.sources}
+    nspd_ok = "nspd" in sources
+    checks.append(
+        QuickProtocolCheck(
+            name="Реестр ЗОУИТ (пересечения с участком)",
+            result=(
+                f"выполнена; записей с пересечением: {len(base.zouit)}"
+                if nspd_ok
+                else "не выполнена (источник недоступен)"
+            ),
+        )
+    )
+    for group_key, name in _MANDATORY_ZONE_CHECKS:
+        found = [item for item in scored if item.group_key == group_key]
+        if found:
+            names = ", ".join(
+                dict.fromkeys(item.display_name or item.factor_title for item in found)
+            )
+            result = f"пересечение выявлено: {names}"
+        elif nspd_ok:
+            result = "пересечений не выявлено"
+        else:
+            result = "проверка не выполнена (источник недоступен)"
+        checks.append(QuickProtocolCheck(name=name, result=result))
+    return checks
+
+
+def _status_rule(
+    rules: ScoringRules,
+    *,
+    score: int | None,
+    stop_reasons: list[str],
+    suspend_reasons: list[str],
+    groups: tuple[GroupDeduction, ...],
+) -> str:
+    """Какое правило раздела 5 методики определило статус (по приоритету)."""
+    if stop_reasons:
+        return "правило 1 — подтверждён стоп-фактор"
+    if suspend_reasons:
+        return "правило 2 — недостаточно данных для отбора"
+    if score is not None and score < rules.attention_score_below:
+        return f"правило 3 — оценка ниже {rules.attention_score_below}"
+    if any(group.deduction >= rules.attention_group_deduction for group in groups):
+        return f"правило 3 — вычет группы ≥ {rules.attention_group_deduction:g}"
+    return "правило 4 — можно продолжить рассмотрение"
+
+
+def _protocol(
+    base: ReportContext,
+    rules: ScoringRules,
+    *,
+    scored: list[ScoredFactor],
+    unmatched: list[str],
+    conservative: bool,
+    classify_notes: list[str],
+    stop_reasons: list[str],
+    suspend_reasons: list[str],
+    preliminary_flags: list[str],
+    area_info: QuickProtocolArea,
+    configuration: ConfigurationOutcome | None,
+    regulations: QuickZoneRegulations | None,
+    target_prefix: str | None,
+    verdict_result: VerdictResult,
+) -> QuickProtocol:
+    """Сводит внутренние структуры расчёта в протокол сервисного отчёта."""
+    restrictions_total = sum(group.deduction for group in verdict_result.groups)
+    g = verdict_result.g
+    raw_score = None
+    if verdict_result.score is not None:
+        raw_score = round(
+            rules.base_score - restrictions_total - verdict_result.u - (g or 0.0)
+        )
+    return QuickProtocol(
+        methodology_sha256=methodology_sha256(),
+        formula=(
+            "Оценка = max(0; base − Σ вычетов групп (потолок "
+            f"{rules.group_cap:g}) − U − G), G = max(A; C)"
+        ),
+        base_score=rules.base_score,
+        factors=[
+            QuickProtocolFactor(
+                group_key=item.group_key,
+                group_title=item.group_title,
+                factor_title=item.factor_title,
+                zone_name=item.zone_name,
+                display_name=item.display_name or item.factor_title,
+                source=item.source,
+                coverage_percent=item.coverage,
+                deduction=item.deduction,
+            )
+            for item in scored
+        ],
+        unmatched_zones=list(unmatched),
+        classify_notes=list(classify_notes),
+        conservative=conservative,
+        groups=[
+            QuickProtocolGroup(
+                key=group.key,
+                title=group.title,
+                raw_deduction=group.raw_deduction,
+                deduction=group.deduction,
+                zone_names=list(group.zone_names),
+            )
+            for group in verdict_result.groups
+        ],
+        restrictions_total=restrictions_total,
+        communications=[
+            QuickProtocolComm(question=key, state="неизвестно", weight=weight)
+            for key, weight in rules.comm_weights.items()
+        ],
+        u_total=verdict_result.u,
+        area=area_info,
+        geometry=(
+            QuickProtocolGeometry(c=configuration.c, detail=configuration.detail)
+            if configuration is not None
+            else None
+        ),
+        g=g,
+        raw_score=raw_score,
+        score=verdict_result.score,
+        status_key=verdict_result.status.key,
+        status_rule=_status_rule(
+            rules,
+            score=verdict_result.score,
+            stop_reasons=stop_reasons,
+            suspend_reasons=suspend_reasons,
+            groups=verdict_result.groups,
+        ),
+        preliminary=verdict_result.preliminary,
+        preliminary_flags=list(preliminary_flags),
+        stop_reasons=list(stop_reasons),
+        suspend_reasons=list(suspend_reasons),
+        checks=_protocol_checks(base, scored, regulations),
+        sources=[
+            QuickProtocolSource(
+                source=str(getattr(item.source, "value", item.source)),
+                snapshot_id=item.snapshot_id,
+                retrieved_at=item.retrieved_at,
+                adapter_version=item.adapter_version,
+                content_sha256=item.content_sha256,
+            )
+            for item in base.sources
+        ],
+        target_use_prefix=target_prefix,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -445,7 +671,9 @@ def build_quick_context_from_report(
     target_item = (
         _target_use_item(regulations, prefix) if regulations is not None else None
     )
-    a, area_notes, area_suspend = _area_deduction(base, rules, regulations, target_item)
+    a, area_notes, area_suspend, area_info = _area_deduction(
+        base, rules, regulations, target_item
+    )
     warnings.extend(note for note in area_notes if note)
     suspend_reasons.extend(area_suspend)
 
@@ -457,6 +685,7 @@ def build_quick_context_from_report(
         suspend_reasons.append(rules.texts.get("geometry_unknown", ""))
 
     u = _communications_u(rules)
+    preliminary_flags = _preliminary_flags(base, conservative)
     verdict_result = compute_verdict(
         rules,
         scored,
@@ -465,9 +694,25 @@ def build_quick_context_from_report(
         c=c,
         stop_reasons=stop_reasons,
         suspend_reasons=suspend_reasons,
-        preliminary_flags=_preliminary_flags(base, conservative),
+        preliminary_flags=preliminary_flags,
     )
     warnings.extend(verdict_result.notes)
+    protocol = _protocol(
+        base,
+        rules,
+        scored=scored,
+        unmatched=unmatched,
+        conservative=conservative,
+        classify_notes=classify_notes,
+        stop_reasons=stop_reasons,
+        suspend_reasons=suspend_reasons,
+        preliminary_flags=preliminary_flags,
+        area_info=area_info,
+        configuration=configuration,
+        regulations=regulations,
+        target_prefix=prefix,
+        verdict_result=verdict_result,
+    )
     return QuickReportContext(
         case_id=base.case_id,
         collection_run_id=base.collection_run_id,
@@ -488,6 +733,7 @@ def build_quick_context_from_report(
         zone_regulations=regulations,
         surroundings=_surroundings(base, guidance),
         warnings=warnings,
+        protocol=protocol,
     )
 
 

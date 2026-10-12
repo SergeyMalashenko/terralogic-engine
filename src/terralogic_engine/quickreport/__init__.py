@@ -5,6 +5,7 @@ from .geometry import ConfigurationOutcome, evaluate_configuration
 from .models import (
     QuickFactor,
     QuickPassport,
+    QuickProtocol,
     QuickReportContext,
     QuickReportResult,
     QuickSurroundings,
@@ -25,11 +26,13 @@ from .rules import (
     match_guidance,
     methodology_sha256,
 )
+from .service import render_service_report
 
 __all__ = [
     "ConfigurationOutcome",
     "QuickFactor",
     "QuickPassport",
+    "QuickProtocol",
     "QuickReportContext",
     "QuickReportResult",
     "QuickRulesError",
@@ -50,4 +53,5 @@ __all__ = [
     "match_guidance",
     "methodology_sha256",
     "render_quickreport",
+    "render_service_report",
 ]
