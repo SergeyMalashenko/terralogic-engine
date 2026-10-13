@@ -696,6 +696,7 @@ def _passport(base: ReportContext) -> QuickPassport:
         area_m2=parcel.declared_area_m2 or parcel.calculated_area_m2,
         land_category=parcel.land_category,
         permitted_use=parcel.permitted_use,
+        vri=parcel.permitted_use_vri,
         territorial_zone=territorial_zone,
         cadastral_value_rub=parcel.cadastral_value_rub,
     )

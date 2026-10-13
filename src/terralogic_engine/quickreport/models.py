@@ -6,6 +6,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from terralogic_engine.reporting.models import VriReportContext
+
 
 class QuickFactor(BaseModel):
     """Строка таблицы «Факторы, требующие внимания»."""
@@ -42,6 +44,7 @@ class QuickPassport(BaseModel):
     area_m2: float | None = None
     land_category: str | None = None
     permitted_use: str | None = None
+    vri: VriReportContext | None = None  # канонический ВРИ (П/0412)
     territorial_zone: str | None = None
     cadastral_value_rub: float | None = None
 

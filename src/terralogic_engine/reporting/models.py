@@ -15,6 +15,16 @@ from terralogic_engine.analytics.models import (
 from terralogic_engine.domain.models import ReceiptStatus, SourceName
 
 
+class VriReportContext(BaseModel):
+    """ВРИ, разрешённый по классификатору П/0412 (обогащение source fact)."""
+
+    code: str
+    name: str
+    description: str = ""
+    act_number: str
+    revision_date: str  # ISO
+
+
 class ParcelReportContext(BaseModel):
     """Compact federal parcel passport without its heavy GeoJSON contour."""
 
@@ -25,6 +35,7 @@ class ParcelReportContext(BaseModel):
     calculated_area_m2: float
     land_category: str | None = None
     permitted_use: str | None = None
+    permitted_use_vri: VriReportContext | None = None
     cadastral_value_rub: float | None = None
     geometry_type: str
 

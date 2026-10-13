@@ -35,6 +35,7 @@ from terralogic_engine.reporting.models import (
     SearchAreaReportContext,
     SourceEvidenceContext,
     UrbanPlanningReportContext,
+    VriReportContext,
     ZouitReportContext,
 )
 from terralogic_engine.reporting.service import ReportingService
@@ -443,6 +444,31 @@ def test_scoring_ambiguous_short_name_stays_separate(rules, guidance):
     assert protocol.groups[0].raw_deduction == 65
     assert protocol.groups[0].deduction == 40
     assert any("нескольким зонам" in note for note in protocol.classify_notes)
+
+
+def test_passport_shows_canonical_vri(rules, guidance):
+    """Канонический ВРИ классификатора — рядом с исходным текстом источника."""
+    base = _base_context()
+    base.parcel.permitted_use = "для индивидуального жилищного строительства"
+    base.parcel.permitted_use_vri = VriReportContext(
+        code="2.1",
+        name="Для индивидуального жилищного строительства",
+        description="",
+        act_number="П/0412",
+        revision_date="2026-06-02",
+    )
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+
+    assert quick.parcel.vri is not None and quick.parcel.vri.code == "2.1"
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+    # исходный текст источника сохранён, рядом — каноническая ссылка
+    assert "для индивидуального жилищного строительства" in markdown
+    assert "ВРИ 2.1" in markdown
+    assert "П/0412" in markdown
+    service_markdown = render_service_report(quick, today=date(2026, 10, 7))
+    assert "ВРИ (классификатор П/0412)" in service_markdown
 
 
 def test_unknown_configuration_suspends_score(rules, guidance):

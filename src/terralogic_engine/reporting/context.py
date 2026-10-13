@@ -14,6 +14,7 @@ from terralogic_engine.domain.models import (
     GeoFeature,
     SourceSnapshot,
 )
+from terralogic_engine.legal.service import default_legal_knowledge
 from terralogic_engine.reporting.models import (
     DocumentReportContext,
     DocumentVriItemContext,
@@ -32,6 +33,7 @@ from terralogic_engine.reporting.models import (
     TransportCategoryContext,
     UrbanPlanningObjectReportContext,
     UrbanPlanningReportContext,
+    VriReportContext,
     ZouitRegimeDocumentContext,
     ZouitReportContext,
 )
@@ -184,28 +186,27 @@ def _parcel_context(
     parcel = parcels[0]
     properties = parcel.properties
     geometry_type = str((parcel.geometry or {}).get("type", "unknown"))
+    permitted_use = _optional_text(properties.get("permitted_use"))
+    # Канонический ВРИ по классификатору П/0412: источник отдаёт текст
+    # (реже — код); исходное значение сохраняется в permitted_use.
+    vri = default_legal_knowledge().match_vri(permitted_use)
     return ParcelReportContext(
         cadastral_number=str(properties.get("cadastral_number") or ""),
-        address=(
-            str(properties["address"])
-            if properties.get("address") not in (None, "")
-            else None
-        ),
-        status=(
-            str(properties["status"])
-            if properties.get("status") not in (None, "")
-            else None
-        ),
+        address=_optional_text(properties.get("address")),
+        status=_optional_text(properties.get("status")),
         declared_area_m2=_optional_float(properties.get("area_m2")),
         calculated_area_m2=analysis.parcel_area_m2,
-        land_category=(
-            str(properties["land_category"])
-            if properties.get("land_category") not in (None, "")
-            else None
-        ),
-        permitted_use=(
-            str(properties["permitted_use"])
-            if properties.get("permitted_use") not in (None, "")
+        land_category=_optional_text(properties.get("land_category")),
+        permitted_use=permitted_use,
+        permitted_use_vri=(
+            VriReportContext(
+                code=vri.code,
+                name=vri.name,
+                description=vri.description,
+                act_number=vri.act_number,
+                revision_date=vri.revision_date,
+            )
+            if vri is not None
             else None
         ),
         cadastral_value_rub=_optional_float(properties.get("cadastral_value_rub")),

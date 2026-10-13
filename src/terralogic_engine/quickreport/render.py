@@ -11,7 +11,13 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from .models import QuickFactor, QuickReportContext, QuickVerdict, QuickZoneUse
+from .models import (
+    QuickFactor,
+    QuickPassport,
+    QuickReportContext,
+    QuickVerdict,
+    QuickZoneUse,
+)
 
 SCORE_SCALE = 100
 
@@ -77,6 +83,19 @@ def _factors_table(factors: list[QuickFactor]) -> list[str]:
     return lines
 
 
+def _permitted_use_display(parcel: QuickPassport) -> str | None:
+    """Исходный текст ВРИ источника + каноническая ссылка на классификатор."""
+    text = parcel.permitted_use
+    vri = parcel.vri
+    if vri is None:
+        return text
+    suffix = f"ВРИ {vri.code}"
+    if text is None or vri.name.casefold() != text.casefold():
+        suffix += f" — {vri.name}"
+    suffix += f" (П/0412, ред. {vri.revision_date})"
+    return f"{text} · {suffix}" if text else suffix
+
+
 def _passport_lines(context: QuickReportContext) -> list[str]:
     parcel = context.parcel
     status_area = " · ".join(
@@ -86,7 +105,7 @@ def _passport_lines(context: QuickReportContext) -> list[str]:
         ("Адрес", parcel.address),
         ("Статус / площадь", status_area or None),
         ("Категория земель", parcel.land_category),
-        ("Разрешённое использование", parcel.permitted_use),
+        ("Разрешённое использование", _permitted_use_display(parcel)),
         ("Территориальная зона", parcel.territorial_zone),
         ("Кадастровая стоимость", _format_cadastral_value(parcel.cadastral_value_rub)),
     )

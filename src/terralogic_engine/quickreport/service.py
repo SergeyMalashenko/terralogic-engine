@@ -98,12 +98,19 @@ def _summary_lines(context: QuickReportContext, protocol: QuickProtocol) -> list
 
 def _inputs_lines(context: QuickReportContext, protocol: QuickProtocol) -> list[str]:
     parcel = context.parcel
+    vri = parcel.vri
+    vri_display = (
+        f"{vri.code} — {vri.name} (П/0412, ред. {vri.revision_date})"
+        if vri is not None
+        else None
+    )
     lines = ["## 2. Входные данные", ""]
     rows = [
         ("Кадастровый номер", parcel.cadastral_number),
         ("Площадь, м²", _g(parcel.area_m2)),
         ("Категория земель", parcel.land_category),
         ("Разрешённое использование", parcel.permitted_use),
+        ("ВРИ (классификатор П/0412)", vri_display),
         ("Префикс цели (классификатор ВРИ)", protocol.target_use_prefix),
         ("Территориальная зона", parcel.territorial_zone),
         ("Цель методики", "индивидуальный жилой дом"),
