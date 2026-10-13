@@ -268,20 +268,35 @@ class ReportingService:
         critic_result = run_critic(
             self._critic, model, markdown, validator_result, warnings=warnings
         )
+        # Порог содержательности: needs_revision без error/critical — это
+        # придирки уровня warning; эффективный статус понижается до pass,
+        # сырой статус критика остаётся виден в артефакте.
+        critic_effective_pass = (
+            critic_result is not None
+            and critic_result.status == "needs_revision"
+            and not any(
+                issue.severity in ("error", "critical")
+                for issue in critic_result.issues
+            )
+        )
 
         revision_note = "не требовалась"
         if (
             critic_result is not None
             and critic_result.status == "needs_revision"
+            and not critic_effective_pass
             and self._writer is not None
         ):
             narrative_sections = (
                 "Оценка", "Что уже удалось установить", "Факторы, требующие внимания",
             )
+            # Revision — только по содержательным замечаниям (error/critical)
+            # в narrative-секциях; warning фиксируется без переписывания.
             relevant = [
                 issue
                 for issue in critic_result.issues
-                if any(issue.section.startswith(prefix) for prefix in narrative_sections)
+                if issue.severity in ("error", "critical")
+                and any(issue.section.startswith(prefix) for prefix in narrative_sections)
             ]
             if relevant:
                 revised, revision_rejections = run_writer(
@@ -326,7 +341,9 @@ class ReportingService:
                 else:
                     revision_note = "отклонена: writer не вернул пригодный текст"
             else:
-                revision_note = "не выполнялась: замечания вне narrative-секций"
+                revision_note = (
+                    "не выполнялась: нет error/critical в narrative-секциях"
+                )
 
         writer_status = (
             "применён"
@@ -358,6 +375,8 @@ class ReportingService:
         critic_status = (
             "недоступен" if critic_result is None else critic_result.status
         )
+        if critic_effective_pass:
+            critic_status += " → pass (только warning/info, порог severity)"
         lines.extend(["", f"## Критик: {critic_status}", ""])
         if critic_result is not None and critic_result.issues:
             lines.extend(
@@ -394,7 +413,12 @@ class ReportingService:
                 "QA-валидатор: отчёт не прошёл проверку — см. QA-артефакт"
             )
         if critic_result is not None and critic_result.status == "needs_revision":
-            warnings.append("QA-критик: needs_revision — см. QA-артефакт")
+            if critic_effective_pass:
+                warnings.append(
+                    "QA-критик: needs_revision без error/critical — понижено до pass"
+                )
+            else:
+                warnings.append("QA-критик: needs_revision — см. QA-артефакт")
         return relative_path, warnings, markdown
 
     def _build_service_report(

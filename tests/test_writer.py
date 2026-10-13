@@ -274,7 +274,7 @@ async def test_quickreport_writer_dead_keeps_deterministic(tmp_path) -> None:
 
 
 async def test_targeted_revision_after_critic(tmp_path) -> None:
-    """Критик needs_revision → один раунд revision; принятие при pass (§74)."""
+    """Критик needs_revision (error) → один раунд revision; принятие при pass (§74)."""
     writer = FakeWriter(
         {"main_conclusion": "Первичная формулировка."},
         {"main_conclusion": "Уточнённая формулировка после замечания."},
@@ -286,7 +286,7 @@ async def test_targeted_revision_after_critic(tmp_path) -> None:
                 {
                     "rule_id": "overstatement",
                     "section": "Оценка участка",
-                    "severity": "warning",
+                    "severity": "error",
                     "message": "вывод слишком категоричен",
                     "claim": None,
                     "evidence_ids": [],
@@ -306,6 +306,36 @@ async def test_targeted_revision_after_critic(tmp_path) -> None:
     assert "## Revision: принята" in qa
 
 
+async def test_revision_skipped_for_warning_level(tmp_path) -> None:
+    """Замечание уровня warning не запускает revision — только фиксация."""
+    writer = FakeWriter({"main_conclusion": "Первичная формулировка."})
+    critic = FakeCritic(
+        {
+            "status": "needs_revision",
+            "issues": [
+                {
+                    "rule_id": "overstatement",
+                    "section": "Оценка участка",
+                    "severity": "warning",
+                    "message": "неубедительно, но терпимо",
+                    "claim": None,
+                    "evidence_ids": [],
+                    "suggested_action": "",
+                }
+            ],
+        }
+    )
+    result, store = await _prepare(tmp_path, writer, critic)
+    assert "Первичная формулировка." in result.markdown
+    assert len(writer.prompts) == 1  # revision не запускалась
+    qa = (
+        store.cases_root / result.case_id / result.qa_relative_path
+    ).read_text(encoding="utf-8")
+    # needs_revision без error/critical детерминированно понижен до pass
+    assert "→ pass (только warning/info, порог severity)" in qa
+    assert "## Revision: не требовалась" in qa
+
+
 async def test_revision_rejected_when_all_fields_dropped(tmp_path) -> None:
     """Revision отклоняется, если рамки отбросили все поля (§74)."""
     writer = FakeWriter(
@@ -319,7 +349,7 @@ async def test_revision_rejected_when_all_fields_dropped(tmp_path) -> None:
                 {
                     "rule_id": "missing_uncertainty",
                     "section": "Оценка участка",
-                    "severity": "warning",
+                    "severity": "error",
                     "message": "нет неопределённости",
                     "claim": None,
                     "evidence_ids": [],
