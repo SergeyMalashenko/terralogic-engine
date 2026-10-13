@@ -71,7 +71,9 @@ def _capitalize(word: str) -> str:
     return word[:1].upper() + word[1:] if word else word
 
 
-def _factors_table(factors: list[QuickFactor]) -> list[str]:
+def _factors_table(
+    factors: list[QuickFactor], meanings: dict[str, str] | None = None
+) -> list[str]:
     zone_factors = [factor for factor in factors if not factor.informational]
     if not zone_factors:
         return [_NO_FACTORS_NOTE]
@@ -80,10 +82,11 @@ def _factors_table(factors: list[QuickFactor]) -> list[str]:
         "| --- | --- | --- | --- |",
     ]
     for number, factor in enumerate(zone_factors, start=1):
+        meaning = (meanings or {}).get(factor.rule_id) or factor.guidance
         lines.append(
             f"| {number} | {_cell(factor.zone_name)} | "
             f"{_cell(_capitalize(factor.coverage_word))} | "
-            f"{_cell(factor.guidance)} |"
+            f"{_cell(meaning)} |"
         )
     return lines
 
@@ -209,7 +212,7 @@ def _zone_regulations_lines(regulations: QuickZoneRegulations | None) -> list[st
     return lines
 
 
-def _verdict_lines(verdict: QuickVerdict) -> list[str]:
+def _verdict_lines(verdict: QuickVerdict, main_conclusion: str | None = None) -> list[str]:
     """Блок оценки по методике 6.1: балл/нерасчёт, статус, причины, пояснение."""
     if verdict.score is None:
         head = f"## Оценка не рассчитана — {verdict.status_title}"
@@ -218,7 +221,7 @@ def _verdict_lines(verdict: QuickVerdict) -> list[str]:
         if verdict.preliminary:
             marks.append("предварительная")
         head = f"## Оценка участка — {verdict.score}/{SCORE_SCALE} ({', '.join(marks)})"
-    lines = [head, "", verdict.status_summary]
+    lines = [head, "", main_conclusion or verdict.status_summary]
     if verdict.reasons:
         lines.extend(["", "Основные причины:"])
         lines.extend(f"- {reason}" for reason in verdict.reasons)
@@ -229,10 +232,16 @@ def _verdict_lines(verdict: QuickVerdict) -> list[str]:
     return lines
 
 
-def _established_lines(facts: list[str]) -> list[str]:
+def _established_lines(
+    facts: list[str], summary: str | None = None
+) -> list[str]:
     if not facts:
         return [_NO_FACTS_NOTE]
-    return [f"- {fact}" for fact in facts]
+    lines = [f"- {fact}" for fact in facts]
+    if summary:
+        # §27 ТЗ: интерпретация — абзацом, исходные факты остаются видны
+        lines = [summary, "", *lines]
+    return lines
 
 
 def _missing_lines(items: list[QuickMissingItem]) -> list[str]:
@@ -278,6 +287,7 @@ def render_quick_model(
     """
     report_date = today or datetime.now(UTC).date()
     identity = model.identity
+    narrative = model.narrative
 
     lines = [
         "# Экспресс-оценка земельного участка",
@@ -293,15 +303,24 @@ def render_quick_model(
         f"**Кадастровый номер {identity.cadastral_number}**"
         + (f" | {identity.address}" if identity.address else ""),
         "",
-        *_verdict_lines(model.status),
+        *_verdict_lines(
+            model.status,
+            main_conclusion=(narrative.main_conclusion if narrative else None),
+        ),
         "",
         "## Что уже удалось установить",
         "",
-        *_established_lines(model.established_facts),
+        *_established_lines(
+            model.established_facts,
+            summary=(narrative.established_summary if narrative else None),
+        ),
         "",
         "## Факторы, требующие внимания",
         "",
-        *_factors_table(model.attention_factors),
+        *_factors_table(
+            model.attention_factors,
+            meanings=(narrative.factor_meanings if narrative else None),
+        ),
         "",
         "## Паспорт участка",
         "",

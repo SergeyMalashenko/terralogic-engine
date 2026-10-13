@@ -152,6 +152,18 @@ qa/                     Report QA (§61–76 ТЗ): проверка отчёт�
                           env TERRALOGIC_CRITIC_CMD; без него критик отключён.
                           Итоги — артефакт quickreport-{run}-qa.md в CaseStore.
 
+quickreport/writer.py   Bounded narrative writer (§62–63, §74 ТЗ): опциональный
+                        LLM-этап поверх QuickReportModel — переформулирует
+                        только main_conclusion / established_summary /
+                        factor_meanings; факты, балл, статус, цены не трогает.
+                        Рамки validate_writer_output по каждому полю (чужие
+                        числа, запрещённые фразы, длина, rule_id); битое поле →
+                        детерминированный fallback. Протокол === NARRATIVE_RESULT
+                        ===, один retry, fail-safe. Конфигурация — env
+                        TERRALOGIC_WRITER_CMD. Targeted revision (§74): при
+                        needs_revision критика — один раунд по затронутым
+                        секциям; принимается только при pass валидатора.
+
 mcp.py                  FastMCP-сервер `terralogic-mcp` :8004, два инструмента:
                         terralogic_prepare_case(cadastral_number, case_id?,
                         margin_m=1000, refresh_policy=never|if_stale|always)

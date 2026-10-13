@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -78,6 +79,19 @@ class QuickMarketing(BaseModel):
     sha256: str
 
 
+class QuickNarrative(BaseModel):
+    """Пользовательские формулировки поверх детерминированного содержания.
+
+    Заполняется только LLM-writer'ом (§62–63 ТЗ) и только текстом: факты,
+    балл, статус и паспорт остаются детерминированными полями модели.
+    """
+
+    main_conclusion: str | None = None  # §26 — формулировка вывода
+    established_summary: str | None = None  # §27 — интерпретация фактов
+    factor_meanings: dict[str, str] = Field(default_factory=dict)  # §31
+    source: Literal["writer"] = "writer"
+
+
 class QuickReportModel(BaseModel):
     """Фиксированная продуктовая структура QuickReport (§23, §40 ТЗ)."""
 
@@ -92,6 +106,7 @@ class QuickReportModel(BaseModel):
     missing_information: list[QuickMissingItem] = Field(default_factory=list)
     limitations: str = REPORT_LIMITATIONS
     marketing: QuickMarketing | None = None
+    narrative: QuickNarrative | None = None
 
 
 def _established_facts(context: QuickReportContext) -> list[str]:

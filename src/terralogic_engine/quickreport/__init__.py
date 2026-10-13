@@ -2,7 +2,7 @@
 
 from .context import build_quick_context, build_quick_context_from_report
 from .geometry import ConfigurationOutcome, evaluate_configuration
-from .model import QuickReportModel, build_quick_model
+from .model import QuickNarrative, QuickReportModel, build_quick_model
 from .models import (
     QuickFactor,
     QuickMissingItem,
@@ -31,12 +31,20 @@ from .rules import (
     methodology_sha256,
 )
 from .service import render_service_report
+from .writer import (
+    SubprocessWriterExecutor,
+    WriterExecutor,
+    build_writer_prompt,
+    run_writer,
+    validate_writer_output,
+)
 
 __all__ = [
     "ConfigurationOutcome",
     "MarketingConfig",
     "QuickFactor",
     "QuickMissingItem",
+    "QuickNarrative",
     "QuickPassport",
     "QuickProtocol",
     "QuickReportContext",
@@ -49,11 +57,14 @@ __all__ = [
     "QuickZoneUse",
     "ScoredFactor",
     "ScoringRules",
+    "SubprocessWriterExecutor",
     "VerdictResult",
+    "WriterExecutor",
     "ZoneGuidance",
     "build_quick_context",
     "build_quick_context_from_report",
     "build_quick_model",
+    "build_writer_prompt",
     "compute_verdict",
     "evaluate_configuration",
     "load_marketing",
@@ -64,4 +75,6 @@ __all__ = [
     "render_quick_model",
     "render_quickreport",
     "render_service_report",
+    "run_writer",
+    "validate_writer_output",
 ]

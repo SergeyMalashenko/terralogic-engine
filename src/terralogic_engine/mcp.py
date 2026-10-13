@@ -130,11 +130,13 @@ def create_reporting_service(
         geodocs=(McpGeodocsClient(url=geodocs_url) if geodocs_url else None),
     )
     from terralogic_engine.qa.critic import SubprocessCriticExecutor
+    from terralogic_engine.quickreport.writer import SubprocessWriterExecutor
 
     return ReportingService(
         store=store,
         acquisition=acquisition,
         critic=SubprocessCriticExecutor.from_env(),
+        writer=SubprocessWriterExecutor.from_env(),
     )
 
 

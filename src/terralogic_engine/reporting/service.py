@@ -19,10 +19,12 @@ from terralogic_engine.quickreport import (
     methodology_sha256,
 )
 from terralogic_engine.quickreport.model import (
+    QuickNarrative,
     QuickReportModel,
     build_quick_model,
 )
 from terralogic_engine.quickreport.render import render_quick_model
+from terralogic_engine.quickreport.writer import WriterExecutor, run_writer
 from terralogic_engine.reporting.context import (
     build_report_context,
     collection_receipt_for_run,
@@ -48,6 +50,14 @@ MAX_MODEL_NAME_CHARACTERS = 200
 QUICK_REPORT_TEMPLATE_ID = "quick_report"
 
 
+def _narrative_empty(narrative: QuickNarrative) -> bool:
+    return (
+        narrative.main_conclusion is None
+        and narrative.established_summary is None
+        and not narrative.factor_meanings
+    )
+
+
 class CasePreparationError(RuntimeError):
     """Raised when source collection cannot produce an analyzable parcel."""
 
@@ -64,6 +74,7 @@ class ReportingService:
         tile_fetcher: Callable[[int, int, int, float], bytes | None] | None = None,
         marketing: MarketingConfig | None = None,
         critic: CriticExecutor | None = None,
+        writer: WriterExecutor | None = None,
     ) -> None:
         self.store = store
         self.acquisition = acquisition
@@ -73,6 +84,8 @@ class ReportingService:
         self._marketing = marketing if marketing is not None else load_marketing()
         # LLM-критик отчёта (§65 ТЗ); None — QA ограничено валидатором.
         self._critic = critic
+        # Bounded narrative writer (§62 ТЗ); None — текст детерминированный.
+        self._writer = writer
 
     async def prepare_case(
         self,
@@ -152,16 +165,32 @@ class ReportingService:
             case_id, context
         )
         context.warnings.extend(map_warnings)
-        # Продуктовая модель → черновик → QA (§61 ТЗ): валидатор всегда,
-        # критик — если сконфигурирован; QA не меняет содержимое отчёта.
+        # Продуктовая модель → (опц.) bounded narrative → черновик → QA
+        # (§61–63 ТЗ). Writer меняет только формулировки, не факты; сбой
+        # writer'а — fallback на детерминированный текст (§77).
         model = build_quick_model(context, marketing=self._marketing)
+        writer_applied = False
+        writer_rejections: list[str] = []
+        if self._writer is not None:
+            narrative, writer_rejections = run_writer(
+                self._writer, model, warnings=context.warnings
+            )
+            if narrative is not None:
+                model = model.model_copy(update={"narrative": narrative})
+                writer_applied = True
         markdown = render_quick_model(
             model,
             map_lines=map_lines,
             zone_regulations=context.zone_regulations,
         )
-        qa_relative_path, qa_warnings = self._build_qa_report(
-            case_id, context, model, markdown
+        qa_relative_path, qa_warnings, markdown = self._build_qa_report(
+            case_id,
+            context,
+            model,
+            markdown,
+            map_lines=map_lines,
+            writer_applied=writer_applied,
+            writer_rejections=writer_rejections,
         )
         context.warnings.extend(qa_warnings)
         pdf_relative_path, pdf_warnings = self._build_quick_pdf(
@@ -213,22 +242,96 @@ class ReportingService:
         context: QuickReportContext,
         model: QuickReportModel,
         markdown: str,
-    ) -> tuple[str | None, list[str]]:
+        *,
+        map_lines: list[str] | None,
+        writer_applied: bool,
+        writer_rejections: list[str],
+    ) -> tuple[str | None, list[str], str]:
         """QA-артефакт рядом с quick-отчётом: валидатор + критик (§61 ТЗ).
 
         Детерминированный валидатор — всегда; LLM-критик — если задан
-        ``critic`` в конструкторе. Любой сбой деградирует в warning:
-        основной отчёт сохраняется независимо от QA (§77).
+        ``critic`` в конструкторе. При needs_revision критика и включённом
+        writer'е выполняется один раунд targeted revision (§74): только
+        narrative-поля затронутых секций; пересобранный текст принимается,
+        лишь если валидатор его пропускает, иначе откат. Возвращает
+        (путь к QA-артефакту, warnings, итоговый markdown).
+        Любой сбой деградирует в warning: отчёт сохраняется независимо (§77).
         """
         from terralogic_engine.qa import run_critic, validate_quickreport
+        from terralogic_engine.quickreport.model import QuickNarrative
 
         warnings: list[str] = []
         try:
             validator_result = validate_quickreport(model, markdown, context=context)
         except Exception as exc:  # noqa: BLE001 — QA не ломает конвейер
-            return None, [f"QA-валидатор не отработал: {exc}"]
+            return None, [f"QA-валидатор не отработал: {exc}"], markdown
         critic_result = run_critic(
             self._critic, model, markdown, validator_result, warnings=warnings
+        )
+
+        revision_note = "не требовалась"
+        if (
+            critic_result is not None
+            and critic_result.status == "needs_revision"
+            and self._writer is not None
+        ):
+            narrative_sections = (
+                "Оценка", "Что уже удалось установить", "Факторы, требующие внимания",
+            )
+            relevant = [
+                issue
+                for issue in critic_result.issues
+                if any(issue.section.startswith(prefix) for prefix in narrative_sections)
+            ]
+            if relevant:
+                revised, revision_rejections = run_writer(
+                    self._writer, model, issues=relevant, warnings=warnings
+                )
+                writer_rejections.extend(revision_rejections)
+                if revised is not None and not _narrative_empty(revised):
+                    base = model.narrative or QuickNarrative()
+                    merged = QuickNarrative(
+                        main_conclusion=(
+                            revised.main_conclusion or base.main_conclusion
+                        ),
+                        established_summary=(
+                            revised.established_summary or base.established_summary
+                        ),
+                        factor_meanings={
+                            **base.factor_meanings,
+                            **revised.factor_meanings,
+                        },
+                    )
+                    revised_model = model.model_copy(
+                        update={"narrative": merged}
+                    )
+                    revised_markdown = render_quick_model(
+                        revised_model,
+                        map_lines=map_lines,
+                        zone_regulations=context.zone_regulations,
+                    )
+                    recheck = validate_quickreport(
+                        revised_model, revised_markdown, context=context
+                    )
+                    if recheck.status == "pass":
+                        model, markdown, validator_result = (
+                            revised_model, revised_markdown, recheck
+                        )
+                        revision_note = "принята (валидатор pass)"
+                    else:
+                        revision_note = "отклонена: валидатор fail после revision"
+                        warnings.append(
+                            "QA revision отклонена валидатором — отчёт без изменений"
+                        )
+                else:
+                    revision_note = "отклонена: writer не вернул пригодный текст"
+            else:
+                revision_note = "не выполнялась: замечания вне narrative-секций"
+
+        writer_status = (
+            "применён"
+            if writer_applied
+            else ("отключён" if self._writer is None else "недоступен/отброшен")
         )
         lines = [
             f"# QA отчёта — {context.parcel.cadastral_number}",
@@ -260,11 +363,22 @@ class ReportingService:
             lines.extend(
                 f"- [{issue.severity}] {issue.rule_id} ({issue.section}):"
                 f" {issue.message}"
-                + (f" Действие: {issue.suggested_action}" if issue.suggested_action else "")
+                + (
+                    f" Действие: {issue.suggested_action}"
+                    if issue.suggested_action
+                    else ""
+                )
                 for issue in critic_result.issues
             )
         elif critic_result is not None:
             lines.append("Проблем не найдено.")
+        lines.extend(["", f"## Writer: {writer_status}", ""])
+        if writer_rejections:
+            lines.append("Отброшенные поля writer'а (рамки §62–63):")
+            lines.extend(f"- {reason}" for reason in writer_rejections)
+        else:
+            lines.append("Отброшенных полей нет.")
+        lines.extend(["", f"## Revision: {revision_note}", ""])
         qa_markdown = "\n".join(lines) + "\n"
         try:
             relative_path = self.store.save_case_artifact(
@@ -274,14 +388,14 @@ class ReportingService:
                 payload=qa_markdown.encode("utf-8"),
             )
         except Exception as exc:  # noqa: BLE001 — QA не ломает конвейер
-            return None, [*warnings, f"QA-артефакт не сохранён: {exc}"]
+            return None, [*warnings, f"QA-артефакт не сохранён: {exc}"], markdown
         if validator_result.status == "fail":
             warnings.append(
                 "QA-валидатор: отчёт не прошёл проверку — см. QA-артефакт"
             )
         if critic_result is not None and critic_result.status == "needs_revision":
             warnings.append("QA-критик: needs_revision — см. QA-артефакт")
-        return relative_path, warnings
+        return relative_path, warnings, markdown
 
     def _build_service_report(
         self, case_id: str, context: QuickReportContext
