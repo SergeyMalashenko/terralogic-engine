@@ -517,7 +517,9 @@ def _documents_context(
         data = envelope.get("data")
         if not isinstance(data, Mapping):
             continue
-        if data.get("partial") is True:
+        # partial: у снапшотов-конвертов — data.partial; у сырого ответа
+        # geodocs — верхнеуровневый status == "partial" (§80).
+        if data.get("partial") is True or envelope.get("status") == "partial":
             partial = True
         if snapshot.metadata.get("snapshot_type") != "documents_sync":
             continue

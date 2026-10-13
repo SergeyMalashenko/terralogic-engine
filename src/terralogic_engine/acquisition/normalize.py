@@ -382,35 +382,63 @@ def _fact_id(snapshot_id: str, fact_type: str, identity: str) -> str:
     return f"fact-{snapshot_id}-{fact_type}-{digest}"
 
 
-def document_vri_facts(
+def _geodocs_documents_by_version(
+    result: Mapping[str, Any],
+) -> dict[int, Mapping[str, Any]]:
+    """Мапа version_id → реквизиты документа из ответа geodocs query_documents."""
+    documents = result.get("documents")
+    if not isinstance(documents, list):
+        return {}
+    by_version: dict[int, Mapping[str, Any]] = {}
+    for document in documents:
+        if not isinstance(document, Mapping):
+            continue
+        version_id = document.get("version_id")
+        if isinstance(version_id, int):
+            by_version[version_id] = document
+    return by_version
+
+
+def document_vri_facts_from_geodocs(
     *,
     case_id: str,
     subject_feature_id: str,
     snapshot_id: str,
-    envelope: Mapping[str, Any],
+    result: Mapping[str, Any],
 ) -> list[CaseFact]:
-    """Turn one rgis_get_document_vri envelope into document_vri facts."""
+    """Turn one geodocs query_documents (static:vri) result into facts.
 
-    data = envelope.get("data")
+    Нативный путь §80 ТЗ: читает data.zones[] напрямую, без проекции
+    в конверт удалённого инструмента. Extraction с непустыми items идёт
+    первой — факт строится по ней.
+    """
+
+    data = result.get("data")
     if not isinstance(data, Mapping):
         return []
     raw_zones = data.get("zones")
     if not isinstance(raw_zones, list):
         return []
+    documents = _geodocs_documents_by_version(result)
     facts: list[CaseFact] = []
     for zone in raw_zones:
         if not isinstance(zone, Mapping) or zone.get("found") is not True:
             continue
         zone_code = str(zone.get("zone_code") or "")
-        extractions = zone.get("extractions")
-        if not isinstance(extractions, list) or not extractions:
+        extractions = [
+            item
+            for item in (zone.get("extractions") or [])
+            if isinstance(item, Mapping)
+        ]
+        if not extractions:
             continue
+        extractions.sort(key=lambda item: not (item.get("table") or {}).get("items"))
         extraction = extractions[0]
-        if not isinstance(extraction, Mapping):
-            continue
-        document = extraction.get("document")
-        document = document if isinstance(document, Mapping) else {}
-        items = extraction.get("items")
+        table = extraction.get("table")
+        table = table if isinstance(table, Mapping) else {}
+        version_id = extraction.get("version_id")
+        document = documents.get(version_id, {})
+        items = table.get("items")
         facts.append(
             CaseFact(
                 id=_fact_id(snapshot_id, DOCUMENT_VRI_FACT_TYPE, zone_code),
@@ -423,8 +451,8 @@ def document_vri_facts(
                     "doc_number": str(document.get("number") or ""),
                     "version_date": str(document.get("version_date") or ""),
                     "items": items if isinstance(items, list) else [],
-                    "source_file": str(extraction.get("source_file") or ""),
-                    "confidence": extraction.get("confidence"),
+                    "source_file": str(table.get("source_file") or ""),
+                    "confidence": table.get("confidence"),
                     "snapshot_id": snapshot_id,
                 },
                 snapshot_id=snapshot_id,
@@ -434,28 +462,31 @@ def document_vri_facts(
     return facts
 
 
-def zouit_regime_facts(
+def zouit_regime_facts_from_geodocs(
     *,
     case_id: str,
     subject_feature_id: str,
     snapshot_id: str,
-    envelope: Mapping[str, Any],
+    result: Mapping[str, Any],
 ) -> list[CaseFact]:
-    """Turn one nspd_get_zouit_regimes envelope into zouit_regime facts."""
+    """Turn one geodocs query_documents (static:zouit) result into facts.
 
-    data = envelope.get("data")
+    Нативный путь §80 ТЗ: читает data.regimes[] напрямую.
+    """
+
+    data = result.get("data")
     if not isinstance(data, Mapping):
         return []
     raw_regimes = data.get("regimes")
     if not isinstance(raw_regimes, list):
         return []
+    documents = _geodocs_documents_by_version(result)
     facts: list[CaseFact] = []
     for regime in raw_regimes:
         if not isinstance(regime, Mapping):
             continue
         registry_number = str(regime.get("registry_number") or "")
-        document = regime.get("document")
-        document = document if isinstance(document, Mapping) else {}
+        document = documents.get(regime.get("version_id"), {})
         facts.append(
             CaseFact(
                 id=_fact_id(snapshot_id, ZOUIT_REGIME_FACT_TYPE, registry_number),
@@ -477,3 +508,4 @@ def zouit_regime_facts(
             )
         )
     return facts
+

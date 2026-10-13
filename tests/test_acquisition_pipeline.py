@@ -505,8 +505,11 @@ async def test_pipeline_collects_document_contour(tmp_path) -> None:
         if snapshot.metadata.get("snapshot_type") == "document_acquire":
             assert payload["tool"] == "acquire_documents"
             assert len(payload["attempts"]) == 1
+        elif snapshot.metadata.get("snapshot_type") == "documents_sync":
+            assert payload["ok"] is True  # конверт sync-инструмента RGIS/NSPD
         else:
-            assert payload["ok"] is True
+            # нативный ответ geodocs (§80): status вместо legacy-конверта ok
+            assert payload["status"] == "success"
 
     facts = store.list_facts(request.case_id)
     assert {fact.fact_type for fact in facts} == {

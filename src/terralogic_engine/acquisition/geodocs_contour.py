@@ -1,10 +1,10 @@
-"""Boundary adapter between the geodocs second contour and legacy envelopes.
+"""Второй контур документов: разбор sync-отчётов и тексты запросов geodocs.
 
-geodocs-mcp answers with plain status/data payloads. The rest of the engine
-(normalize, reporting, viewer) consumes the former per-source envelopes of
-the deleted tools ``rgis_get_document_vri`` and ``nspd_get_zouit_regimes``;
-this module projects the geodocs payloads back into those envelope shapes so
-``normalize.py`` stays unchanged.
+Sync-отчёты RGIS/NSPD (`*_sync_parcel_documents`) приходят в собственном
+формате — отсюда кандидаты для acquire и version_id для query. Ответы
+geodocs-mcp потребляются нативно: снапшоты хранят сырой payload, факты
+строит normalize напрямую (§80 ТЗ: legacy-проекция в конверты удалённых
+инструментов rgis_get_document_vri / nspd_get_zouit_regimes удалена).
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 GEODOCS_ADAPTER_VERSION = "geodocs-mcp"
-GEODOCS_SOURCES = ["geodocs-mcp (второй контур документов)"]
 
 # Sync-report statuses of versions whose files are not in the local store yet.
 # The reports speak their own vocabulary: raw fetch statuses (pending,
@@ -210,165 +209,34 @@ def municipality_pzz_fallback(
     }
 
 
-def _documents_by_version(
-    result: Mapping[str, Any],
-) -> dict[int, Mapping[str, Any]]:
-    documents = result.get("documents")
-    if not isinstance(documents, list):
-        return {}
-    by_version: dict[int, Mapping[str, Any]] = {}
-    for document in documents:
-        if not isinstance(document, Mapping):
-            continue
-        version_id = document.get("version_id")
-        if isinstance(version_id, int):
-            by_version[version_id] = document
-    return by_version
+def geodocs_ok_view(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Минимальный ok/error-вид нативного ответа geodocs для _source_result.
 
+    Статус failed → ok=false с кодом geodocs_query_failed; partial →
+    data.partial=true (правило частичного покрытия конвейера). Сырой ответ
+    при этом хранится в снапшоте как есть.
+    """
 
-def _adapter_version(result: Mapping[str, Any]) -> str:
-    executor = result.get("executor")
-    if isinstance(executor, str) and executor:
-        return f"{GEODOCS_ADAPTER_VERSION}/{executor}"
-    return GEODOCS_ADAPTER_VERSION
-
-
-def _warnings_list(result: Mapping[str, Any]) -> list[str]:
-    warnings = result.get("warnings")
-    if not isinstance(warnings, list):
-        return []
-    return [str(warning) for warning in warnings]
-
-
-def _base_envelope(
-    result: Mapping[str, Any],
-    *,
-    cadastral_number: str,
-    data: Mapping[str, Any],
-) -> dict[str, Any]:
     status = str(result.get("status") or FAILED_QUERY_STATUS)
     ok = status != FAILED_QUERY_STATUS
     error: dict[str, Any] | None = None
     if not ok:
-        message = result.get("error")
-        if not isinstance(message, str) or not message:
-            message = "; ".join(_warnings_list(result)) or "query_documents failed"
+        warnings = result.get("warnings")
+        message = (
+            "; ".join(str(w) for w in warnings)
+            if isinstance(warnings, list) and warnings
+            else "query_documents failed"
+        )
         error = {"code": "geodocs_query_failed", "message": message}
+    executor = result.get("executor")
+    adapter_version = (
+        f"{GEODOCS_ADAPTER_VERSION}/{executor}"
+        if isinstance(executor, str) and executor
+        else GEODOCS_ADAPTER_VERSION
+    )
     return {
         "ok": ok,
-        "data": {
-            "applicable": True,
-            "cadastral_number": cadastral_number,
-            **data,
-            "warnings": _warnings_list(result),
-            "partial": status == "partial",
-        },
+        "data": {"partial": status == "partial"},
         "error": error,
-        "metadata": {
-            "adapter_version": _adapter_version(result),
-            "sources": GEODOCS_SOURCES,
-            "executor": result.get("executor"),
-        },
+        "metadata": {"adapter_version": adapter_version, "executor": executor},
     }
-
-
-def vri_envelope_from_query(
-    result: Mapping[str, Any],
-    *,
-    cadastral_number: str,
-) -> dict[str, Any]:
-    """Project a geodocs query result into the rgis_get_document_vri envelope."""
-
-    documents = _documents_by_version(result)
-    raw_data = result.get("data")
-    raw_zones = raw_data.get("zones") if isinstance(raw_data, Mapping) else None
-    zones: list[dict[str, Any]] = []
-    for zone in raw_zones if isinstance(raw_zones, list) else []:
-        if not isinstance(zone, Mapping):
-            continue
-        extractions: list[dict[str, Any]] = []
-        raw_extractions = zone.get("extractions")
-        for item in raw_extractions if isinstance(raw_extractions, list) else []:
-            if not isinstance(item, Mapping):
-                continue
-            version_id = item.get("version_id")
-            document = documents.get(version_id, {})
-            table = item.get("table")
-            table = table if isinstance(table, Mapping) else {}
-            extractions.append(
-                {
-                    "document": {
-                        "version_id": version_id,
-                        "doc_type": document.get("doc_type"),
-                        "municipality": document.get("municipality"),
-                        "number": document.get("number"),
-                        "version_date": document.get("version_date"),
-                    },
-                    "source_file": table.get("source_file"),
-                    "extractor": item.get("extractor") or result.get("executor"),
-                    "confidence": table.get("confidence"),
-                    "counts": table.get("counts") or {},
-                    "items": table.get("items") or [],
-                    "status": item.get("status"),
-                    "detail": item.get("detail"),
-                }
-            )
-        # normalize.document_vri_facts reads extractions[0]: the extraction
-        # carrying the VRI table must come first.
-        extractions.sort(key=lambda extraction: not extraction["items"])
-        zones.append(
-            {
-                "zone_code": zone.get("zone_code"),
-                "found": zone.get("found") is True,
-                "extractions": extractions,
-            }
-        )
-    return _base_envelope(
-        result,
-        cadastral_number=cadastral_number,
-        data={
-            "zones": zones,
-        },
-    )
-
-
-def zouit_regimes_envelope_from_query(
-    result: Mapping[str, Any],
-    *,
-    cadastral_number: str,
-) -> dict[str, Any]:
-    """Project a geodocs query result into the nspd_get_zouit_regimes envelope."""
-
-    documents = _documents_by_version(result)
-    raw_data = result.get("data")
-    raw_regimes = raw_data.get("regimes") if isinstance(raw_data, Mapping) else None
-    regimes: list[dict[str, Any]] = []
-    for regime in raw_regimes if isinstance(raw_regimes, list) else []:
-        if not isinstance(regime, Mapping):
-            continue
-        version_id = regime.get("version_id")
-        document = documents.get(version_id, {})
-        regimes.append(
-            {
-                "registry_number": regime.get("registry_number"),
-                "name": regime.get("name"),
-                "zone_type": regime.get("zone_type"),
-                "registration_date": regime.get("registration_date"),
-                "restrictions": regime.get("restrictions"),
-                "relation_kind": regime.get("relation_kind"),
-                "parcel_coverage_percent": regime.get("parcel_coverage_percent"),
-                "document": {
-                    "version_id": version_id,
-                    "number": document.get("number"),
-                    "version_date": document.get("version_date"),
-                },
-                "extractor": regime.get("extractor") or result.get("executor"),
-            }
-        )
-    return _base_envelope(
-        result,
-        cadastral_number=cadastral_number,
-        data={
-            "regimes": regimes,
-        },
-    )

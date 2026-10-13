@@ -69,10 +69,14 @@ acquisition/            Сбор из источников:
                           контур документов.
   clients/                HTTP MCP-клиенты (base, mcp).
   normalize.py            Конвертация «конвертов» источников в GeoFeature /
-                          CaseFact (классы фич: restriction_zone, ...).
-  geodocs_adapter.py      Проекция ответов geodocs-mcp в формат удалённых
-                          legacy-инструментов (rgis_get_document_vri,
-                          nspd_get_zouit_regimes), чтобы normalize не менять.
+                          CaseFact (классы фич: restriction_zone, ...);
+                          факты документов — нативно из geodocs
+                          (document_vri_facts_from_geodocs и др.).
+  geodocs_contour.py      Второй контур документов: разбор sync-отчётов
+                          RGIS/NSPD (кандидаты acquire, version_id для query),
+                          тексты запросов, ok-view для конвейера. §80 ТЗ:
+                          legacy-проекция в конверты удалённых инструментов
+                          удалена; снапшоты хранят сырой ответ geodocs.
   geometry.py             Гео-утилиты сбора.
 
 store/                  CaseStore:

@@ -21,17 +21,16 @@ from terralogic_engine.acquisition.clients.base import (
     RgisDocumentsClient,
     RgisSourceClient,
 )
-from terralogic_engine.acquisition.geodocs_adapter import (
+from terralogic_engine.acquisition.geodocs_contour import (
     GEODOCS_ADAPTER_VERSION,
     ZOUIT_REGIMES_QUERY,
     acquire_candidates,
     downloaded_pzz_version_ids,
+    geodocs_ok_view,
     municipality_pzz_fallback,
     sync_version_ids,
     sync_zone_codes,
-    vri_envelope_from_query,
     vri_query,
-    zouit_regimes_envelope_from_query,
 )
 from terralogic_engine.acquisition.geometry import (
     build_area_of_interest,
@@ -40,12 +39,12 @@ from terralogic_engine.acquisition.geometry import (
 from terralogic_engine.acquisition.normalize import (
     count_features,
     dgis_features,
-    document_vri_facts,
+    document_vri_facts_from_geodocs,
     nspd_layer_features,
     osm_features,
     parcel_feature,
     rgis_features,
-    zouit_regime_facts,
+    zouit_regime_facts_from_geodocs,
 )
 from terralogic_engine.acquisition.profiles import (
     CollectionProfile,
@@ -801,7 +800,7 @@ class AcquisitionPipeline:
         warnings: list[str],
         errors: list[str],
     ) -> None:
-        """VRI tables via geodocs query_documents, projected into the old envelope."""
+        """VRI tables via geodocs query_documents; snapshot хранит сырой ответ."""
 
         assert self.geodocs is not None
         try:
@@ -818,24 +817,20 @@ class AcquisitionPipeline:
                 errors=errors,
             )
             return
-        vri_envelope, _stored_vri = self._source_result(
-            vri_envelope_from_query(
-                query_result,
-                cadastral_number=request.cadastral_number,
-            ),
+        view = geodocs_ok_view(query_result)
+        self._source_result(
+            view,
             tool="geodocs query_documents (document_vri)",
             partial_warning="Geodocs document VRI extraction is partial",
             warnings=warnings,
             errors=errors,
         )
-        if vri_envelope is None:
-            return
         vri_snapshot = self.store.save_snapshot(
             case_id=request.case_id,
             run_id=run_id,
             source="geodocs",
-            payload=_json_bytes(vri_envelope),
-            adapter_version=_adapter_version(vri_envelope),
+            payload=_json_bytes(query_result),
+            adapter_version=view["metadata"]["adapter_version"],
             metadata={
                 "snapshot_type": DOCUMENT_VRI_SNAPSHOT_TYPE,
                 "tools": ["query_documents"],
@@ -843,13 +838,13 @@ class AcquisitionPipeline:
                 "profile_version": profile.version,
             },
         )
-        if vri_envelope.get("ok") is True:
+        if view["ok"]:
             case_facts.extend(
-                document_vri_facts(
+                document_vri_facts_from_geodocs(
                     case_id=request.case_id,
                     subject_feature_id=parcel_feature_id,
                     snapshot_id=vri_snapshot.id,
-                    envelope=vri_envelope,
+                    result=query_result,
                 )
             )
 
@@ -865,7 +860,7 @@ class AcquisitionPipeline:
         warnings: list[str],
         errors: list[str],
     ) -> None:
-        """ZOUIT regimes via geodocs query_documents, projected as before."""
+        """ZOUIT regimes via geodocs query_documents; snapshot хранит сырой ответ."""
 
         assert self.geodocs is not None
         try:
@@ -882,24 +877,20 @@ class AcquisitionPipeline:
                 errors=errors,
             )
             return
-        regimes_envelope, _stored_regimes = self._source_result(
-            zouit_regimes_envelope_from_query(
-                query_result,
-                cadastral_number=request.cadastral_number,
-            ),
+        view = geodocs_ok_view(query_result)
+        self._source_result(
+            view,
             tool="geodocs query_documents (zouit_regime)",
             partial_warning="Geodocs ZOUIT regime coverage is partial",
             warnings=warnings,
             errors=errors,
         )
-        if regimes_envelope is None:
-            return
         regimes_snapshot = self.store.save_snapshot(
             case_id=request.case_id,
             run_id=run_id,
             source="geodocs",
-            payload=_json_bytes(regimes_envelope),
-            adapter_version=_adapter_version(regimes_envelope),
+            payload=_json_bytes(query_result),
+            adapter_version=view["metadata"]["adapter_version"],
             metadata={
                 "snapshot_type": DOCUMENT_REGIMES_SNAPSHOT_TYPE,
                 "tools": ["query_documents"],
@@ -907,13 +898,13 @@ class AcquisitionPipeline:
                 "profile_version": profile.version,
             },
         )
-        if regimes_envelope.get("ok") is True:
+        if view["ok"]:
             case_facts.extend(
-                zouit_regime_facts(
+                zouit_regime_facts_from_geodocs(
                     case_id=request.case_id,
                     subject_feature_id=parcel_feature_id,
                     snapshot_id=regimes_snapshot.id,
-                    envelope=regimes_envelope,
+                    result=query_result,
                 )
             )
 

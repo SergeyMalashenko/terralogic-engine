@@ -337,8 +337,6 @@ class McpNspdDocumentsClient:
         )
         return _checked_tool_result("nspd_sync_parcel_documents", envelope)
 
-
-GEODOCS_ADAPTER_VERSION = "geodocs-mcp"
 # Должен перекрывать timeout_seconds исполнителя агентного яруса geodocs
 # (agents.yaml: hermes 5400 c) — иначе клиент сдаётся раньше сервера.
 DEFAULT_GEODOCS_READ_TIMEOUT_SECONDS = 6000.0
