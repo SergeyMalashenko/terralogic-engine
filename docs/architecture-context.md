@@ -145,11 +145,14 @@ qa/                     Report QA (§61–76 ТЗ): проверка отчёт�
                           площадь, ВРИ=классификатор, имена зон, обязательные
                           секции §23, цены=MarketingConfig, статичный
                           дисклеймер, трассировка факторов к протоколу.
-  critic.py               LLM-критик (Hermes+Gemini): промпт с политикой §71,
+  critic.py               LLM-критик (Hermes + gemma3:12b): промпт с политикой §71,
                           read-only по построению (без инструментов), парсинг
                           === CRITIC_RESULT ===, fail-safe — любой сбой →
                           warning, отчёт сохраняется (§77). Конфигурация —
-                          env TERRALOGIC_CRITIC_CMD; без него критик отключён.
+                          env TERRALOGIC_CRITIC_CMD — продовый вариант:
+                          `scripts/hermes-critic.sh` (Hermes + локальная
+                          gemma3:12b, профиль ~/.hermes-critic без tools).
+                          Без env критик отключён.
                           Итоги — артефакт quickreport-{run}-qa.md в CaseStore.
 
 quickreport/writer.py   Bounded narrative writer (§62–63, §74 ТЗ): опциональный
@@ -160,7 +163,7 @@ quickreport/writer.py   Bounded narrative writer (§62–63, §74 ТЗ): опц�
                         числа, запрещённые фразы, длина, rule_id); битое поле →
                         детерминированный fallback. Протокол === NARRATIVE_RESULT
                         ===, один retry, fail-safe. Конфигурация — env
-                        TERRALOGIC_WRITER_CMD. Targeted revision (§74): при
+                        TERRALOGIC_WRITER_CMD (тот же scripts/hermes-critic.sh). Targeted revision (§74): при
                         needs_revision критика — один раунд по затронутым
                         секциям; принимается только при pass валидатора.
 

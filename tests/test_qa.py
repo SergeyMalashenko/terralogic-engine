@@ -1,6 +1,6 @@
 """Тесты Report QA: детерминированный валидатор и критик (§64–86 ТЗ).
 
-Реальный Hermes/Gemini не запускается: критик — фейк-исполнитель с
+Реальный Hermes/gemma3:12b не запускается: критик — фейк-исполнитель с
 подконтрольным stdout. Бенчмарк §86: испорченные отчёты ловятся кодом.
 """
 
@@ -213,7 +213,7 @@ class FakeCritic:
     def run(self, prompt: str, workdir: Path) -> CriticExecResult:
         self.prompts.append(prompt)
         if self.fail:
-            raise RuntimeError("gemini недоступен")
+            raise RuntimeError("критик недоступен")
         return CriticExecResult(stdout=self.stdout or "", returncode=0)
 
 
@@ -257,7 +257,7 @@ def test_parse_critic_result_invalid_schema():
 
 
 def test_run_critic_failsafe_when_executor_dead(draft):
-    """Gemini недоступен → None + warning, отчёт не ломается (§77)."""
+    """Модель критика недоступна → None + warning, отчёт не ломается (§77)."""
     _, model, markdown = draft
     warnings: list[str] = []
     result = run_critic(

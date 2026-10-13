@@ -1,7 +1,12 @@
-"""LLM-критик QuickReport (§65–75 ТЗ): Hermes + Gemini, read-only, fail-safe.
+"""LLM-критик QuickReport (§65–75 ТЗ): Hermes Agent + gemma3:12b, read-only, fail-safe.
 
-Критик — отдельная роль, не discovery-Hermes (§65). В v1 у него нет
-инструментов вообще: весь контекст передаётся в промпте, поэтому он
+Критик — отдельная роль, не discovery-Hermes (§65). Продовая конфигурация —
+локальная модель gemma3:12b через Hermes CLI:
+
+    TERRALOGIC_CRITIC_CMD="hermes -m gemma3:12b -z"
+
+(промпт передаётся последним аргументом — значением `-z`). В v1 у критика
+нет инструментов вообще: весь контекст передаётся в промпте, поэтому он
 read-only по построению (§69–70). Критик не переписывает отчёт (§68):
 возвращает структурированный CriticResult с issues.
 
@@ -68,7 +73,7 @@ class CriticExecResult:
 
 
 class CriticExecutor(Protocol):
-    """Исполнитель роли критика (Hermes+Gemini в проде, фейк в тестах)."""
+    """Исполнитель роли критика (Hermes + gemma3:12b в проде, фейк в тестах)."""
 
     def run(self, prompt: str, workdir: Path) -> CriticExecResult:
         """Один one-shot запуск по промпту."""
@@ -87,7 +92,14 @@ class SubprocessCriticExecutor:
 
     @classmethod
     def from_env(cls, env_var: str = CRITIC_CMD_ENV) -> SubprocessCriticExecutor | None:
-        """Исполнитель из env TERRALOGIC_CRITIC_CMD; пусто → None (отключён)."""
+        """Исполнитель из env TERRALOGIC_CRITIC_CMD; пусто → None (отключён).
+
+        Продовая конфигурация — wrapper `scripts/hermes-critic.sh`
+        (Hermes + локальная gemma3:12b, профиль ~/.hermes-critic без tools:
+        модель их не поддерживает, а критику они и не нужны):
+
+            TERRALOGIC_CRITIC_CMD="/path/to/terralogic-engine/scripts/hermes-critic.sh"
+        """
         raw = os.environ.get(env_var, "").strip()
         if not raw:
             return None

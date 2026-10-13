@@ -110,7 +110,12 @@ class SubprocessWriterExecutor:
 
     @classmethod
     def from_env(cls, env_var: str = WRITER_CMD_ENV) -> SubprocessWriterExecutor | None:
-        """Исполнитель из env TERRALOGIC_WRITER_CMD; пусто → None (отключён)."""
+        """Исполнитель из env TERRALOGIC_WRITER_CMD; пусто → None (отключён).
+
+        Продовая конфигурация — тот же wrapper `scripts/hermes-critic.sh`
+        (Hermes + локальная gemma3:12b, профиль ~/.hermes-critic без tools),
+        что и у критика: writer'у инструменты тоже не нужны.
+        """
         raw = os.environ.get(env_var, "").strip()
         if not raw:
             return None
