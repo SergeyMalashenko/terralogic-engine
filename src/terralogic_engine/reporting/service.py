@@ -9,6 +9,7 @@ from pathlib import Path
 from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
 from terralogic_engine.analytics.pipeline import AnalysisPipeline
 from terralogic_engine.domain.models import CollectionRequest, RefreshPolicy
+from terralogic_engine.qa.critic import CriticExecutor
 from terralogic_engine.quickreport import (
     MarketingConfig,
     QuickReportContext,
@@ -16,8 +17,12 @@ from terralogic_engine.quickreport import (
     build_quick_context,
     load_marketing,
     methodology_sha256,
-    render_quickreport,
 )
+from terralogic_engine.quickreport.model import (
+    QuickReportModel,
+    build_quick_model,
+)
+from terralogic_engine.quickreport.render import render_quick_model
 from terralogic_engine.reporting.context import (
     build_report_context,
     collection_receipt_for_run,
@@ -58,6 +63,7 @@ class ReportingService:
         template_registry: ReportTemplateRegistry | None = None,
         tile_fetcher: Callable[[int, int, int, float], bytes | None] | None = None,
         marketing: MarketingConfig | None = None,
+        critic: CriticExecutor | None = None,
     ) -> None:
         self.store = store
         self.acquisition = acquisition
@@ -65,6 +71,8 @@ class ReportingService:
         self.tile_fetcher = tile_fetcher
         # Коммерческий блок отчёта: статическая конфигурация, не из LLM.
         self._marketing = marketing if marketing is not None else load_marketing()
+        # LLM-критик отчёта (§65 ТЗ); None — QA ограничено валидатором.
+        self._critic = critic
 
     async def prepare_case(
         self,
@@ -144,9 +152,18 @@ class ReportingService:
             case_id, context
         )
         context.warnings.extend(map_warnings)
-        markdown = render_quickreport(
-            context, map_lines=map_lines, marketing=self._marketing
+        # Продуктовая модель → черновик → QA (§61 ТЗ): валидатор всегда,
+        # критик — если сконфигурирован; QA не меняет содержимое отчёта.
+        model = build_quick_model(context, marketing=self._marketing)
+        markdown = render_quick_model(
+            model,
+            map_lines=map_lines,
+            zone_regulations=context.zone_regulations,
         )
+        qa_relative_path, qa_warnings = self._build_qa_report(
+            case_id, context, model, markdown
+        )
+        context.warnings.extend(qa_warnings)
         pdf_relative_path, pdf_warnings = self._build_quick_pdf(
             case_id, context, markdown
         )
@@ -186,8 +203,85 @@ class ReportingService:
             pdf_relative_path=pdf_relative_path,
             service_relative_path=service_relative_path,
             service_markdown=service_markdown,
+            qa_relative_path=qa_relative_path,
             warnings=context.warnings,
         )
+
+    def _build_qa_report(
+        self,
+        case_id: str,
+        context: QuickReportContext,
+        model: QuickReportModel,
+        markdown: str,
+    ) -> tuple[str | None, list[str]]:
+        """QA-артефакт рядом с quick-отчётом: валидатор + критик (§61 ТЗ).
+
+        Детерминированный валидатор — всегда; LLM-критик — если задан
+        ``critic`` в конструкторе. Любой сбой деградирует в warning:
+        основной отчёт сохраняется независимо от QA (§77).
+        """
+        from terralogic_engine.qa import run_critic, validate_quickreport
+
+        warnings: list[str] = []
+        try:
+            validator_result = validate_quickreport(model, markdown, context=context)
+        except Exception as exc:  # noqa: BLE001 — QA не ломает конвейер
+            return None, [f"QA-валидатор не отработал: {exc}"]
+        critic_result = run_critic(
+            self._critic, model, markdown, validator_result, warnings=warnings
+        )
+        lines = [
+            f"# QA отчёта — {context.parcel.cadastral_number}",
+            "",
+            (
+                "Результат проверки экспресс-отчёта: детерминированный"
+                " валидатор (равенство полей) и LLM-критик (семантика,"
+                " read-only)."
+            ),
+            "",
+            f"Run {context.collection_run_id} · Методика {context.methodology_version}",
+            "",
+            f"## Валидатор: {validator_result.status}",
+            "",
+        ]
+        if validator_result.issues:
+            lines.extend(
+                f"- [{issue.severity}] `{issue.rule_id}` ({issue.section}):"
+                f" {issue.message}"
+                for issue in validator_result.issues
+            )
+        else:
+            lines.append("Проблем не найдено.")
+        critic_status = (
+            "недоступен" if critic_result is None else critic_result.status
+        )
+        lines.extend(["", f"## Критик: {critic_status}", ""])
+        if critic_result is not None and critic_result.issues:
+            lines.extend(
+                f"- [{issue.severity}] {issue.rule_id} ({issue.section}):"
+                f" {issue.message}"
+                + (f" Действие: {issue.suggested_action}" if issue.suggested_action else "")
+                for issue in critic_result.issues
+            )
+        elif critic_result is not None:
+            lines.append("Проблем не найдено.")
+        qa_markdown = "\n".join(lines) + "\n"
+        try:
+            relative_path = self.store.save_case_artifact(
+                case_id=case_id,
+                kind="reports",
+                filename=f"quickreport-{context.collection_run_id}-qa.md",
+                payload=qa_markdown.encode("utf-8"),
+            )
+        except Exception as exc:  # noqa: BLE001 — QA не ломает конвейер
+            return None, [*warnings, f"QA-артефакт не сохранён: {exc}"]
+        if validator_result.status == "fail":
+            warnings.append(
+                "QA-валидатор: отчёт не прошёл проверку — см. QA-артефакт"
+            )
+        if critic_result is not None and critic_result.status == "needs_revision":
+            warnings.append("QA-критик: needs_revision — см. QA-артефакт")
+        return relative_path, warnings
 
     def _build_service_report(
         self, case_id: str, context: QuickReportContext

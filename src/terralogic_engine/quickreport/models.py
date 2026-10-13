@@ -232,4 +232,5 @@ class QuickReportResult(BaseModel):
     pdf_relative_path: str | None = None
     service_relative_path: str | None = None
     service_markdown: str | None = None
+    qa_relative_path: str | None = None
     warnings: list[str] = Field(default_factory=list)

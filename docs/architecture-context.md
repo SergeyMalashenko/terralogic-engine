@@ -139,6 +139,19 @@ legal/                  Нормативный классификатор ВРИ
   models.py               VriSource, VriEntry, VriClassifier (валидация:
                           непустые код/имя, уникальность кодов).
 
+qa/                     Report QA (§61–76 ТЗ): проверка отчёта после рендера.
+  models.py               QaIssue / ValidatorResult / CriticResult (§73).
+  validator.py            DeterministicValidator: балл=модель, статус,
+                          площадь, ВРИ=классификатор, имена зон, обязательные
+                          секции §23, цены=MarketingConfig, статичный
+                          дисклеймер, трассировка факторов к протоколу.
+  critic.py               LLM-критик (Hermes+Gemini): промпт с политикой §71,
+                          read-only по построению (без инструментов), парсинг
+                          === CRITIC_RESULT ===, fail-safe — любой сбой →
+                          warning, отчёт сохраняется (§77). Конфигурация —
+                          env TERRALOGIC_CRITIC_CMD; без него критик отключён.
+                          Итоги — артефакт quickreport-{run}-qa.md в CaseStore.
+
 mcp.py                  FastMCP-сервер `terralogic-mcp` :8004, два инструмента:
                         terralogic_prepare_case(cadastral_number, case_id?,
                         margin_m=1000, refresh_policy=never|if_stale|always)

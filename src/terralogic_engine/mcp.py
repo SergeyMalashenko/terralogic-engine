@@ -129,7 +129,13 @@ def create_reporting_service(
         nspd_documents=McpNspdDocumentsClient(nspd_transport),
         geodocs=(McpGeodocsClient(url=geodocs_url) if geodocs_url else None),
     )
-    return ReportingService(store=store, acquisition=acquisition)
+    from terralogic_engine.qa.critic import SubprocessCriticExecutor
+
+    return ReportingService(
+        store=store,
+        acquisition=acquisition,
+        critic=SubprocessCriticExecutor.from_env(),
+    )
 
 
 def _tool_failure(exc: Exception) -> ToolError:
