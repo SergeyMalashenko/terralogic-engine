@@ -94,11 +94,11 @@ class SubprocessCriticExecutor:
     def from_env(cls, env_var: str = CRITIC_CMD_ENV) -> SubprocessCriticExecutor | None:
         """Исполнитель из env TERRALOGIC_CRITIC_CMD; пусто → None (отключён).
 
-        Продовая конфигурация — wrapper `scripts/hermes-critic.sh`
+        Продовая конфигурация — wrapper `scripts/hermes-qa.sh`
         (Hermes + локальная gemma3:12b, профиль ~/.hermes-critic без tools:
         модель их не поддерживает, а критику они и не нужны):
 
-            TERRALOGIC_CRITIC_CMD="/path/to/terralogic-engine/scripts/hermes-critic.sh"
+            TERRALOGIC_CRITIC_CMD="/path/to/terralogic-engine/scripts/hermes-qa.sh"
         """
         raw = os.environ.get(env_var, "").strip()
         if not raw:

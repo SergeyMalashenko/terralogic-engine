@@ -150,10 +150,23 @@ qa/                     Report QA (§61–76 ТЗ): проверка отчёт�
                           === CRITIC_RESULT ===, fail-safe — любой сбой →
                           warning, отчёт сохраняется (§77). Конфигурация —
                           env TERRALOGIC_CRITIC_CMD — продовый вариант:
-                          `scripts/hermes-critic.sh` (Hermes + локальная
+                          `scripts/hermes-qa.sh` (Hermes + локальная
                           gemma3:12b, профиль ~/.hermes-critic без tools).
                           Без env критик отключён.
                           Итоги — артефакт quickreport-{run}-qa.md в CaseStore.
+
+Два профиля Hermes (ТЗ §43–45, §65–66):
+
+    ~/.hermes-discovery   Документный контур (geodocs): Qwen + tools
+                          (MCP порталов, веб-поиск Firecrawl). Источник
+                          для harness'а geodocs; переопределяется env
+                          GEODOCS_HERMES_HOME.
+    ~/.hermes-critic      Report QA (критик и writer): gemma3:12b, все
+                          toolsets отключены — модель не поддерживает
+                          tools в Ollama, а ролям QA они не нужны
+                          (read-only по построению). Вызывается через
+                          scripts/hermes-qa.sh (env TERRALOGIC_CRITIC_CMD /
+                          TERRALOGIC_WRITER_CMD).
 
 quickreport/writer.py   Bounded narrative writer (§62–63, §74 ТЗ): опциональный
                         LLM-этап поверх QuickReportModel — переформулирует
@@ -163,9 +176,10 @@ quickreport/writer.py   Bounded narrative writer (§62–63, §74 ТЗ): опц�
                         числа, запрещённые фразы, длина, rule_id); битое поле →
                         детерминированный fallback. Протокол === NARRATIVE_RESULT
                         ===, один retry, fail-safe. Конфигурация — env
-                        TERRALOGIC_WRITER_CMD (тот же scripts/hermes-critic.sh). Targeted revision (§74): при
-                        needs_revision критика — один раунд по затронутым
-                        секциям; принимается только при pass валидатора.
+                        TERRALOGIC_WRITER_CMD (тот же scripts/hermes-qa.sh).
+                        Targeted revision (§74): при needs_revision критика —
+                        один раунд по затронутым секциям; принимается только
+                        при pass валидатора.
 
 mcp.py                  FastMCP-сервер `terralogic-mcp` :8004, два инструмента:
                         terralogic_prepare_case(cadastral_number, case_id?,
