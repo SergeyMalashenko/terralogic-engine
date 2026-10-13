@@ -10,9 +10,11 @@ from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
 from terralogic_engine.analytics.pipeline import AnalysisPipeline
 from terralogic_engine.domain.models import CollectionRequest, RefreshPolicy
 from terralogic_engine.quickreport import (
+    MarketingConfig,
     QuickReportContext,
     QuickReportResult,
     build_quick_context,
+    load_marketing,
     methodology_sha256,
     render_quickreport,
 )
@@ -55,11 +57,14 @@ class ReportingService:
         acquisition: AcquisitionPipeline,
         template_registry: ReportTemplateRegistry | None = None,
         tile_fetcher: Callable[[int, int, int, float], bytes | None] | None = None,
+        marketing: MarketingConfig | None = None,
     ) -> None:
         self.store = store
         self.acquisition = acquisition
         self.template_registry = template_registry or create_default_template_registry()
         self.tile_fetcher = tile_fetcher
+        # Коммерческий блок отчёта: статическая конфигурация, не из LLM.
+        self._marketing = marketing if marketing is not None else load_marketing()
 
     async def prepare_case(
         self,
@@ -139,7 +144,9 @@ class ReportingService:
             case_id, context
         )
         context.warnings.extend(map_warnings)
-        markdown = render_quickreport(context, map_lines=map_lines)
+        markdown = render_quickreport(
+            context, map_lines=map_lines, marketing=self._marketing
+        )
         pdf_relative_path, pdf_warnings = self._build_quick_pdf(
             case_id, context, markdown
         )

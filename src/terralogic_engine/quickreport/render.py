@@ -1,33 +1,34 @@
-"""Детерминированный рендер QuickReportContext в Markdown.
+"""Детерминированный рендер QuickReportModel в Markdown.
 
-Структура документа повторяет образец QuickReport.docx без маркетинговых
-блоков: заголовок с датами и версией методики, вердикт, таблица факторов,
-паспорт участка, окружение с блоком коммуникаций, раздел карты (PNG-схема
-из ``mapimg`` либо заглушка) и статический дисклеймер ограничений отчёта.
-Новых зависимостей нет — чистая сборка строк; LLM в генерации не участвует.
+Продуктовая структура отчёта (§23 ТЗ): заголовок с датами и версией
+методики, вердикт, «Что уже удалось установить», таблица факторов,
+паспорт участка, территориальная зона, окружение с коммуникациями,
+«Что ещё нужно проверить», схема расположения зон (PNG из ``mapimg``
+либо заглушка), статический дисклеймер и коммерческий «Следующий шаг»
+(только из MarketingConfig). Новых зависимостей нет — чистая сборка
+строк; LLM в генерации не участвует.
+
+Публичный ``render_quickreport(context, ...)`` сохранён как фасад:
+``build_quick_model`` → рендер модели (§78–79 ТЗ).
 """
 
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+from .model import QuickMarketing, QuickReportModel, build_quick_model
 from .models import (
     QuickFactor,
+    QuickMissingItem,
     QuickPassport,
     QuickReportContext,
     QuickVerdict,
+    QuickZoneRegulations,
     QuickZoneUse,
 )
+from .rules import MarketingConfig
 
 SCORE_SCALE = 100
-
-_DISCLAIMER = (
-    "Отчёт подготовлен по данным публичных источников. Полнота и актуальность "
-    "сведений зависят от организаций, которые ведут и обновляют эти источники, "
-    "и находятся вне контроля TerraLogicX. Отчёт содержит результаты "
-    "предварительного анализа и не заменяет юридическое, кадастровое или "
-    "градостроительное заключение."
-)
 
 _MAP_PLACEHOLDER = "Схема расположения зон приводится в подробном заключении."
 
@@ -35,6 +36,10 @@ _NO_FACTORS_NOTE = (
     "По собранным данным зоны с особыми условиями использования территории "
     "на участок не попадают."
 )
+
+_NO_MISSING_NOTE = "Пробелов в собранных данных не выявлено."
+
+_NO_FACTS_NOTE = "Подтверждённых сведений в собранных источниках нет."
 
 
 def _format_date(value: date) -> str:
@@ -96,8 +101,7 @@ def _permitted_use_display(parcel: QuickPassport) -> str | None:
     return f"{text} · {suffix}" if text else suffix
 
 
-def _passport_lines(context: QuickReportContext) -> list[str]:
-    parcel = context.parcel
+def _passport_lines(parcel: QuickPassport) -> list[str]:
     status_area = " · ".join(
         part for part in (parcel.status, _format_area(parcel.area_m2)) if part
     )
@@ -112,19 +116,23 @@ def _passport_lines(context: QuickReportContext) -> list[str]:
     return [f"- **{label}:** {value or 'нет данных'}" for label, value in rows]
 
 
-def _surroundings_lines(context: QuickReportContext) -> list[str]:
-    lines = ["Справочно: расстояния по прямой, не по маршруту.", ""]
-    if context.surroundings.lines:
-        lines.extend(f"- {line}" for line in context.surroundings.lines)
+def _surroundings_lines(model: QuickReportModel) -> list[str]:
+    surroundings = model.environment
+    if surroundings.distance_kind == "straight_line":
+        lines = ["Справочно: расстояния по прямой, не по маршруту.", ""]
+    else:
+        lines = [f"Справочно: расстояния — {surroundings.distance_kind}.", ""]
+    if surroundings.lines:
+        lines.extend(f"- {line}" for line in surroundings.lines)
     else:
         lines.append("Данных об окружении в собранных источниках нет.")
-    if context.surroundings.communications_note:
+    if surroundings.communications_note:
         lines.extend(
             [
                 "",
                 "### Коммуникации",
                 "",
-                context.surroundings.communications_note,
+                surroundings.communications_note,
             ]
         )
     return lines
@@ -158,8 +166,7 @@ def _zone_use_line(use: QuickZoneUse) -> str:
     return f"- **{_cell(head)}**{suffix}"
 
 
-def _zone_regulations_lines(context: QuickReportContext) -> list[str]:
-    regulations = context.zone_regulations
+def _zone_regulations_lines(regulations: QuickZoneRegulations | None) -> list[str]:
     if regulations is None:
         return [
             (
@@ -222,20 +229,55 @@ def _verdict_lines(verdict: QuickVerdict) -> list[str]:
     return lines
 
 
-def render_quickreport(
-    context: QuickReportContext,
+def _established_lines(facts: list[str]) -> list[str]:
+    if not facts:
+        return [_NO_FACTS_NOTE]
+    return [f"- {fact}" for fact in facts]
+
+
+def _missing_lines(items: list[QuickMissingItem]) -> list[str]:
+    if not items:
+        return [_NO_MISSING_NOTE]
+    return [f"- {item.text}" for item in items]
+
+
+def _marketing_lines(marketing: QuickMarketing) -> list[str]:
+    lines: list[str] = []
+    for service in marketing.services:
+        if service.price_rub is not None:
+            price = f"{_format_number(service.price_rub)} ₽"
+            if service.credit_rub:
+                price += (
+                    f" (с учётом экспресс-отчёта — "
+                    f"{_format_number(service.price_rub - service.credit_rub)} ₽)"
+                )
+        elif service.price_from_rub is not None:
+            price = f"от {_format_number(service.price_from_rub)} ₽"
+        else:
+            price = "цена по запросу"
+        line = f"- **{_cell(service.name)}** — {price}."
+        if service.description:
+            line += f" {_cell(service.description)}"
+        lines.append(line)
+    if marketing.cta:
+        lines.extend(["", marketing.cta])
+    return lines
+
+
+def render_quick_model(
+    model: QuickReportModel,
     *,
     today: date | None = None,
     map_lines: list[str] | None = None,
+    zone_regulations: QuickZoneRegulations | None = None,
 ) -> str:
-    """Собирает Markdown QuickReport; дата отчёта — today (по умолчанию сегодня).
+    """Собирает Markdown из продуктовой модели; дата — today (по умолч. сегодня).
 
     ``map_lines`` — готовые строки раздела «Схема расположения зон»
     (ссылка на PNG + подпись); без них выводится статическая заглушка.
     """
     report_date = today or datetime.now(UTC).date()
-    parcel = context.parcel
-    verdict = context.verdict
+    identity = model.identity
 
     lines = [
         "# Экспресс-оценка земельного участка",
@@ -244,30 +286,38 @@ def render_quickreport(
         "",
         (
             f"Отчёт от {_format_date(report_date)} · "
-            f"Данные от {_format_date(context.collected_at.date())} · "
-            f"Методика оценки — версия {context.methodology_version}"
+            f"Данные от {_format_date(identity.collected_at.date())} · "
+            f"Методика оценки — версия {identity.methodology_version}"
         ),
         "",
-        f"**Кадастровый номер {parcel.cadastral_number}**"
-        + (f" | {parcel.address}" if parcel.address else ""),
+        f"**Кадастровый номер {identity.cadastral_number}**"
+        + (f" | {identity.address}" if identity.address else ""),
         "",
-        *_verdict_lines(verdict),
+        *_verdict_lines(model.status),
+        "",
+        "## Что уже удалось установить",
+        "",
+        *_established_lines(model.established_facts),
         "",
         "## Факторы, требующие внимания",
         "",
-        *_factors_table(context.factors),
+        *_factors_table(model.attention_factors),
         "",
         "## Паспорт участка",
         "",
-        *_passport_lines(context),
+        *_passport_lines(model.parcel_passport),
         "",
         "## Территориальная зона и разрешённое использование",
         "",
-        *_zone_regulations_lines(context),
+        *_zone_regulations_lines(zone_regulations),
         "",
         "## Окружение",
         "",
-        *_surroundings_lines(context),
+        *_surroundings_lines(model),
+        "",
+        "## Что ещё нужно проверить",
+        "",
+        *_missing_lines(model.missing_information),
         "",
         "## Схема расположения зон",
         "",
@@ -275,7 +325,33 @@ def render_quickreport(
         "",
         "## Ограничения отчёта",
         "",
-        _DISCLAIMER,
+        model.limitations,
         "",
     ]
+    if model.marketing is not None:
+        lines.extend(
+            [
+                "## Следующий шаг",
+                "",
+                *_marketing_lines(model.marketing),
+                "",
+            ]
+        )
     return "\n".join(lines)
+
+
+def render_quickreport(
+    context: QuickReportContext,
+    *,
+    today: date | None = None,
+    map_lines: list[str] | None = None,
+    marketing: MarketingConfig | None = None,
+) -> str:
+    """Фасад обратной совместимости: контекст → модель → Markdown."""
+    model = build_quick_model(context, marketing=marketing)
+    return render_quick_model(
+        model,
+        today=today,
+        map_lines=map_lines,
+        zone_regulations=context.zone_regulations,
+    )

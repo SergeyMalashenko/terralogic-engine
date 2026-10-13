@@ -21,6 +21,7 @@ from terralogic_engine.store.base import CaseStore
 from .geometry import ConfigurationOutcome, evaluate_configuration
 from .models import (
     QuickFactor,
+    QuickMissingItem,
     QuickPassport,
     QuickProtocol,
     QuickProtocolArea,
@@ -43,6 +44,7 @@ from .rules import (
     VerdictResult,
     ZoneGuidance,
     compute_verdict,
+    load_missing_texts,
     load_scoring_rules,
     load_zone_guidance,
     match_guidance,
@@ -697,6 +699,11 @@ def _passport(base: ReportContext) -> QuickPassport:
         land_category=parcel.land_category,
         permitted_use=parcel.permitted_use,
         vri=parcel.permitted_use_vri,
+        vri_origin=(
+            "LEGAL"
+            if parcel.permitted_use_vri is not None
+            else ("SOURCE" if parcel.permitted_use else None)
+        ),
         territorial_zone=territorial_zone,
         cadastral_value_rub=parcel.cadastral_value_rub,
     )
@@ -721,6 +728,53 @@ def _surroundings(base: ReportContext, guidance: ZoneGuidance) -> QuickSurroundi
         lines=lines,
         communications_note=guidance.misc.get("communications"),
     )
+
+
+_COMM_MISSING_KEYS = {
+    "electricity": "comm_electricity",
+    "water": "comm_water",
+    "sewage": "comm_sewage",
+}
+
+
+def _missing_items(
+    *,
+    rules: ScoringRules,
+    texts: dict[str, str],
+    protocol_comms: list[QuickProtocolComm] | None,
+    geometry_checked: bool,
+    zoning_known: bool,
+    area_status: str | None,
+) -> list[QuickMissingItem]:
+    """Детерминированная сборка пробелов evidence (§34 ТЗ).
+
+    Источник — отсутствие данных/проверок, а не LLM: неизвестные вопросы
+    коммуникаций (п. 4.2), невыполненный геометрический тест, отсутствие
+    сведений о зонировании и регламента ПЗЗ, непроверенный подъезд.
+    """
+    items: list[QuickMissingItem] = []
+
+    def _add(key: str) -> None:
+        text = texts.get(key)
+        if text:
+            items.append(QuickMissingItem(key=key, text=text))
+
+    comm_states = (
+        {comm.question: comm.state for comm in protocol_comms}
+        if protocol_comms is not None
+        else {question: "неизвестно" for question in rules.comm_weights}
+    )
+    for question in rules.comm_weights:
+        if comm_states.get(question) == "неизвестно":
+            _add(_COMM_MISSING_KEYS.get(question, f"comm_{question}"))
+    if not geometry_checked:
+        _add("geometry_unknown")
+    if not zoning_known:
+        _add("no_zoning")
+    if area_status == "no_regulations":
+        _add("pzz_missing")
+    _add("access_unchecked")  # методика 6.1: подъезд — пробел без вычета
+    return items
 
 
 def build_quick_context_from_report(
@@ -801,6 +855,14 @@ def build_quick_context_from_report(
         target_prefix=prefix,
         verdict_result=verdict_result,
     )
+    missing = _missing_items(
+        rules=rules,
+        texts=load_missing_texts(),
+        protocol_comms=protocol.communications,
+        geometry_checked=configuration is not None,
+        zoning_known=zoning_known,
+        area_status=area_info.status if area_info is not None else None,
+    )
     return QuickReportContext(
         case_id=base.case_id,
         collection_run_id=base.collection_run_id,
@@ -820,6 +882,7 @@ def build_quick_context_from_report(
         factors=factors,
         zone_regulations=regulations,
         surroundings=_surroundings(base, guidance),
+        missing=missing,
         warnings=warnings,
         protocol=protocol,
     )

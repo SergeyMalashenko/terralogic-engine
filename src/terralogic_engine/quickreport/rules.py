@@ -27,6 +27,11 @@ def methodology_sha256() -> str:
     return digest.hexdigest()
 
 
+def marketing_sha256() -> str:
+    """Отпечаток коммерческого блока (marketing.yaml); в методику не входит."""
+    return hashlib.sha256((_ASSETS / "marketing.yaml").read_bytes()).hexdigest()
+
+
 class QuickRulesError(ValueError):
     """Битый или несогласованный yaml-актив quickreport."""
 
@@ -497,3 +502,80 @@ def compute_verdict(
         groups=groups,
         notes=tuple(notes),
     )
+
+
+# ---------------------------------------------------------------------------
+# Тексты блока «Что ещё нужно проверить» (missing_texts.yaml)
+# ---------------------------------------------------------------------------
+
+
+def load_missing_texts(path: Path | None = None) -> dict[str, str]:
+    """Загружает missing_texts.yaml; без path — пакетный актив."""
+    raw = _load_yaml(path or _ASSETS / "missing_texts.yaml")
+    return {str(key): str(value).strip() for key, value in raw.items()}
+
+
+# ---------------------------------------------------------------------------
+# Коммерческий блок (marketing.yaml) — §37–39 ТЗ
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MarketingService:
+    """Одна коммерческая услуга next-step блока."""
+
+    key: str
+    name: str
+    description: str
+    price_rub: int | None = None
+    price_from_rub: int | None = None
+    credit_rub: int | None = None
+
+
+@dataclass(frozen=True)
+class MarketingConfig:
+    """Статическая коммерческая конфигурация QuickReport.
+
+    Цены и CTA — только отсюда; LLM их не генерирует (§39 ТЗ).
+    """
+
+    report_title: str
+    services: tuple[MarketingService, ...]
+    cta: str
+    sha256: str
+
+
+def load_marketing(path: Path | None = None) -> MarketingConfig:
+    """Загружает marketing.yaml; без path — пакетный актив."""
+    asset = path or _ASSETS / "marketing.yaml"
+    raw = _load_yaml(asset)
+    try:
+        services = tuple(
+            MarketingService(
+                key=str(item["key"]),
+                name=str(item["name"]),
+                description=str(item.get("description") or "").strip(),
+                price_rub=(
+                    int(item["price_rub"]) if item.get("price_rub") is not None else None
+                ),
+                price_from_rub=(
+                    int(item["price_from_rub"])
+                    if item.get("price_from_rub") is not None
+                    else None
+                ),
+                credit_rub=(
+                    int(item["credit_rub"])
+                    if item.get("credit_rub") is not None
+                    else None
+                ),
+            )
+            for item in raw["services"]
+        )
+        return MarketingConfig(
+            report_title=str(raw["report_title"]),
+            services=services,
+            cta=str(raw["cta"]).strip(),
+            sha256=hashlib.sha256(asset.read_bytes()).hexdigest(),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise QuickRulesError(f"marketing.yaml: битая структура: {exc}") from exc

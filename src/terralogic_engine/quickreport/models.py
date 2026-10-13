@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from terralogic_engine.reporting.models import VriReportContext
+
+# Происхождение значения (§41 ТЗ): лёгкая разметка, без тяжёлой системы типов.
+FactOrigin = Literal["SOURCE", "DERIVED", "DOCUMENT", "LEGAL", "STATIC"]
+# Семантическое состояние данных и выводов QuickReport (§21 ТЗ).
+FactState = Literal["KNOWN", "DERIVED", "TO_VERIFY"]
 
 
 class QuickFactor(BaseModel):
@@ -20,6 +26,11 @@ class QuickFactor(BaseModel):
     guidance: str
     action: str | None = None
     informational: bool = False
+    # Происхождение колонок (§28–31 ТЗ): наименование ограничения — факт
+    # источника, охват — вычисленный GIS-факт, смысл — статический справочник.
+    restriction_origin: FactOrigin = "SOURCE"
+    coverage_origin: FactOrigin = "DERIVED"
+    meaning_origin: FactOrigin = "STATIC"
 
 
 class QuickVerdict(BaseModel):
@@ -45,6 +56,8 @@ class QuickPassport(BaseModel):
     land_category: str | None = None
     permitted_use: str | None = None
     vri: VriReportContext | None = None  # канонический ВРИ (П/0412)
+    # LEGAL — ВРИ обогащён классификатором; SOURCE — только текст источника.
+    vri_origin: FactOrigin | None = None
     territorial_zone: str | None = None
     cadastral_value_rub: float | None = None
 
@@ -54,6 +67,8 @@ class QuickSurroundings(BaseModel):
 
     lines: list[str] = Field(default_factory=list)
     communications_note: str | None = None
+    # Способ измерения расстояний (§33 ТЗ): маршрут не проверялся.
+    distance_kind: str = "straight_line"
 
 
 class QuickZoneUse(BaseModel):
@@ -77,6 +92,15 @@ class QuickZoneRegulations(BaseModel):
     housing_uses: list[QuickZoneUse] = Field(default_factory=list)
 
 
+class QuickMissingItem(BaseModel):
+    """Один пробел evidence (§34 ТЗ): что не установлено и требует проверки."""
+
+    key: str
+    text: str
+    state: FactState = "TO_VERIFY"
+    origin: FactOrigin = "DERIVED"
+
+
 class QuickReportContext(BaseModel):
     """Полный контекст QuickReport: паспорт, вердикт, факторы, окружение."""
 
@@ -89,6 +113,7 @@ class QuickReportContext(BaseModel):
     factors: list[QuickFactor] = Field(default_factory=list)
     zone_regulations: QuickZoneRegulations | None = None
     surroundings: QuickSurroundings
+    missing: list[QuickMissingItem] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     protocol: "QuickProtocol | None" = None
 

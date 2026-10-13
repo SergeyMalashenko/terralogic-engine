@@ -667,9 +667,16 @@ def test_render_quickreport_structure(rules, guidance):
         in markdown
     )
     assert markdown.endswith("\n")
-    # маркетинговых блоков образца нет
+    # маркетинговых блоков без MarketingConfig нет
     assert "Заключение»" not in markdown
-    assert "Подбор" not in markdown
+    assert "## Следующий шаг" not in markdown
+    # новые продуктовые секции (§23 ТЗ): установленные факты и пробелы данных
+    assert "## Что уже удалось установить" in markdown
+    assert "- Вид разрешённого использования: ИЖС" in markdown
+    assert "- Водоохранная зона: практически весь участок (100%)" in markdown
+    assert "## Что ещё нужно проверить" in markdown
+    assert "Сведения об электроснабжении участка не установлены" in markdown
+    assert "Фактический подъезд к участку не проверен" in markdown
 
 
 def test_render_quickreport_without_zones(rules, guidance):
