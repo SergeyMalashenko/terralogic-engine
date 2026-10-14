@@ -70,10 +70,9 @@ def test_render_overview_map_with_fake_tiles(tmp_path) -> None:
     assert result.layer_labels == ["Водоохранная зона"]
     assert result.warnings == []
     image = Image.open(out)
-    # кадрирование до «габарит участка + половина прежнего отступа»:
-    # полный кадр на zoom 19 — 2237 px, габарит участка — 1118 px,
-    # сторона итога = 1118 + (1800 − 1118) / 2 = 1459
-    assert image.size == (1459, 1459)
+    # кадр 3× минимальной стороны на zoom 19 — ~3355 px ≥ холста 1800,
+    # кадрирование не требуется
+    assert image.size == (1800, 1800)
     # участок по центру: в центральной области должны найтись
     # красноватые пиксели штриховки
     center = image.width // 2
@@ -272,15 +271,15 @@ def test_viewport_projects_bbox_center_to_image_center() -> None:
     assert 3 <= viewport.zoom <= 19
 
 
-def test_square_frame_doubles_long_side() -> None:
+def test_square_frame_triples_long_side() -> None:
     bbox = (37.30, 55.85, 37.31, 55.851)  # 0.010 x 0.001
     frame = mapimg._square_frame(bbox)
     assert frame == pytest.approx(
-        (37.295, 55.8405, 37.315, 55.8605)
-    )  # сторона 0.020, центр сохранён
+        (37.290, 55.8355, 37.320, 55.8655)
+    )  # сторона 0.030, центр сохранён
     # вырожденный bbox поднимается до минимальной стороны
     tiny = mapimg._square_frame((37.3, 55.85, 37.3, 55.85))
-    assert (tiny[2] - tiny[0]) == pytest.approx(2 * mapimg._MIN_FRAME_SIDE_DEG)
+    assert (tiny[2] - tiny[0]) == pytest.approx(3 * mapimg._MIN_FRAME_SIDE_DEG)
 
 
 def test_geometry_bbox_handles_multipolygon() -> None:
