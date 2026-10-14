@@ -70,9 +70,9 @@ def test_render_overview_map_with_fake_tiles(tmp_path) -> None:
     assert result.layer_labels == ["Водоохранная зона"]
     assert result.warnings == []
     image = Image.open(out)
-    # кадр 3× минимальной стороны на zoom 19 — ~3355 px ≥ холста 1800,
-    # кадрирование не требуется
-    assert image.size == (1800, 1800)
+    # S ≈ 62.5 м (0.001° долготы на широте 55.85) → кадр 3*S ≈ 187 м,
+    # на zoom 19 (≈0.168 м/px) это ~1118 px — изображение равно кадру
+    assert image.size == (1118, 1118)
     # участок по центру: в центральной области должны найтись
     # красноватые пиксели штриховки
     center = image.width // 2
@@ -262,24 +262,23 @@ def test_select_visible_layers_drops_region_covering_zones() -> None:
 def test_viewport_projects_bbox_center_to_image_center() -> None:
     bbox = mapimg._geometry_bbox(PARCEL)
     assert bbox is not None
-    viewport = mapimg._Viewport(bbox, 1200, 800)
     cx = (bbox[0] + bbox[2]) / 2
     cy = (bbox[1] + bbox[3]) / 2
+    viewport = mapimg._Viewport(cx, cy, mapimg._parcel_side_m(bbox), 1200, 800)
     px, py = viewport.project(cx, cy)
     assert abs(px - 600) < 1
     assert abs(py - 400) < 1
     assert 3 <= viewport.zoom <= 19
 
 
-def test_square_frame_triples_long_side() -> None:
-    bbox = (37.30, 55.85, 37.31, 55.851)  # 0.010 x 0.001
-    frame = mapimg._square_frame(bbox)
-    assert frame == pytest.approx(
-        (37.290, 55.8355, 37.320, 55.8655)
-    )  # сторона 0.030, центр сохранён
+def test_parcel_side_m_uses_ground_meters() -> None:
+    # 0.001° долготы на широте 55.85 ≈ 62.5 м; 0.0004° широты ≈ 44.5 м
+    bbox = (37.30, 55.85, 37.301, 55.8504)
+    assert mapimg._parcel_side_m(bbox) == pytest.approx(62.5, abs=0.5)
     # вырожденный bbox поднимается до минимальной стороны
-    tiny = mapimg._square_frame((37.3, 55.85, 37.3, 55.85))
-    assert (tiny[2] - tiny[0]) == pytest.approx(3 * mapimg._MIN_FRAME_SIDE_DEG)
+    assert (
+        mapimg._parcel_side_m((37.3, 55.85, 37.3, 55.85)) == mapimg._MIN_FRAME_SIDE_M
+    )
 
 
 def test_geometry_bbox_handles_multipolygon() -> None:

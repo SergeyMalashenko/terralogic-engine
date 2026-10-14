@@ -28,10 +28,17 @@ MIN_ZOOM = 3
 MAX_ZOOM = 19
 MISSING_TILE_COLOR = (232, 232, 228)
 
-# минимальная сторона кадра (~250–330 м в зависимости от широты),
-# чтобы крошечный участок не превращал карту в квадрат тайла
-_MIN_FRAME_SIDE_DEG = 0.003
+# метров в градусе на сфере Web-Mercator (экватор); градус долготы
+# дополнительно сжимается на cos(широты)
+_METERS_PER_DEGREE = 40075016.686 / 360
+# минимальная сторона минимального квадрата участка — защита от
+# вырожденной геометрии (точка), чтобы кадр не схлопнулся в ноль
+_MIN_FRAME_SIDE_M = 12.0
 _FRAME_FACTOR = 3.0
+# минимальная сторона итогового изображения: для крошечных участков
+# кадр 3*S на MAX_ZOOM даёт мало пикселей, а легенда/подпись при этом
+# становятся нечитаемыми — тогда видимая область чуть шире 3*S
+_MIN_OUTPUT_SIDE_PX = 900
 
 _MAX_FULL_COVERAGE_PERCENT = 99.0
 
@@ -271,21 +278,20 @@ def select_visible_layers(
     return result
 
 
-def _square_frame(
-    bbox: tuple[float, float, float, float], factor: float = _FRAME_FACTOR
-) -> tuple[float, float, float, float]:
-    """Квадратный кадр: bbox → квадрат по длинной стороне → factor× от центра."""
+def _parcel_side_m(bbox: tuple[float, float, float, float]) -> float:
+    """Сторона минимального квадрата вокруг участка в метрах.
+
+    Длинная сторона bbox переводится в метры на сфере Web-Mercator
+    (градус долготы сжимается на cos широты). Минимум
+    ``_MIN_FRAME_SIDE_M`` — защита от вырожденной геометрии (точка).
+    """
     min_lon, min_lat, max_lon, max_lat = bbox
-    side = max(max_lon - min_lon, max_lat - min_lat, _MIN_FRAME_SIDE_DEG)
-    center_lon = (min_lon + max_lon) / 2
     center_lat = (min_lat + max_lat) / 2
-    half = side * factor / 2
-    return (
-        center_lon - half,
-        center_lat - half,
-        center_lon + half,
-        center_lat + half,
+    width_m = (
+        (max_lon - min_lon) * _METERS_PER_DEGREE * math.cos(math.radians(center_lat))
     )
+    height_m = (max_lat - min_lat) * _METERS_PER_DEGREE
+    return max(width_m, height_m, _MIN_FRAME_SIDE_M)
 
 
 def _mercator(lon: float, lat: float) -> tuple[float, float]:
@@ -298,47 +304,73 @@ def _mercator(lon: float, lat: float) -> tuple[float, float]:
 
 
 class _Viewport:
-    """Проекция lon/lat → пикселы изображения для фиксированного zoom."""
+    """Проекция lon/lat → пикселы изображения для фиксированного zoom.
+
+    Кадр — квадрат на местности со стороной ``_FRAME_FACTOR * side_m``,
+    центр — ``(center_lon, center_lat)``. Web-Mercator даёт одинаковый
+    масштаб м/px по обеим осям, поэтому кадр квадратный и в пикселях.
+    """
 
     def __init__(
-        self, bbox: tuple[float, float, float, float], width: int, height: int
+        self,
+        center_lon: float,
+        center_lat: float,
+        side_m: float,
+        width: int,
+        height: int,
     ):
         self.width = width
         self.height = height
-        min_lon, min_lat, max_lon, max_lat = bbox
-        x0, y1 = _mercator(min_lon, min_lat)
-        x1, y0 = _mercator(max_lon, max_lat)
-        self.center_x = (x0 + x1) / 2
-        self.center_y = (y0 + y1) / 2
-        self.zoom = self._fit_zoom(x1 - x0, y1 - y0, width, height)
+        self.side_m = side_m
+        self.center_lat = center_lat
+        self.center_x, self.center_y = _mercator(center_lon, center_lat)
+        self.zoom = self._fit_zoom(side_m, width, height, center_lat)
         scale = TILE_SIZE * (2**self.zoom)
         self.origin_x = self.center_x * scale - width / 2
         self.origin_y = self.center_y * scale - height / 2
-        self.center_lat = (min_lat + max_lat) / 2
-        self.bbox = bbox
 
     @staticmethod
-    def _fit_zoom(span_x: float, span_y: float, width: int, height: int) -> int:
-        """Минимальный zoom, при котором кадр bbox покрывает холст целиком.
+    def _m_per_pixel(lat: float, zoom: int) -> float:
+        return 156543.03392 * math.cos(math.radians(lat)) / (2**zoom)
 
-        Излишек затем срезается кадрированием — итоговое изображение
-        гарантированно лежит внутри кадра bbox.
+    @classmethod
+    def _fit_zoom(cls, side_m: float, width: int, height: int, lat: float) -> int:
+        """Максимальный zoom, при котором кадр 3*S целиком помещается в холст.
+
+        После кадрирования до кадра видимая область в точности равна
+        кадру (правило 3*S). Для гигантских участков, чей кадр не
+        помещается в холст даже на MIN_ZOOM, — минимальный zoom,
+        покрывающий кадр (видимая область меньше кадра).
         """
+        canvas = min(width, height)
+        best: int | None = None
         for candidate in range(MIN_ZOOM, MAX_ZOOM + 1):
-            scale = TILE_SIZE * (2**candidate)
-            if span_x * scale >= width and span_y * scale >= height:
+            if _FRAME_FACTOR * side_m / cls._m_per_pixel(lat, candidate) <= canvas:
+                best = candidate
+            else:
+                break
+        if best is not None:
+            return best
+        for candidate in range(MIN_ZOOM, MAX_ZOOM + 1):
+            if _FRAME_FACTOR * side_m / cls._m_per_pixel(lat, candidate) >= canvas:
                 return candidate
         return MAX_ZOOM
 
     def crop_box(self) -> tuple[int, int, int, int] | None:
-        """Квадратный кадрирующий прямоугольник: пересечение холста с bbox."""
-        scale = TILE_SIZE * (2**self.zoom)
-        min_lon, min_lat, max_lon, max_lat = self.bbox
-        x0, y1 = _mercator(min_lon, min_lat)
-        x1, y0 = _mercator(max_lon, max_lat)
-        span_w = (x1 - x0) * scale
-        span_h = (y1 - y0) * scale
-        side = math.floor(min(self.width, self.height, span_w, span_h))
+        """Квадратный кадрирующий прямоугольник под кадр 3*S.
+
+        Zoom подобран так, что кадр помещается в холст, поэтому после
+        кадрирования видна ровно область 3*S. Исключения: крошечный
+        участок (кадр меньше ``_MIN_OUTPUT_SIDE_PX`` — изображение
+        поднимается до минимального размера, видимая область шире 3*S)
+        и гигантский участок (кадр больше холста — видна центральная
+        часть кадра).
+        """
+        frame_px = (
+            _FRAME_FACTOR * self.side_m / self._m_per_pixel(self.center_lat, self.zoom)
+        )
+        side = math.floor(min(self.width, self.height, frame_px))
+        side = max(side, min(_MIN_OUTPUT_SIDE_PX, self.width, self.height))
         if side >= min(self.width, self.height):
             return None
         left = round((self.width - side) / 2)
@@ -351,7 +383,7 @@ class _Viewport:
         return (x * scale - self.origin_x, y * scale - self.origin_y)
 
     def meters_per_pixel(self) -> float:
-        return 156543.03392 * math.cos(math.radians(self.center_lat)) / (2**self.zoom)
+        return self._m_per_pixel(self.center_lat, self.zoom)
 
 
 def _default_fetch_tile(z: int, x: int, y: int, timeout: float) -> bytes | None:
@@ -745,11 +777,14 @@ def render_overview_map(
 ) -> MapImageResult:
     """Рисует квадратную PNG-карту: подложка OSM + зоны + участок.
 
-    Кадр: bbox участка приводится к квадрату по длинной стороне и
-    увеличивается втрое от центра (отступ в каждую сторону равен стороне
-    квадрата участка) — участок всегда по центру изображения,
-    а итоговая картинка гарантированно лежит внутри этого кадра
-    (излишек срезается кадрированием после подбора целочисленного zoom).
+    Кадр: участок вписывается в минимальный квадрат со стороной S
+    (длинная сторона bbox, в метрах на местности), кадр расширяется на
+    S в каждую из четырёх сторон — итоговый кадр 3*S на местности.
+    Zoom подбирается максимальный, при котором кадр помещается в холст,
+    затем изображение кадрируется до кадра: видимая область в точности
+    3*S, участок всегда по центру. Сторона итогового PNG поэтому равна
+    размеру кадра в пикселях и зависит от участка (но не меньше
+    ``_MIN_OUTPUT_SIDE_PX`` — тогда видимая область чуть шире 3*S).
     Зоны, выходящие за кадр, просто обрезаются его границами.
     Карта всегда севером вверх (подложка Web-Mercator). ``parcel_label``
     (кадастровый номер, площадь) подписывается над верхней гранью участка.
@@ -764,7 +799,12 @@ def render_overview_map(
     parcel_bbox = _geometry_bbox(parcel_geometry)
     if parcel_bbox is None:
         raise ValueError("parcel geometry has no coordinates")
-    viewport = _Viewport(_square_frame(parcel_bbox), *size)
+    viewport = _Viewport(
+        (parcel_bbox[0] + parcel_bbox[2]) / 2,
+        (parcel_bbox[1] + parcel_bbox[3]) / 2,
+        _parcel_side_m(parcel_bbox),
+        *size,
+    )
 
     base, requested, fetched = _compose_basemap(
         viewport, cache_dir=cache_dir, fetch_tile=fetcher, timeout=timeout
