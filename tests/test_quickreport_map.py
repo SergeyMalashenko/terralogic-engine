@@ -70,7 +70,10 @@ def test_render_overview_map_with_fake_tiles(tmp_path) -> None:
     assert result.layer_labels == ["Водоохранная зона"]
     assert result.warnings == []
     image = Image.open(out)
-    assert image.size == (1800, 1800)  # квадрат, ширина не менее 1800
+    # кадрирование до «габарит участка + половина прежнего отступа»:
+    # полный кадр на zoom 19 — 2237 px, габарит участка — 1118 px,
+    # сторона итога = 1118 + (1800 − 1118) / 2 = 1459
+    assert image.size == (1459, 1459)
     # участок по центру: в центральной области должны найтись
     # красноватые пиксели штриховки
     center = image.width // 2
