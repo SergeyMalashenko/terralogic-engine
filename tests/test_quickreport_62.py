@@ -424,6 +424,27 @@ def test_62_validator_passes_consistent_q30_report(rules, guidance, catalog):
     assert result.status == "pass", [i.message for i in result.issues]
 
 
+def test_62_validator_q30_without_score_is_fine(rules, guidance, catalog):
+    """Q в протоколе при невыданном балле (BLOCKING_UNKNOWN) — не ошибка (§2 > §8)."""
+    from terralogic_engine.reporting.models import UrbanPlanningReportContext
+
+    base = _base_with(
+        [_zouit("Приаэродромная территория", "Приаэродромная территория", 92.0,
+                source="rgis")],
+    )
+    base = base.model_copy(
+        update={"urban_planning": UrbanPlanningReportContext(collected=False)}
+    )
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, catalog=catalog, configuration=None
+    )
+    assert quick.verdict.score is None
+    assert quick.protocol.q_total == 30
+    model, markdown = _qa_model_and_markdown(quick)
+    result = validate_quickreport(model, markdown, context=quick)
+    assert not any(i.rule_id == "q30_requires_preliminary" for i in result.issues)
+
+
 def test_62_validator_catches_q30_without_preliminary(rules, guidance, catalog):
     base = _base_with(
         [_zouit("Зоны и территории объектов культурного наследия",

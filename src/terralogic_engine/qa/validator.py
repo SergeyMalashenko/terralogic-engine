@@ -326,9 +326,14 @@ def _check_factors_evidence(
 def _check_q30_preliminary(
     model: QuickReportModel, context: object | None
 ) -> list[QaIssue]:
-    """Q>0 → оценка всегда предварительная и статус «повышенное внимание» (§8)."""
+    """Q>0 → оценка всегда предварительная и «повышенное внимание» (§8).
+
+    Применимо только к отчётам с выданным баллом: при BLOCKING_UNKNOWN/STOP
+    (приоритет §2) числовая оценка не выдаётся, и компоненты Q в протоколе
+    остаются просто записями о неустановленных режимах.
+    """
     protocol = getattr(context, "protocol", None)
-    if protocol is None or protocol.q_total <= 0:
+    if protocol is None or protocol.q_total <= 0 or model.score is None:
         return []
     issues: list[QaIssue] = []
     if not model.status.preliminary:
