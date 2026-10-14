@@ -25,7 +25,7 @@ table { border-collapse: collapse; width: 100%; font-size: 9.5pt; }
 th, td { border: 1px solid #999; padding: 1.2mm 2mm; vertical-align: top;
          text-align: left; }
 th { background: #eee; }
-img { max-width: 100%; }
+img { max-width: 75%; display: block; margin: 0 auto; }
 ul { margin: 1mm 0 2mm; padding-left: 5mm; }
 li { margin-bottom: 0.8mm; }
 """
