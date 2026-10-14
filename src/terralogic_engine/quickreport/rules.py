@@ -20,9 +20,9 @@ _ASSETS = Path(__file__).resolve().parent / "assets"
 
 
 def methodology_sha256() -> str:
-    """Отпечаток методики: sha256 активов скоринга и текстов guidance."""
+    """Отпечаток методики: sha256 активов скоринга, каталога и текстов guidance."""
     digest = hashlib.sha256()
-    for name in ("scoring_rules.yaml", "zone_guidance.yaml"):
+    for name in ("scoring_rules.yaml", "zouit_catalog_62.yaml", "zone_guidance.yaml"):
         digest.update((_ASSETS / name).read_bytes())
     return digest.hexdigest()
 
@@ -48,6 +48,7 @@ class ZoneGuidanceEntry:
     title: str
     guidance: str
     action: str | None = None
+    guidance_unknown_regime: str | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,11 @@ def load_zone_guidance(path: Path | None = None) -> ZoneGuidance:
                 action=(
                     str(entry["action"]).strip() if entry.get("action") else None
                 ),
+                guidance_unknown_regime=(
+                    str(entry["guidance_unknown_regime"]).strip()
+                    if entry.get("guidance_unknown_regime")
+                    else None
+                ),
             )
             for key, entry in (raw.get("zones") or {}).items()
         }
@@ -104,7 +110,7 @@ def match_guidance(
 
 
 # ---------------------------------------------------------------------------
-# Методика 6.1: группы, бэнды охвата, статусы, вердикт
+# Методика 6.2: группы, бэнды охвата, статусы, вердикт
 # ---------------------------------------------------------------------------
 
 
@@ -165,7 +171,7 @@ class StatusDef:
 
 @dataclass(frozen=True)
 class ScoringRules:
-    """Методика 6.1 из scoring_rules.yaml."""
+    """Методика 6.2 из scoring_rules.yaml."""
 
     methodology_version: str
     base_score: int
@@ -187,6 +193,8 @@ class ScoringRules:
     config_fine_grid_step_m: float
     groups: tuple[GroupRule, ...]
     texts: dict[str, str]
+    universal_scale: dict[str, float]
+    q_regime_unknown: float
 
     def coverage_word(self, percent: float) -> str:
         for min_pct, word in self.coverage_words:
@@ -208,6 +216,14 @@ class ScoringRules:
         for group in self.groups:
             for factor in group.factors:
                 if factor.matches(haystack):
+                    return group, factor
+        return None
+
+    def factor_by_id(self, factor_id: str) -> tuple[GroupRule, FactorRule] | None:
+        """Группа и фактор спецправила по его id (для каталога 6.2)."""
+        for group in self.groups:
+            for factor in group.factors:
+                if factor.id == factor_id:
                     return group, factor
         return None
 
@@ -306,9 +322,119 @@ def load_scoring_rules(path: Path | None = None) -> ScoringRules:
                 str(key): str(value).strip()
                 for key, value in (raw.get("texts") or {}).items()
             },
+            universal_scale={
+                str(key).upper(): float(value)
+                for key, value in (raw.get("universal_scale") or {}).items()
+            },
+            q_regime_unknown=float(raw.get("q_regime_unknown", 30)),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise QuickRulesError(f"scoring_rules.yaml: битая структура: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Каталог классов ЗОУИТ ст. 105 ЗК РФ (zouit_catalog_62.yaml) — методика 6.2
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CatalogEntry:
+    """Класс каталога: пункт ст. 105 (или внекаталожный фактор) → группа, обработка."""
+
+    item: str  # номер пункта ст. 105 либо ключ внекаталожного фактора
+    class_name: str
+    group_key: str
+    match: tuple[str, ...]
+    handling: str  # "special:<factor_id>" | "airport" | "universal"
+    obsolete: bool = False
+
+
+@dataclass(frozen=True)
+class RegimeEffect:
+    """Курируемое подтверждённое влияние режима зоны: E-уровень и основание."""
+
+    effect: str  # E0..E4
+    evidence: str
+    registry_number: str | None = None
+    match: str | None = None  # фрагмент имени зоны (casefold)
+
+
+@dataclass(frozen=True)
+class ZouitCatalog:
+    entries: tuple[CatalogEntry, ...]
+    regime_effects: tuple[RegimeEffect, ...]
+    groups: dict[str, str]  # group_key → название группы для протокола
+
+    def classify(self, zone_type: str | None, name: str) -> CatalogEntry | None:
+        """Класс каталога по типу/названию зоны; первое совпадение выигрывает."""
+        haystack = f"{zone_type or ''} {name}".casefold()
+        for entry in self.entries:
+            if any(token in haystack for token in entry.match):
+                return entry
+        return None
+
+    def regime_effect_for(
+        self, *, registry_number: str | None, name: str
+    ) -> RegimeEffect | None:
+        """Курируемый подтверждённый режим: точный registry_number, затем имя."""
+        registry = (registry_number or "").strip()
+        if registry:
+            for effect in self.regime_effects:
+                if effect.registry_number and effect.registry_number == registry:
+                    return effect
+        folded = " ".join(name.casefold().split())
+        for effect in self.regime_effects:
+            if effect.match and effect.match in folded:
+                return effect
+        return None
+
+
+def load_zouit_catalog(path: Path | None = None) -> ZouitCatalog:
+    """Загружает zouit_catalog_62.yaml; без path — пакетный актив."""
+    raw = _load_yaml(path or _ASSETS / "zouit_catalog_62.yaml")
+    try:
+        entries: list[CatalogEntry] = []
+        for section in ("catalog", "extra"):
+            for item in raw.get(section) or []:
+                entries.append(
+                    CatalogEntry(
+                        item=str(item.get("item") or item["key"]),
+                        class_name=str(item["class"]),
+                        group_key=str(item["group"]),
+                        match=tuple(
+                            str(m).casefold() for m in (item.get("match") or [])
+                        ),
+                        handling=str(item["handling"]),
+                        obsolete=bool(item.get("obsolete", False)),
+                    )
+                )
+        effects = tuple(
+            RegimeEffect(
+                effect=str(item["effect"]).upper(),
+                evidence=str(item.get("evidence") or "").strip(),
+                registry_number=(
+                    str(item["registry_number"]).strip()
+                    if item.get("registry_number")
+                    else None
+                ),
+                match=(
+                    " ".join(str(item["match"]).casefold().split())
+                    if item.get("match")
+                    else None
+                ),
+            )
+            for item in (raw.get("regime_effects") or [])
+        )
+        return ZouitCatalog(
+            entries=tuple(entries),
+            regime_effects=effects,
+            groups={
+                str(key): str(value).strip()
+                for key, value in (raw.get("groups") or {}).items()
+            },
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise QuickRulesError(f"zouit_catalog_62.yaml: битая структура: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +454,14 @@ class ScoredFactor:
     coverage: float
     deduction: float
     display_name: str = ""  # короткое имя для отчёта; пустое → factor_title
+    # --- методика 6.2 ---
+    catalog_item: str = ""  # пункт ст. 105 ЗК РФ либо ключ внекаталожного фактора
+    effect_code: str = ""  # E0..E4 | Q30 | special:<rule_id>
+    deduction_kind: str = "d"  # d — подтверждённое влияние; q — неопределённость режима
+    regime_state: str = "known"  # known | unknown
+    act_number: str | None = None  # акт, устанавливающий зону (если найден)
+    act_date: str | None = None
+    registry_number: str | None = None  # реестровый номер зоны (zone_id протокола)
 
 
 @dataclass(frozen=True)
@@ -337,11 +471,12 @@ class GroupDeduction:
     deduction: float  # после потолка группы
     zone_names: tuple[str, ...]  # короткие отображаемые имена зон группы
     raw_deduction: float = 0.0  # сумма до потолка (протокол скоринга)
+    q_part: float = 0.0  # часть суммы из компонентов q (неопределённость режима)
 
 
 @dataclass(frozen=True)
 class VerdictResult:
-    """Итог скоринга 6.1: балл (None — не рассчитан), статус, причины."""
+    """Итог скоринга 6.2: балл (None — не рассчитан), статус, причины."""
 
     score: int | None
     status: StatusDef
@@ -355,6 +490,7 @@ class VerdictResult:
     g: float | None
     groups: tuple[GroupDeduction, ...]
     notes: tuple[str, ...]  # внутренний протокол → warnings отчёта
+    q_total: float = 0.0  # сумма компонентов q (неопределённость режима, 6.2 §12)
 
 
 def compute_verdict(
@@ -379,6 +515,7 @@ def compute_verdict(
     totals: dict[str, GroupDeduction] = {}
     for factor in scored_factors:
         display = factor.display_name or factor.factor_title
+        q_part = factor.deduction if factor.deduction_kind == "q" else 0.0
         current = totals.get(factor.group_key)
         if current is None:
             totals[factor.group_key] = GroupDeduction(
@@ -386,6 +523,7 @@ def compute_verdict(
                 title=factor.group_title,
                 deduction=factor.deduction,
                 zone_names=(display,),
+                q_part=q_part,
             )
         else:
             merged = GroupDeduction(
@@ -393,6 +531,8 @@ def compute_verdict(
                 title=current.title,
                 deduction=current.deduction + factor.deduction,
                 zone_names=(*current.zone_names, display),
+                raw_deduction=current.raw_deduction,
+                q_part=current.q_part + q_part,
             )
             totals[factor.group_key] = merged
     groups = tuple(
@@ -402,6 +542,7 @@ def compute_verdict(
             deduction=min(group.deduction, rules.group_cap),
             zone_names=group.zone_names,
             raw_deduction=group.deduction,
+            q_part=group.q_part,
         )
         for group in totals.values()
     )
@@ -411,6 +552,12 @@ def compute_verdict(
                 f"группа {group.key}: вычет усечён потолком {rules.group_cap:g}"
             )
     restrictions_total = sum(group.deduction for group in groups)
+    q_total = sum(group.q_part for group in groups)
+    q_zones = [
+        factor.zone_name for factor in scored_factors if factor.deduction_kind == "q"
+    ]
+    for zone_name in q_zones:
+        notes.append(f"Q30: режим зоны не установлен — {zone_name!r}")
 
     g: float | None = None
     if a is not None or c is not None:
@@ -431,6 +578,7 @@ def compute_verdict(
             g=g,
             groups=groups,
             notes=tuple(notes),
+            q_total=q_total,
         )
     if suspend_reasons:
         return VerdictResult(
@@ -446,6 +594,7 @@ def compute_verdict(
             g=g,
             groups=groups,
             notes=tuple(notes),
+            q_total=q_total,
         )
 
     score = round(rules.base_score - restrictions_total - u - (g or 0.0))
@@ -460,7 +609,10 @@ def compute_verdict(
             for name in dict.fromkeys(group.zone_names)
             if name != group.title
         ]
-        reasons.append(f"{group.title}: {' и '.join(names)}" if names else group.title)
+        reason = f"{group.title}: {' и '.join(names)}" if names else group.title
+        if group.q_part > 0:
+            reason += " — режим зоны не установлен (снижение за неопределённость)"
+        reasons.append(reason)
     if a and a > 0:
         reasons.append(rules.texts.get("area_at_minimum", ""))
     if c == rules.config_nofit_deduction:
@@ -470,15 +622,18 @@ def compute_verdict(
     if u > 0:
         reasons.append(rules.texts.get("communications_unknown", ""))
 
+    has_q = q_total > 0
     significant_group = any(
         group.deduction >= rules.attention_group_deduction for group in groups
     )
+    # 6.2 §8: при Q>0 оценка всегда предварительная и «повышенное внимание»,
+    # даже если арифметика после группового потолка оставляет высокий балл.
     status = (
         rules.status("attention")
-        if score < rules.attention_score_below or significant_group
+        if score < rules.attention_score_below or significant_group or has_q
         else rules.status("ok")
     )
-    preliminary = u > 0 or bool(preliminary_flags)
+    preliminary = u > 0 or bool(preliminary_flags) or has_q
     if preliminary_flags:
         notes.extend(f"предварительная: {flag}" for flag in preliminary_flags)
     geometry_note = None
@@ -501,6 +656,7 @@ def compute_verdict(
         g=g,
         groups=groups,
         notes=tuple(notes),
+        q_total=q_total,
     )
 
 

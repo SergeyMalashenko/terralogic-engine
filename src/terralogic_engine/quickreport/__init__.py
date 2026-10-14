@@ -1,4 +1,4 @@
-"""QuickReport: экспресс-оценка участка — контекст, скоринг 6.1, yaml-активы."""
+"""QuickReport: экспресс-оценка участка — контекст, скоринг 6.2, yaml-активы."""
 
 from .context import build_quick_context, build_quick_context_from_report
 from .geometry import ConfigurationOutcome, evaluate_configuration
@@ -23,10 +23,12 @@ from .rules import (
     ScoringRules,
     VerdictResult,
     ZoneGuidance,
+    ZouitCatalog,
     compute_verdict,
     load_marketing,
     load_scoring_rules,
     load_zone_guidance,
+    load_zouit_catalog,
     match_guidance,
     methodology_sha256,
 )
@@ -61,6 +63,7 @@ __all__ = [
     "VerdictResult",
     "WriterExecutor",
     "ZoneGuidance",
+    "ZouitCatalog",
     "build_quick_context",
     "build_quick_context_from_report",
     "build_quick_model",
@@ -70,6 +73,7 @@ __all__ = [
     "load_marketing",
     "load_scoring_rules",
     "load_zone_guidance",
+    "load_zouit_catalog",
     "match_guidance",
     "methodology_sha256",
     "render_quick_model",

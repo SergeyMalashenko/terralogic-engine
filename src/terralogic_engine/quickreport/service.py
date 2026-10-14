@@ -138,32 +138,41 @@ def _inputs_lines(context: QuickReportContext, protocol: QuickProtocol) -> list[
 
 def _classification_lines(protocol: QuickProtocol) -> list[str]:
     lines = [
-        "## 4. Классификация и слияние зон (п. 3.1)",
+        "## 4. Классификация и слияние зон (каталог ст. 105 ЗК РФ)",
         "",
         (
             "Слияние по реестровому номеру, иначе по нормализованному названию; "
             "краткое наименование-префикс полного объединяется с ним; слой-витрина, "
             "повторяющий тип первичной записи реестра, отдельным фактором не "
-            "считается; охват — максимум между источниками."
+            "считается; охват — максимум между источниками. Обработка класса: "
+            "спецправило (d), универсальная шкала E0–E4 при подтверждённом режиме "
+            "(d), иначе Q30 (q — неопределённость режима)."
         ),
         "",
-        "| Зона (представитель слияния) | Источник | Группа | Фактор правила | Охват | Вычет |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| Зона (представитель слияния) | Источник | П. ст. 105 | Группа | Фактор | Эффект | Тип | Охват | Вычет | Акт |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for factor in protocol.factors:
+        act = (
+            f"{factor.act_number} ({factor.act_date})"
+            if factor.act_number
+            else "—"
+        )
         lines.append(
             f"| {_cell(factor.zone_name)} | {_cell(factor.source)} | "
-            f"{_cell(factor.group_title)} | {_cell(factor.factor_title)} | "
-            f"{_pct(factor.coverage_percent)} | {_g(factor.deduction)} |"
+            f"{_cell(factor.catalog_item)} | {_cell(factor.group_title)} | "
+            f"{_cell(factor.factor_title)} | {_cell(factor.effect_code)} | "
+            f"{factor.deduction_kind} | {_pct(factor.coverage_percent)} | "
+            f"{_g(factor.deduction)} | {_cell(act)} |"
         )
     if not protocol.factors:
-        lines.append("| — | — | — | — | — | — |")
+        lines.append("| — | — | — | — | — | — | — | — | — | — |")
     lines.append("")
     if protocol.unmatched_zones:
-        lines.append("Нераспознанные зоны (фактор без правила, п. 3.3):")
+        lines.append("Зоны без надёжной классификации по каталогу (BLOCKING_UNKNOWN):")
         lines.extend(f"- {name}" for name in protocol.unmatched_zones)
     else:
-        lines.append("Нераспознанных зон нет.")
+        lines.append("Зон вне каталога нет.")
     lines.append("")
     if protocol.classify_notes:
         lines.append("Заметки слияния:")
@@ -176,12 +185,34 @@ def _classification_lines(protocol: QuickProtocol) -> list[str]:
     return lines
 
 
+def _catalog_coverage_lines(protocol: QuickProtocol) -> list[str]:
+    lines = [
+        "## 5. Полнота покрытия каталога ст. 105 ЗК РФ",
+        "",
+        (
+            "По каждому классу: пересечение вычислено («найдена зона») либо "
+            "записей этого класса в источниках не выявлено. Отсутствие записи "
+            "не является отрицательным результатом проверки полноты поиска."
+        ),
+        "",
+        "| П. ст. 105 | Класс | Состояние |",
+        "| --- | --- | --- |",
+    ]
+    names = {"found": "найдена зона", "none_found": "записей не выявлено"}
+    for item in protocol.catalog_coverage:
+        lines.append(
+            f"| {_cell(item.item)} | {_cell(item.class_name)} | "
+            f"{names.get(item.state, item.state)} |"
+        )
+    return lines
+
+
 def _groups_lines(protocol: QuickProtocol) -> list[str]:
     lines = [
-        "## 5. Вычеты групп ограничений",
+        "## 6. Вычеты групп ограничений",
         "",
-        "| Группа | Сырая сумма | После потолка | Зоны (короткие имена) |",
-        "| --- | --- | --- | --- |",
+        "| Группа | Сырая сумма | в т.ч. Q | После потолка | Зоны (короткие имена) |",
+        "| --- | --- | --- | --- | --- |",
     ]
     for group in protocol.groups:
         cap_note = (
@@ -190,18 +221,24 @@ def _groups_lines(protocol: QuickProtocol) -> list[str]:
             else f"{_g(group.deduction)} (усечено потолком)"
         )
         lines.append(
-            f"| {_cell(group.title)} | {_g(group.raw_deduction)} | {cap_note} | "
+            f"| {_cell(group.title)} | {_g(group.raw_deduction)} | "
+            f"{_g(group.q_part)} | {cap_note} | "
             f"{_cell(' и '.join(dict.fromkeys(group.zone_names)))} |"
         )
     if not protocol.groups:
-        lines.append("| — | 0 | 0 | — |")
+        lines.append("| — | 0 | 0 | 0 | — |")
     lines.extend(["", f"**Σ ограничений = {_g(protocol.restrictions_total)}**."])
+    if protocol.q_total > 0:
+        lines.append(
+            f"**в т.ч. Q (неопределённость режима) = {_g(protocol.q_total)}** — "
+            "оценка предварительная, статус «повышенное внимание» обязателен (§8/§12)."
+        )
     return lines
 
 
 def _communications_lines(protocol: QuickProtocol) -> list[str]:
     lines = [
-        "## 6. U — неопределённость коммуникаций (п. 4.2)",
+        "## 7. U — неопределённость коммуникаций (п. 4.2)",
         "",
         "| Вопрос | Состояние | Вычет |",
         "| --- | --- | --- |",
@@ -215,7 +252,7 @@ def _communications_lines(protocol: QuickProtocol) -> list[str]:
 
 def _area_lines(protocol: QuickProtocol) -> list[str]:
     area = protocol.area
-    lines = ["## 7. A — минимальная площадь (п. 4.3)", ""]
+    lines = ["## 8. A — минимальная площадь (п. 4.3)", ""]
     if area is None:
         lines.append("Проверка не выполнялась.")
         return lines
@@ -233,7 +270,7 @@ def _area_lines(protocol: QuickProtocol) -> list[str]:
 
 
 def _geometry_lines(protocol: QuickProtocol) -> list[str]:
-    lines = ["## 8. C — конфигурация участка (п. 4.4)", ""]
+    lines = ["## 9. C — конфигурация участка (п. 4.4)", ""]
     if protocol.geometry is None:
         lines.append("Геометрическая проверка не выполнена — C неизвестен.")
     else:
@@ -243,7 +280,7 @@ def _geometry_lines(protocol: QuickProtocol) -> list[str]:
 
 
 def _arithmetic_lines(protocol: QuickProtocol) -> list[str]:
-    lines = ["## 9. G и итоговая арифметика", ""]
+    lines = ["## 10. G и итоговая арифметика", ""]
     a_value = protocol.area.deduction if protocol.area else None
     c_value = protocol.geometry.c if protocol.geometry else None
     lines.append(f"- A = {_g(a_value)}, C = {_g(c_value)} → G = max(A; C) = {_g(protocol.g)}")
@@ -262,7 +299,7 @@ def _arithmetic_lines(protocol: QuickProtocol) -> list[str]:
 
 
 def _sufficiency_lines(context: QuickReportContext, protocol: QuickProtocol) -> list[str]:
-    lines = ["## 10. Достаточность данных и статус", ""]
+    lines = ["## 11. Достаточность данных и статус", ""]
     lines.append("Обязательные проверки — раздел 3. Блокирующие пробелы:")
     blockers = protocol.suspend_reasons
     if blockers:
@@ -328,6 +365,7 @@ def render_service_report(
         ),
         "",
         *_classification_lines(protocol),
+        *_catalog_coverage_lines(protocol),
         "",
         *_groups_lines(protocol),
         "",
@@ -341,7 +379,7 @@ def render_service_report(
         "",
         *_sufficiency_lines(context, protocol),
         "",
-        "## 11. Предупреждения (внутренний протокол)",
+        "## 12. Предупреждения (внутренний протокол)",
         "",
     ]
     if context.warnings:

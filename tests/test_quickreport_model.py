@@ -119,7 +119,7 @@ def test_missing_items_reflect_evidence_gaps(rules, guidance):
 def test_build_quick_model_structure(quick):
     model = build_quick_model(quick)
     assert model.identity.cadastral_number == "50:11:0020310:49"
-    assert model.identity.methodology_version == "6.1"
+    assert model.identity.methodology_version == "6.2"
     assert model.score == quick.verdict.score == 55
     assert model.main_conclusion == quick.verdict.status_summary
     assert model.attention_factors == quick.factors

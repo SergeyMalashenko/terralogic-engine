@@ -70,7 +70,7 @@ def guidance():
 
 
 def test_package_assets_load_and_keys_are_consistent(rules, guidance):
-    assert rules.methodology_version == "6.1"
+    assert rules.methodology_version == "6.2"
     assert rules.base_score == 100
     assert rules.group_cap == 40
     assert sum(rules.comm_weights.values()) == rules.comm_max == 10
@@ -265,7 +265,7 @@ def test_build_quick_context_from_report(rules, guidance):
         _base_context(), rules=rules, guidance=guidance, configuration=_CONFIG_OK
     )
 
-    assert quick.methodology_version == "6.1"
+    assert quick.methodology_version == "6.2"
     # водоохранная 100% (25) + прибрежная 40% (10) = 35; U = 10; G = 0 → 55
     assert quick.verdict.score == 55
     assert quick.verdict.status_key == "attention"
@@ -390,8 +390,9 @@ def test_scoring_keeps_distinct_zones_with_equal_coverage(rules, guidance):
 
     Слой-витрина, повторяющий тип первичной записи реестра («Охранная зона
     транспорта» = zone_type подзоны аэродрома), — краткое наименование той же
-    зоны и отбрасывается; посторонняя зона с тем же охватом («Зоны и
-    территории ОКН») остаётся фактором без правила и приостанавливает выдачу.
+    зоны и отбрасывается. Методика 6.2: «Зоны и территории ОКН» больше не
+    unmatched — класс ОКН каталога ст. 105 даёт Q30 (режим неизвестен),
+    оценка выдаётся как предварительная с «повышенным вниманием».
     """
     base = _base_context()
     base.zouit = [
@@ -410,14 +411,17 @@ def test_scoring_keeps_distinct_zones_with_equal_coverage(rules, guidance):
 
     protocol = quick.protocol
     assert protocol is not None
-    # первичная запись-подзона классифицирована, эхо-витрина не считается фактором
-    assert len(protocol.factors) == 1
-    assert protocol.factors[0].group_key == "airport"
-    # эхо не попало в нераспознанные, посторонняя зона — попала
-    assert protocol.unmatched_zones == ["Зоны и территории ОКН"]
-    assert quick.verdict.score is None
-    assert quick.verdict.status_key == "insufficient"
-    assert any("Зоны и территории ОКН" in r for r in quick.verdict.reasons)
+    # подзона — спецправило 6.1; классовая витрина ОКН — Q30 (6.2 §5 п. 1)
+    assert len(protocol.factors) == 2
+    groups = {f.group_key for f in protocol.factors}
+    assert groups == {"airport", "cultural_heritage"}
+    okn = next(f for f in protocol.factors if f.group_key == "cultural_heritage")
+    assert okn.effect_code == "Q30" and okn.deduction_kind == "q"
+    assert protocol.unmatched_zones == []
+    # 100 − 5 (шестая подзона) − 30 (Q ОКН) − 10 (U) = 55
+    assert quick.verdict.score == 55
+    assert quick.verdict.status_key == "attention"
+    assert quick.verdict.preliminary is True
     assert any(
         "совпадает с типом первичной записи реестра" in note
         for note in protocol.classify_notes
@@ -507,7 +511,7 @@ def test_protocol_and_service_report(rules, guidance):
 
     markdown = render_service_report(quick, today=date(2026, 10, 7))
     assert markdown.startswith("# Сервисный отчёт скоринга — 50:11:0020310:49\n")
-    assert "Методика 6.1 · sha256 активов:" in markdown
+    assert "Методика 6.2 · sha256 активов:" in markdown
     assert "**Оценка = max(0; 100 − 35 (ограничения) − 10 (U) − 0 (G)) = 55/100**" in markdown
     assert "правило 3" in markdown
     # протокольная таблица зон хранит сырые наименования представителей
@@ -533,7 +537,7 @@ def test_service_report_without_score_and_protocol(rules, guidance):
 
 
 # ---------------------------------------------------------------------------
-# Методика 6.1: A (минимальная площадь), стоп-фактор, геометрия
+# Методика 6.2: A (минимальная площадь), стоп-фактор, геометрия
 # ---------------------------------------------------------------------------
 
 
@@ -624,7 +628,7 @@ def test_render_quickreport_structure(rules, guidance):
 
     assert markdown.startswith("# Экспресс-оценка земельного участка\n")
     assert (
-        "Отчёт от 07.10.2026 · Данные от 06.10.2026 · Методика оценки — версия 6.1"
+        "Отчёт от 07.10.2026 · Данные от 06.10.2026 · Методика оценки — версия 6.2"
     ) in markdown
     assert "**Кадастровый номер 50:11:0020310:49**" in markdown
     # балл + статус + отметка «предварительная» (U > 0) + причины + пояснение
@@ -826,7 +830,7 @@ async def test_prepare_quickreport_persists_markdown(tmp_path) -> None:
     assert result.case_id == "case-quickreport"
     assert result.collection_run_id == receipt.run_id
     assert result.analysis_id == analysis.id
-    assert result.methodology_version == "6.1"
+    assert result.methodology_version == "6.2"
     assert result.markdown.startswith("# Экспресс-оценка земельного участка\n")
     assert "52:26:0040002:3823" in result.markdown
     persisted = store.get_latest_generated_report("case-quickreport", receipt.run_id)

@@ -318,6 +318,102 @@ def _check_factors_evidence(
     return issues
 
 
+# ---------------------------------------------------------------------------
+# Методика 6.2 (§10): инварианты Q/BLOCKING/STOP в протоколе
+# ---------------------------------------------------------------------------
+
+
+def _check_q30_preliminary(
+    model: QuickReportModel, context: object | None
+) -> list[QaIssue]:
+    """Q>0 → оценка всегда предварительная и статус «повышенное внимание» (§8)."""
+    protocol = getattr(context, "protocol", None)
+    if protocol is None or protocol.q_total <= 0:
+        return []
+    issues: list[QaIssue] = []
+    if not model.status.preliminary:
+        issues.append(
+            _issue(
+                "q30_requires_preliminary",
+                "Оценка",
+                "error",
+                f"в протоколе Q = {protocol.q_total:g}, а отчёт не отмечен "
+                "«предварительная»",
+                suggested_action="Q30 всегда даёт предварительную оценку (§12)",
+            )
+        )
+    if model.status.status_key != "attention":
+        issues.append(
+            _issue(
+                "q30_requires_preliminary",
+                "Оценка",
+                "error",
+                f"в протоколе Q = {protocol.q_total:g}, а статус "
+                f"«{model.status.status_title}» вместо «повышенное внимание»",
+            )
+        )
+    return issues
+
+
+def _check_factor_integrity(context: object | None) -> list[QaIssue]:
+    """Целостность факторов протокола (6.2 §10).
+
+    Вычет без основания (нет effect_code), дубль одной зоны (две записи с
+    одним реестровым номером/наименованием), одновременное начисление d и q
+    по одной зоне — ошибки публикации.
+    """
+    protocol = getattr(context, "protocol", None)
+    if protocol is None:
+        return []
+    issues: list[QaIssue] = []
+    for factor in protocol.factors:
+        if not factor.effect_code or not factor.catalog_item:
+            issues.append(
+                _issue(
+                    "deduction_has_basis",
+                    "Классификация зон",
+                    "error",
+                    f"вычет без основания: «{factor.zone_name}» "
+                    f"({_g_safe(factor.deduction)}) без effect_code/класса каталога",
+                )
+            )
+    by_zone: dict[str, list[object]] = {}
+    for factor in protocol.factors:
+        key = (
+            factor.registry_number
+            or " ".join(factor.zone_name.casefold().split())
+        )
+        by_zone.setdefault(key, []).append(factor)
+    for key, items in by_zone.items():
+        if len(items) < 2:
+            continue
+        kinds = {getattr(item, "deduction_kind", "d") for item in items}
+        if kinds == {"d", "q"}:
+            issues.append(
+                _issue(
+                    "no_dq_overlap",
+                    "Классификация зон",
+                    "error",
+                    f"по зоне «{key}» начислены и d, и q — по одной зоне "
+                    "одновременно не начисляются (§3)",
+                )
+            )
+        else:
+            issues.append(
+                _issue(
+                    "no_duplicate_factor",
+                    "Классификация зон",
+                    "error",
+                    f"дубль фактора: зона «{key}» учтена {len(items)} раза",
+                )
+            )
+    return issues
+
+
+def _g_safe(value: float) -> str:
+    return f"{value:g}"
+
+
 def validate_quickreport(
     model: QuickReportModel,
     markdown: str,
@@ -335,6 +431,8 @@ def validate_quickreport(
     issues.extend(_check_prices(model, markdown))
     issues.extend(_check_limitations(markdown))
     issues.extend(_check_factors_evidence(model, context))
+    issues.extend(_check_q30_preliminary(model, context))
+    issues.extend(_check_factor_integrity(context))
     status = (
         "fail"
         if any(issue.severity in ("error", "critical") for issue in issues)

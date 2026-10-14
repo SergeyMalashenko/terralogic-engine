@@ -129,6 +129,22 @@ class QuickProtocolFactor(BaseModel):
     source: str
     coverage_percent: float
     deduction: float
+    # --- методика 6.2 ---
+    catalog_item: str = ""  # пункт ст. 105 ЗК РФ либо ключ внекаталожного фактора
+    effect_code: str = ""  # E0..E4 | Q30 | special:<rule_id>
+    deduction_kind: str = "d"  # d — подтверждённое влияние; q — неопределённость
+    regime_state: str = "known"  # known | unknown
+    act_number: str | None = None  # акт, устанавливающий зону
+    act_date: str | None = None
+    registry_number: str | None = None  # zone_id: реестровый номер зоны
+
+
+class QuickProtocolClassState(BaseModel):
+    """Состояние класса каталога ст. 105 в прогоне (полнота покрытия, 6.2 §5)."""
+
+    item: str
+    class_name: str
+    state: str  # found — пересечение вычислено; none_found — записей не выявлено
 
 
 class QuickProtocolGroup(BaseModel):
@@ -139,6 +155,7 @@ class QuickProtocolGroup(BaseModel):
     raw_deduction: float
     deduction: float
     zone_names: list[str] = Field(default_factory=list)
+    q_part: float = 0.0  # часть суммы из компонентов q (неопределённость режима)
 
 
 class QuickProtocolComm(BaseModel):
@@ -186,7 +203,7 @@ class QuickProtocolSource(BaseModel):
 
 
 class QuickProtocol(BaseModel):
-    """Внутренний протокол расчёта методики 6.1 (сервисный отчёт разработчика)."""
+    """Внутренний протокол расчёта методики 6.2 (сервисный отчёт разработчика)."""
 
     methodology_sha256: str
     formula: str
@@ -197,6 +214,8 @@ class QuickProtocol(BaseModel):
     conservative: bool = False
     groups: list[QuickProtocolGroup] = Field(default_factory=list)
     restrictions_total: float = 0.0
+    q_total: float = 0.0  # часть restrictions_total из неопределённости режима (Q30)
+    catalog_coverage: list[QuickProtocolClassState] = Field(default_factory=list)
     communications: list[QuickProtocolComm] = Field(default_factory=list)
     u_total: float = 0.0
     area: QuickProtocolArea | None = None
