@@ -9,9 +9,27 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
+
+_H2_RE = re.compile(r"(<h2>.*?</h2>)", flags=re.DOTALL)
+
+
+def _wrap_sections(body: str) -> str:
+    """Оборачивает каждый раздел h2 в <div class="section">.
+
+    Для CSS break-inside: avoid — раздел не разрывается между страницами:
+    если целиком не помещается на текущей, переносится на следующую.
+    """
+    parts = _H2_RE.split(body)
+    result = [parts[0]]
+    for i in range(1, len(parts), 2):
+        h2 = parts[i]
+        content = parts[i + 1] if i + 1 < len(parts) else ""
+        result.append(f'<div class="section">{h2}{content}</div>')
+    return "".join(result)
 
 _PAGE_CSS = """
 @page { size: A4; margin: 18mm 16mm; }
@@ -21,6 +39,7 @@ h1 { font-size: 17pt; margin: 0 0 2mm; }
 h2 { font-size: 13pt; margin: 6mm 0 2mm; border-bottom: 1px solid #999;
      padding-bottom: 1mm; }
 h3 { font-size: 11.5pt; margin: 4mm 0 1.5mm; }
+.section { break-inside: avoid; }
 table { border-collapse: collapse; width: 100%; font-size: 9.5pt; }
 th, td { border: 1px solid #999; padding: 1.2mm 2mm; vertical-align: top;
          text-align: left; }
@@ -52,7 +71,7 @@ def markdown_to_pdf(
         body = markdown_lib.markdown(markdown_text, extensions=["tables", "sane_lists"])
         html = (
             '<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8">'
-            f"<style>{_PAGE_CSS}</style></head><body>{body}</body></html>"
+            f"<style>{_PAGE_CSS}</style></head><body>{_wrap_sections(body)}</body></html>"
         )
         weasyprint.HTML(string=html, base_url=str(base_dir)).write_pdf(out_path)
     except Exception as exc:
