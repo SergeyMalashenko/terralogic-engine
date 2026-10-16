@@ -172,7 +172,7 @@ def test_62_okn_vitrina_merges_into_named_zone(rules, guidance, catalog):
                 "Зона регулирования застройки и хозяйственной деятельности Р-1 (3) "
                 "объекта культурного наследия «Усадьба Татищева»",
                 "Зона охраны объекта культурного наследия", 86.4,
-                registry_number="50:09-6.1690",
+                registry_number="50:09-6.9999",
             ),
         ]
     )
@@ -187,7 +187,7 @@ def test_62_okn_vitrina_merges_into_named_zone(rules, guidance, catalog):
     assert factor.deduction_kind == "q"
     assert factor.deduction == 30
     assert factor.catalog_item == "1"
-    assert factor.registry_number == "50:09-6.1690"
+    assert factor.registry_number == "50:09-6.9999"
     assert quick.verdict.score == 60  # 100 − 30 − 10(U)
     assert quick.verdict.preliminary is True
     assert quick.verdict.status_key == "attention"
@@ -207,13 +207,13 @@ def test_62_okn_regime_document_reaches_protocol(rules, guidance, catalog):
                 "Зона регулирования застройки и хозяйственной деятельности Р-1 (3) "
                 "объекта культурного наследия «Усадьба Татищева»",
                 "Зона охраны объекта культурного наследия", 86.4,
-                registry_number="50:09-6.1690",
+                registry_number="50:09-6.9999",
             )
         ],
         documents=DocumentReportContext(
             zouit_regimes=[
                 ZouitRegimeDocumentContext(
-                    registry_number="50:09-6.1690",
+                    registry_number="50:09-6.9999",
                     name="Зона регулирования застройки Р-1 (3)",
                     document_number="1182-ПП",
                     registration_date="2025-10-14",
@@ -365,14 +365,14 @@ def test_62_regime_effect_assigns_e_level(rules, guidance):
             RegimeEffect(
                 effect="E2",
                 evidence="акт № 1182-ПП, требования к регламентам застройки",
-                registry_number="50:09-6.1690",
+                registry_number="50:09-6.9999",
             ),
         ),
     )
     base = _base_with(
         [_zouit("Зона регулирования застройки Р-1 (3) ОКН «Усадьба Татищева»",
                 "Зона охраны объекта культурного наследия", 86.4,
-                registry_number="50:09-6.1690")]
+                registry_number="50:09-6.9999")]
     )
     quick = build_quick_context_from_report(
         base, rules=rules, guidance=guidance, catalog=custom, configuration=_CONFIG_OK

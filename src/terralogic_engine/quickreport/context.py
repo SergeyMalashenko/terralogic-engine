@@ -1362,6 +1362,7 @@ def build_quick_context(
     collection_run_id: str | None = None,
     rules: ScoringRules | None = None,
     guidance: ZoneGuidance | None = None,
+    catalog: ZouitCatalog | None = None,
 ) -> QuickReportContext:
     """Store-обёртка: контекст последнего (или явного) run кейса + проверка C."""
     rules = rules or load_scoring_rules()
@@ -1374,6 +1375,7 @@ def build_quick_context(
         base,
         rules=rules,
         guidance=guidance,
+        catalog=catalog,
         configuration=configuration,
     )
     context.warnings.extend(warnings)
