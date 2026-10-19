@@ -124,15 +124,29 @@ quickreport/            Экспресс-отчёт со скорингом (LLM
                           zone_guidance.yaml; methodology_sha256();
                           MarketingConfig/load_marketing из marketing.yaml
                           (отдельный sha256, в методику не входит);
-                          тексты missing — assets/missing_texts.yaml.
+                          тексты missing — assets/missing_texts.yaml;
+                          шаблоны narrative — assets/narrative_templates.yaml.
   geometry.py             Проверка размещения тестового контура дома
                           10×10/12×12 м после отступов (п. 4.4).
   render.py               Детерминированный рендер клиентского Markdown
-                          из QuickReportModel; render_quickreport — фасад
-                          обратной совместимости (контекст → модель).
+                          из QuickReportModel (стандарт оформления v22:
+                          паспорт — таблица, карта с ограничениями отчёта
+                          под ней — после «Окружение», «Что ещё нужно
+                          проверить» — после карты); render_quickreport —
+                          фасад обратной совместимости (контекст → модель).
   service.py              Сервисный отчёт — внутренний протокол скоринга
                           для разработчиков.
-  mapimg.py, pdf.py       Карта (Pillow) и PDF (weasyprint) версии отчёта.
+  mapimg.py               Карта (Pillow) участка и зон.
+  pdf.py                  PDF — второй рендер QuickReportModel (weasyprint):
+                          HTML-вёрстка блоков модели (шапка с зелёной brand-
+                          строкой, блок КН/адреса с заливкой, крупное число
+                          оценки + статус, акцентный «Главный вывод», карта
+                          без разрыва + ограничения второстепенным текстом)
+                          + markdown_lib для прозаических секций. Дизайн-
+                          токены — assets/report.css (фиксированная
+                          типографика), шрифт Carlito — assets/fonts/carlito
+                          (@font-face, SIL OFL), колонтитулы TerraLogicX и
+                          «Стр. N из M» — @page margin boxes.
 
 legal/                  Нормативный классификатор ВРИ (v1, коммит 2747277):
   importer.py             Offline DOCX→JSON импорт (stdlib: zipfile+xml).

@@ -215,7 +215,7 @@ class ReportingService:
         )
         context.warnings.extend(qa_warnings)
         pdf_relative_path, pdf_warnings = self._build_quick_pdf(
-            case_id, context, markdown
+            case_id, context, model, markdown
         )
         context.warnings.extend(pdf_warnings)
         service_markdown, service_relative_path, service_warnings = (
@@ -513,14 +513,20 @@ class ReportingService:
         return markdown, relative_path, []
 
     def _build_quick_pdf(
-        self, case_id: str, context: QuickReportContext, markdown: str
+        self,
+        case_id: str,
+        context: QuickReportContext,
+        model: QuickReportModel,
+        markdown: str,
     ) -> tuple[str | None, list[str]]:
         """PDF-версия quick-отчёта рядом с Markdown-артефактом.
 
-        Любой сбой (нет extra 'pdf', ошибка рендера) деградирует
-        в предупреждение — Markdown-отчёт при этом сохраняется всегда.
+        Модель — финальная (после narrative и QA-revision), верстка блоков
+        берёт из неё вердикт и идентификаторы. Любой сбой (нет extra 'pdf',
+        ошибка рендера) деградирует в предупреждение — Markdown-отчёт при
+        этом сохраняется всегда.
         """
-        from terralogic_engine.quickreport.pdf import markdown_to_pdf
+        from terralogic_engine.quickreport.pdf import model_to_pdf
 
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
             tmp_path = Path(tmp.name)
@@ -531,7 +537,7 @@ class ReportingService:
                 if store_root is not None
                 else Path.cwd()
             )
-            warnings = markdown_to_pdf(markdown, tmp_path, base_dir=base_dir)
+            warnings = model_to_pdf(model, markdown, tmp_path, base_dir=base_dir)
             if warnings:
                 return None, warnings
             relative_path = self.store.save_case_artifact(

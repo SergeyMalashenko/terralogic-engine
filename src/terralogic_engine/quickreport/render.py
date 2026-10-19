@@ -1,10 +1,11 @@
 """Детерминированный рендер QuickReportModel в Markdown.
 
-Продуктовая структура отчёта (§23 ТЗ): заголовок с датами и версией
-методики, вердикт, «Что уже удалось установить», таблица факторов,
-паспорт участка, территориальная зона, окружение с коммуникациями,
-«Что ещё нужно проверить», схема расположения зон (PNG из ``mapimg``
-либо заглушка), статический дисклеймер и коммерческий «Следующий шаг»
+Продуктовая структура отчёта (§23 ТЗ, стандарт оформления v22): заголовок
+с датами и версией методики, вердикт, «Что уже удалось установить»,
+таблица факторов, паспорт участка (таблица), территориальная зона,
+окружение с коммуникациями, схема расположения зон (PNG из ``mapimg``
+либо заглушка) с ограничениями отчёта под картой, «Что ещё нужно
+проверить», статический дисклеймер и коммерческий «Следующий шаг»
 (только из MarketingConfig). Новых зависимостей нет — чистая сборка
 строк. Единственный опциональный LLM-слот — ``model.narrative
 .established_summary`` (текст раздела «Что уже удалось установить»,
@@ -79,7 +80,7 @@ def _factors_table(factors: list[QuickFactor]) -> list[str]:
     if not zone_factors:
         return [_NO_FACTORS_NOTE]
     lines = [
-        "| № | Зона | Охват участка | Что это значит для вас |",
+        "| № | Ограничение | Охват участка | Практическое значение |",
         "| --- | --- | --- | --- |",
     ]
     for number, factor in enumerate(zone_factors, start=1):
@@ -116,7 +117,12 @@ def _passport_lines(parcel: QuickPassport) -> list[str]:
         ("Территориальная зона", parcel.territorial_zone),
         ("Кадастровая стоимость", _format_cadastral_value(parcel.cadastral_value_rub)),
     )
-    return [f"- **{label}:** {value or 'нет данных'}" for label, value in rows]
+    lines = ["| Параметр | Значение |", "| --- | --- |"]
+    lines.extend(
+        f"| {label} | {_cell(value) if value else 'нет данных'} |"
+        for label, value in rows
+    )
+    return lines
 
 
 def _surroundings_lines(model: QuickReportModel) -> list[str]:
@@ -329,10 +335,6 @@ def render_quick_model(
         "",
         *_surroundings_lines(model),
         "",
-        "## Что ещё нужно проверить",
-        "",
-        *_missing_lines(model.missing_information),
-        "",
         "## Схема расположения зон",
         "",
         *(map_lines if map_lines else [_MAP_PLACEHOLDER]),
@@ -340,6 +342,10 @@ def render_quick_model(
         "## Ограничения отчёта",
         "",
         model.limitations,
+        "",
+        "## Что ещё нужно проверить",
+        "",
+        *_missing_lines(model.missing_information),
         "",
     ]
     if model.marketing is not None:

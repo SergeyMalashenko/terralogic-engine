@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from terralogic_engine.quickreport.pdf import _PAGE_CSS, markdown_to_pdf
+from terralogic_engine.quickreport import build_quick_model, load_marketing
+from terralogic_engine.quickreport.pdf import model_to_pdf
 
 from .quickreport_fixtures import (
     FIXTURE_EXPECTATIONS,
@@ -20,6 +21,14 @@ from .quickreport_fixtures import (
 )
 
 _GOLDEN_DIR = Path(__file__).parent / "fixtures" / "quickreport"
+_REPORT_CSS = (
+    Path(__file__).parent.parent
+    / "src"
+    / "terralogic_engine"
+    / "quickreport"
+    / "assets"
+    / "report.css"
+)
 _PRODUCT_SECTIONS = (
     "# Экспресс-оценка земельного участка",
     "## Что уже удалось установить",
@@ -27,11 +36,16 @@ _PRODUCT_SECTIONS = (
     "## Паспорт участка",
     "## Территориальная зона и разрешённое использование",
     "## Окружение",
-    "## Что ещё нужно проверить",
     "## Схема расположения зон",
     "## Ограничения отчёта",
+    "## Что ещё нужно проверить",
     "## Следующий шаг",
 )
+
+
+def _fixture_model(kind: str):
+    context = build_fixture_context(kind)
+    return build_quick_model(context, marketing=load_marketing())
 
 
 @pytest.mark.parametrize("kind", FIXTURE_KINDS)
@@ -70,8 +84,11 @@ def test_pdf_smoke_page_count_and_long_content(tmp_path: Path) -> None:
     outputs: dict[str, Path] = {}
     for kind in FIXTURE_KINDS:
         output = tmp_path / f"{kind}.pdf"
-        warnings = markdown_to_pdf(
-            render_fixture_markdown(kind), output, base_dir=tmp_path
+        warnings = model_to_pdf(
+            _fixture_model(kind),
+            render_fixture_markdown(kind),
+            output,
+            base_dir=tmp_path,
         )
         assert warnings == []
         payload = output.read_bytes()
@@ -115,18 +132,28 @@ def test_pdf_smoke_page_count_and_long_content(tmp_path: Path) -> None:
         assert "Ограничения отчёта" in text
         assert "Следующий шаг" in text
         assert "менеджер свяжется с вами" in text
+        # колонтитулы: бренд и номер страницы
+        assert "TerraLogicX" in text
+        assert "Стр. 1 из" in text
 
 
 def test_fixed_typography_baseline() -> None:
-    assert '@page { size: A4; margin: 18mm 16mm; }' in _PAGE_CSS
-    assert 'font-family: "DejaVu Sans"' in _PAGE_CSS
-    assert "font-size: 10.5pt; line-height: 1.45;" in _PAGE_CSS
-    assert "h1 { font-size: 17pt;" in _PAGE_CSS
-    assert "h2 { font-size: 13pt;" in _PAGE_CSS
-    assert "h3 { font-size: 11.5pt;" in _PAGE_CSS
-    assert "table { border-collapse: collapse; width: 100%; font-size: 9.5pt; }" in _PAGE_CSS
-
-    folded = _PAGE_CSS.casefold()
+    css = _REPORT_CSS.read_text(encoding="utf-8")
+    # фиксированная страница и колонтитулы
+    assert "size: A4;" in css
+    assert '@bottom-left { content: "TerraLogicX"' in css
+    assert 'counter(page) " из " counter(pages)' in css
+    # фиксированный шрифт Carlito (vendor assets/fonts/carlito, SIL OFL)
+    assert 'font-family: "Carlito"' in css
+    assert 'src: url("fonts/carlito/Carlito-Regular.ttf")' in css
+    # фиксированная иерархия размеров
+    assert "font-size: 20pt;" in css  # h1
+    assert "font-size: 14pt;" in css  # h2
+    assert "font-size: 12pt;" in css  # h3 / subtitle
+    assert "font-size: 10.5pt;" in css  # body
+    assert "font-size: 28pt;" in css  # число оценки
+    # shrink-to-fit запрещён: размеры не вычисляются от контента
+    folded = css.casefold()
     assert "shrink" not in folded
     assert "scale(" not in folded
     assert "font-size: calc" not in folded
