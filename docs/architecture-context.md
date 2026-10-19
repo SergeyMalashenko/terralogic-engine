@@ -194,19 +194,24 @@ quickreport/narrative.py Bounded NarrativeGenerator (§62–63, §74 ТЗ):
                         (единственный narrative-слот; вывод и смыслы факторов
                         остаются детерминированными). Вход — bounded
                         EstablishedFactsInput (только QuickReportContext +
-                        QuickReportModel, маркетинг не передаётся); выход —
-                        strict JSON {"text": ...} после маркера
-                        === NARRATIVE_RESULT === (extra fields запрещены).
-                        Guardrails кодом: 2–3 предложения, ≤700 символов, один
-                        абзац, чужие числа против sha256-сериализованного входа,
-                        запрещённые категоричные фразы; один retry только при
-                        битом structured output. FallbackNarrativeGenerator
-                        (None/exception/timeout/invalid) →
-                        DeterministicNarrativeGenerator — тот же established
-                        bullet list, baseline не меняется. Метаданные прогона
-                        (source, model, prompt version quickreport_established_
-                        facts_prompt_v2, sha256 входа, latency, attempts, usage)
-                        — в QuickNarrative и QA-артефакте; model_name уходит в
+                        QuickReportModel, маркетинг не передаётся), включая
+                        variant/variant_template — утверждённый шаблон раздела
+                        из assets/narrative_templates.yaml, выбранный кодом по
+                        status_key вердикта 6.2 (ok→a, stop→b, attention→c,
+                        insufficient→d); LLM адаптирует текст, не меняя
+                        вариант. Выход — strict JSON {"text": ...} после
+                        маркера === NARRATIVE_RESULT === (extra fields
+                        запрещены). Guardrails кодом: 2–3 предложения, ≤700
+                        символов, один абзац, чужие числа против sha256-
+                        сериализованного входа, запрещённые категоричные
+                        фразы; один retry только при битом structured output.
+                        FallbackNarrativeGenerator (None/exception/timeout/
+                        invalid) → DeterministicNarrativeGenerator — шаблон
+                        варианта verbatim, продуктово-согласованный текст при
+                        любом сбое LLM. Метаданные прогона (source, model,
+                        prompt version quickreport_established_facts_prompt_v3,
+                        sha256 входа, latency, attempts, usage) — в
+                        QuickNarrative и QA-артефакте; model_name уходит в
                         save_generated_report. Конфигурация — env
                         TERRALOGIC_WRITER_CMD (scripts/hermes-writer.sh).
                         Targeted revision (§74): при needs_revision критика —

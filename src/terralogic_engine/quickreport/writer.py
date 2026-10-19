@@ -1,5 +1,5 @@
 """Обратная совместимость: бывший трёхслотовый writer заменён bounded
-NarrativeGenerator из ``quickreport.narrative`` (§62–63 ТЗ, промпт v1).
+NarrativeGenerator из ``quickreport.narrative`` (§62–63 ТЗ, промпт v3).
 
 Старые поля main_conclusion / established_summary / factor_meanings сведены
 к единственному narrative-слоту раздела «Что уже удалось установить»;

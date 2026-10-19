@@ -672,6 +672,58 @@ def load_missing_texts(path: Path | None = None) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Шаблоны раздела «Что уже удалось установить» (narrative_templates.yaml)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class NarrativeTemplate:
+    """Один утверждённый шаблон: буква варианта, status_key вердикта, текст."""
+
+    variant: str
+    status_key: str
+    text: str
+
+
+def load_narrative_templates(path: Path | None = None) -> dict[str, NarrativeTemplate]:
+    """Загружает narrative_templates.yaml; ключ результата — status_key.
+
+    Выбор варианта детерминированный (status_key вердикта методики 6.2);
+    тексты — утверждённый продуктовый слой, в methodology_sha256 не входят.
+    """
+    raw = _load_yaml(path or _ASSETS / "narrative_templates.yaml")
+    variants = raw.get("variants")
+    if not isinstance(variants, dict) or not variants:
+        raise QuickRulesError("narrative_templates.yaml: пустой блок variants")
+    result: dict[str, NarrativeTemplate] = {}
+    for variant, entry in variants.items():
+        if not isinstance(entry, dict):
+            raise QuickRulesError(
+                f"narrative_templates.yaml: вариант {variant!r} должен быть mapping"
+            )
+        try:
+            template = NarrativeTemplate(
+                variant=str(variant),
+                status_key=str(entry["status"]),
+                text=str(entry["text"]).strip(),
+            )
+        except KeyError as exc:
+            raise QuickRulesError(
+                f"narrative_templates.yaml: вариант {variant!r}: нет поля {exc}"
+            ) from exc
+        if not template.text:
+            raise QuickRulesError(
+                f"narrative_templates.yaml: вариант {variant!r}: пустой text"
+            )
+        if template.status_key in result:
+            raise QuickRulesError(
+                f"narrative_templates.yaml: дубль status {template.status_key!r}"
+            )
+        result[template.status_key] = template
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Коммерческий блок (marketing.yaml) — §37–39 ТЗ
 # ---------------------------------------------------------------------------
 

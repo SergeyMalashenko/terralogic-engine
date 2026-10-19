@@ -11,15 +11,17 @@ Narrative — опциональный LLM-этап поверх детерми�
 
 - ``EstablishedFactsInput`` / ``EstablishedFactsNarrative`` — контракты
   входа/выхода с observability-метаданными (prompt version, sha256 входа,
-  latency, attempts, usage);
+  latency, attempts, usage); вход включает ``variant``/``variant_template`` —
+  утверждённый шаблон раздела из assets/narrative_templates.yaml, выбранный
+  кодом по status_key вердикта методики 6.2 (не генератором);
 - ``NarrativeExecutor`` / ``SubprocessNarrativeExecutor`` — infrastructure
   boundary (в проде ``scripts/hermes-writer.sh``, в тестах фейк);
-- ``HermesNarrativeGenerator`` — prompt v1, строгий structured output
+- ``HermesNarrativeGenerator`` — prompt v3, строгий structured output
   (``=== NARRATIVE_RESULT ===`` + JSON ``{"text": "..."}``, extra fields
   запрещены), детерминированные guardrails, один retry только при битом
   structured output;
-- ``DeterministicNarrativeGenerator`` — текущая established-сводка в том же
-  Markdown-виде, fallback не меняет baseline;
+- ``DeterministicNarrativeGenerator`` — fallback: шаблон варианта verbatim,
+  отчёт при сбое LLM содержит утверждённую продуктовую формулировку;
 - ``FallbackNarrativeGenerator`` — обёртка: None/exception/timeout/invalid
   LLM-генератора деградирует в детерминированный результат с warning (§77).
 
@@ -45,6 +47,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .model import QuickReportModel
 from .models import QuickReportContext
+from .rules import NarrativeTemplate, QuickRulesError, load_narrative_templates
 
 if TYPE_CHECKING:
     from ..qa.models import QaIssue
@@ -57,7 +60,7 @@ WRITER_USAGE_FILE_ENV = "TERRALOGIC_WRITER_USAGE_FILE"
 _DEFAULT_TIMEOUT_S = 300
 DEFAULT_WRITER_MODEL = "qwen3.5:9b-q4_K_M"
 
-WRITER_PROMPT_VERSION = "quickreport_established_facts_prompt_v2"
+WRITER_PROMPT_VERSION = "quickreport_established_facts_prompt_v3"
 
 MAX_NARRATIVE_CHARS = 700
 
@@ -76,29 +79,44 @@ BANNED_NARRATIVE_PHRASES = (
 _NUMBER_RE = re.compile(r"\d[\d ]*")
 
 WRITER_PROMPT_TEMPLATE = """\
-Ты — редактор экспресс-отчёта об участке TerraLogicX. Твоя единственная
-задача — сформулировать раздел «Что уже удалось установить»: один связный
-абзац из 2–3 предложений на русском языке, обращение на «вы».
+Ты — редактор экспресс-отчёта об участке TerraLogicX (стандарт отчёта v22).
+Твоя единственная задача — сформулировать раздел «Что уже удалось установить»:
+один связный абзац из 2–3 предложений на русском языке.
+
+ОСНОВА ТЕКСТА:
+Во входных данных переданы variant и variant_template — утверждённая редакция
+текста для юридического статуса этого участка. Статус уже определён
+детерминированной методикой скоринга: не переоценивай его и не меняй вариант.
+Используй variant_template как основу: допускается лёгкая стилистическая
+адаптация под факты кейса без изменения смысла. Если факты не дают
+безопасной адаптации — верни variant_template без изменений.
 
 ЖЁСТКИЕ РАМКИ:
 - Используй только приведённые ниже факты (JSON). Не добавляй новых фактов,
   зон, чисел, процентов и расстояний; не используй собственные знания модели.
-- Не повторяй кадастровый номер и полный адрес: они уже есть в заголовке и
-  паспорте участка.
-- Не называй балл и название статуса: они уже показаны в блоке «Оценка».
+- Стиль — уверенный, лаконичный, институциональный. Запрещены канцелярит и
+  сюсюканье («Для вас установлено…», «Вам сообщается…» и т.п.).
+- Не повторяй кадастровый номер, полный адрес, балл и название статуса:
+  они уже есть в заголовке, паспорте и блоке «Оценка».
+- Не перечисляй конкретные метры, проценты охвата, названия зон, лесов и
+  водоёмов, номера ПЗЗ и состояние сетей: эти факты вынесены в паспорт,
+  таблицу факторов внимания и раздел окружения.
 - Различай источники: документ ПЗЗ подтверждает зону и регламент, а
   пространственный анализ только выявляет пересечения и охват. Не пиши, что
   пространственный анализ «подтвердил регламент».
-- Не делай правовых и градостроительных заключений: запрещены категоричные
-  обещания («гарантировано», «можно строить», «разрешено строительство»,
-  «юридически чист» и т.п.).
-- Пробелы данных (evidence_gaps) формулируй как «не установлены / требуется
-  проверить»; не превращай неустановленное в подтверждённое.
+- Не делай правовых и градостроительных заключений сверх утверждённого
+  шаблона: запрещены категоричные обещания («гарантировано», «можно
+  строить», «разрешено строительство», «юридически чист» и т.п.).
+- Пробелы данных (evidence_gaps), если упоминаешь, формулируй как
+  «не установлены / требуется проверить»; не превращай неустановленное
+  в подтверждённое.
 - Не называй и не изменяй цены и условия услуг; никакого маркетинга и
   призывов к действию.
 - Текст — один абзац без переводов строк, списков и Markdown-разметки.
+  Без заголовка раздела, без «Вариант А:», без пояснений выбора и
+  мета-комментариев.
 {issues_block}
-УСТАНОВЛЕННЫЕ ФАКТЫ (JSON):
+ВХОДНЫЕ ДАННЫЕ (JSON):
 {facts_json}
 
 ФИНАЛ — последней строкой строго:
@@ -150,10 +168,15 @@ class EstablishedZoneRegulation(BaseModel):
 class EstablishedFactsInput(BaseModel):
     """Bounded вход генератора: только факты из context и model (§62).
 
-    Маркетинг, цены и CTA сюда не попадают по построению.
+    Маркетинг, цены и CTA сюда не попадают по построению. ``variant`` и
+    ``variant_template`` — утверждённый шаблон раздела, выбранный кодом по
+    status_key вердикта методики 6.2 (narrative_templates.yaml); LLM
+    адаптирует текст, но не меняет вариант.
     """
 
     target_use: str
+    variant: str
+    variant_template: str
     parcel: EstablishedParcelFacts
     zone_regulation: EstablishedZoneRegulation | None = None
     restrictions: list[EstablishedRestriction] = Field(default_factory=list)
@@ -301,17 +324,30 @@ class SubprocessNarrativeExecutor:
 
 
 def build_established_facts_input(
-    context: QuickReportContext, model: QuickReportModel
+    context: QuickReportContext,
+    model: QuickReportModel,
+    *,
+    templates: dict[str, NarrativeTemplate] | None = None,
 ) -> EstablishedFactsInput:
     """Bounded input только из QuickReportContext и QuickReportModel.
 
-    Маркетинг (presentation layer) в input не передаётся.
+    Маркетинг (presentation layer) в input не передаётся. Вариант шаблона
+    выбирается кодом по status_key вердикта — не генератором.
     """
+    by_status = templates if templates is not None else load_narrative_templates()
+    template = by_status.get(model.status.status_key)
+    if template is None:
+        raise QuickRulesError(
+            f"narrative_templates.yaml: нет шаблона для статуса "
+            f"{model.status.status_key!r}"
+        )
     parcel = context.parcel
     vri = parcel.vri
     regulations = context.zone_regulations
     return EstablishedFactsInput(
         target_use=_METHODOLOGY_TARGET,
+        variant=template.variant,
+        variant_template=template.text,
         parcel=EstablishedParcelFacts(
             cadastral_number=parcel.cadastral_number,
             address=parcel.address,
@@ -474,17 +510,18 @@ class NarrativeGenerator(Protocol):
 
 
 class DeterministicNarrativeGenerator:
-    """Fallback без LLM: текущая established-сводка в том же Markdown-виде.
+    """Fallback без LLM: утверждённый шаблон варианта verbatim.
 
-    Текст — тот же bullet list, что рендерит deterministic-путь, поэтому
-    fallback не меняет baseline отчёта ни на байт.
+    Текст — ``variant_template`` из narrative_templates.yaml, выбранный
+    кодом по status_key вердикта: отчёт при любом сбое LLM содержит
+    продуктово-согласованную формулировку.
     """
 
     def generate_established_facts(
         self, facts_input: EstablishedFactsInput, *, issues: list[QaIssue] | None = None
     ) -> EstablishedFactsNarrative:
         return EstablishedFactsNarrative(
-            text="\n".join(f"- {fact}" for fact in facts_input.deterministic_facts),
+            text=facts_input.variant_template,
             source="deterministic_fallback",
             input_sha256=input_sha256(facts_input),
         )

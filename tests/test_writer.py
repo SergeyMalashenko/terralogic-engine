@@ -2,8 +2,9 @@
 
 Реальный LLM не запускается: executor и критик — фейки с подконтрольным
 stdout. Ключевые инварианты: без narrative рендер байт-в-байт прежний;
-deterministic fallback даёт тот же Markdown, что deterministic-путь;
-балл, статус, факторы и маркетинг не зависят от LLM.
+deterministic fallback — утверждённый шаблон варианта из
+narrative_templates.yaml (выбор по status_key кодом); балл, статус,
+факторы и маркетинг не зависят от LLM.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from terralogic_engine.quickreport import (
     build_quick_context_from_report,
     build_quick_model,
     load_marketing,
+    load_narrative_templates,
     render_quick_model,
 )
 from terralogic_engine.quickreport.model import QuickNarrative
@@ -41,6 +43,7 @@ from terralogic_engine.quickreport.narrative import (
     input_sha256,
     parse_narrative_output,
 )
+from terralogic_engine.quickreport.rules import QuickRulesError
 from terralogic_engine.reporting.service import ReportingService
 from terralogic_engine.store.local import LocalCaseStore
 
@@ -141,6 +144,28 @@ def test_bounded_input_fields(quick, model, facts_input):
     }
 
 
+def test_variant_selected_by_status_key(quick, model, facts_input):
+    # фикстура: score 55 → attention → вариант «c» из narrative_templates.yaml
+    templates = load_narrative_templates()
+    assert model.status.status_key == "attention"
+    assert facts_input.variant == templates["attention"].variant == "c"
+    assert facts_input.variant_template == templates["attention"].text
+    # выбор детерминирован: каждый status_key мапится в свой вариант
+    for status_key, template in templates.items():
+        status = model.status.model_copy(update={"status_key": status_key})
+        mapped = model.model_copy(update={"status": status})
+        mapped_input = build_established_facts_input(quick, mapped)
+        assert mapped_input.variant == template.variant
+        assert mapped_input.variant_template == template.text
+
+
+def test_variant_unknown_status_rejected(quick, model):
+    status = model.status.model_copy(update={"status_key": "nonexistent"})
+    mapped = model.model_copy(update={"status": status})
+    with pytest.raises(QuickRulesError, match="nonexistent"):
+        build_established_facts_input(quick, mapped)
+
+
 def test_bounded_input_excludes_marketing(quick, facts_input):
     marketing = load_marketing()
     model = build_quick_model(quick, marketing=marketing)
@@ -216,9 +241,12 @@ def test_guardrails_reject_overlength_and_newlines(facts_input):
 def test_prompt_bounds(facts_input):
     prompt = build_narrative_prompt(facts_input)
     assert "Не добавляй новых фактов" in prompt
+    assert "не меняй вариант" in prompt
     assert "50:11:0020310:49" in prompt
     assert "Что уже удалось установить" in prompt
     assert NARRATIVE_RESULT_MARKER in prompt
+    # утверждённый шаблон варианта передан во входе
+    assert facts_input.variant_template in prompt
     # маркетинга и балла-инструкций нет во входе
     assert "30 000" not in prompt
 
@@ -228,14 +256,12 @@ def test_prompt_bounds(facts_input):
 # ---------------------------------------------------------------------------
 
 
-def test_deterministic_generator_matches_bullet_list(facts_input):
+def test_deterministic_generator_returns_variant_template(facts_input):
     narrative = DeterministicNarrativeGenerator().generate_established_facts(
         facts_input
     )
     assert narrative.source == "deterministic_fallback"
-    assert narrative.text == "\n".join(
-        f"- {fact}" for fact in facts_input.deterministic_facts
-    )
+    assert narrative.text == facts_input.variant_template
     assert narrative.model_name is None
     assert narrative.attempts == 0
     assert narrative.input_sha256 == input_sha256(facts_input)
@@ -267,7 +293,7 @@ def test_fallback_when_executor_dead_or_timeout(facts_input):
         generator = _hermes(FakeNarrativeExecutor(fail=fail))
         narrative = generator.generate_established_facts(facts_input)
         assert narrative.source == "deterministic_fallback"
-        assert narrative.text.startswith("- По кадастровым сведениям")
+        assert narrative.text == facts_input.variant_template
         assert any("LLM narrative недоступен" in w for w in narrative.warnings)
 
 
@@ -328,7 +354,7 @@ def test_render_without_narrative_byte_stable(quick, model):
     assert "Возможность реализовать ваш замысел требует подробного анализа." in reference
 
 
-def test_render_with_deterministic_fallback_byte_identical(quick, model, facts_input):
+def test_render_with_deterministic_fallback_shows_template(quick, model, facts_input):
     baseline = _render(model, quick)
     narrative = DeterministicNarrativeGenerator().generate_established_facts(
         facts_input
@@ -342,7 +368,18 @@ def test_render_with_deterministic_fallback_byte_identical(quick, model, facts_i
             )
         }
     )
-    assert _render(narrated, quick) == baseline
+    markdown = _render(narrated, quick)
+    section = _established_section(markdown)
+    # fallback — утверждённый шаблон варианта вместо bullet-списка
+    assert facts_input.variant_template in section
+    assert "- По кадастровым сведениям" not in section
+    # вне секции established рендер байт-совпадает с baseline
+    assert markdown.split("## Что уже удалось установить", 1)[0] == baseline.split(
+        "## Что уже удалось установить", 1
+    )[0]
+    assert markdown.split("## Факторы, требующие внимания", 1)[1] == baseline.split(
+        "## Факторы, требующие внимания", 1
+    )[1]
 
 
 def test_render_with_llm_narrative_only_in_established(quick, model, facts_input):
@@ -527,7 +564,7 @@ async def test_quickreport_compat_shim_writer_executor(tmp_path) -> None:
     assert "## Narrative: llm (применён)" in _qa(store, result)
 
 
-async def test_quickreport_generator_dead_keeps_deterministic(tmp_path) -> None:
+async def test_quickreport_generator_dead_falls_back_to_template(tmp_path) -> None:
     executor = FakeNarrativeExecutor(fail="exception")
     result, store = await _prepare(tmp_path, generator=_hermes(executor))
     assert result.report_id
@@ -535,10 +572,10 @@ async def test_quickreport_generator_dead_keeps_deterministic(tmp_path) -> None:
     qa = _qa(store, result)
     assert "## Narrative: deterministic_fallback" in qa
     assert "- источник: deterministic_fallback" in qa
-    # fallback не меняет deterministic Markdown (run id в имени PNG различается)
-    deterministic, _ = await _prepare(tmp_path / "plain")
-    normalize = lambda md: re.sub(r"quickreport-run-[0-9a-f]+\.png", "map.png", md)
-    assert normalize(result.markdown) == normalize(deterministic.markdown)
+    # fallback — утверждённый шаблон варианта, не bullet list deterministic-пути
+    templates = load_narrative_templates()
+    assert any(template.text in result.markdown for template in templates.values())
+    assert "- По кадастровым сведениям" not in result.markdown
     report = store.get_latest_generated_report(
         result.case_id, result.collection_run_id
     )
