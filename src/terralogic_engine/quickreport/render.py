@@ -6,7 +6,10 @@
 «Что ещё нужно проверить», схема расположения зон (PNG из ``mapimg``
 либо заглушка), статический дисклеймер и коммерческий «Следующий шаг»
 (только из MarketingConfig). Новых зависимостей нет — чистая сборка
-строк; LLM в генерации не участвует.
+строк. Единственный опциональный LLM-слот — ``model.narrative
+.established_summary`` (текст раздела «Что уже удалось установить»,
+готовится NarrativeGenerator'ом до рендера); сам рендер LLM не вызывает,
+без narrative Markdown байт-стабилен.
 
 Публичный ``render_quickreport(context, ...)`` сохранён как фасад:
 ``build_quick_model`` → рендер модели (§78–79 ТЗ).
@@ -71,9 +74,7 @@ def _capitalize(word: str) -> str:
     return word[:1].upper() + word[1:] if word else word
 
 
-def _factors_table(
-    factors: list[QuickFactor], meanings: dict[str, str] | None = None
-) -> list[str]:
+def _factors_table(factors: list[QuickFactor]) -> list[str]:
     zone_factors = [factor for factor in factors if not factor.informational]
     if not zone_factors:
         return [_NO_FACTORS_NOTE]
@@ -82,11 +83,10 @@ def _factors_table(
         "| --- | --- | --- | --- |",
     ]
     for number, factor in enumerate(zone_factors, start=1):
-        meaning = (meanings or {}).get(factor.rule_id) or factor.guidance
         lines.append(
             f"| {number} | {_cell(factor.zone_name)} | "
             f"{_cell(_capitalize(factor.coverage_word))} | "
-            f"{_cell(meaning)} |"
+            f"{_cell(factor.guidance)} |"
         )
     return lines
 
@@ -212,8 +212,8 @@ def _zone_regulations_lines(regulations: QuickZoneRegulations | None) -> list[st
     return lines
 
 
-def _verdict_lines(verdict: QuickVerdict, main_conclusion: str | None = None) -> list[str]:
-    """Блок оценки по методике 6.1: балл/нерасчёт, статус, причины, пояснение."""
+def _verdict_lines(verdict: QuickVerdict) -> list[str]:
+    """Блок оценки по методике 6.2: балл/нерасчёт, статус, причины, пояснение."""
     if verdict.score is None:
         head = f"## Оценка не рассчитана — {verdict.status_title}"
     else:
@@ -221,7 +221,7 @@ def _verdict_lines(verdict: QuickVerdict, main_conclusion: str | None = None) ->
         if verdict.preliminary:
             marks.append("предварительная")
         head = f"## Оценка участка — {verdict.score}/{SCORE_SCALE} ({', '.join(marks)})"
-    lines = [head, "", main_conclusion or verdict.status_summary]
+    lines = [head, "", verdict.status_summary]
     if verdict.reasons:
         lines.extend(["", "Основные причины:"])
         lines.extend(f"- {reason}" for reason in verdict.reasons)
@@ -235,13 +235,14 @@ def _verdict_lines(verdict: QuickVerdict, main_conclusion: str | None = None) ->
 def _established_lines(
     facts: list[str], summary: str | None = None
 ) -> list[str]:
+    if summary:
+        # §27 ТЗ: narrative заменяет deterministic-список целиком; fallback-
+        # narrative — тот же список текстом, поэтому без LLM Markdown
+        # не меняется.
+        return [summary]
     if not facts:
         return [_NO_FACTS_NOTE]
-    lines = [f"- {fact}" for fact in facts]
-    if summary:
-        # §27 ТЗ: интерпретация — абзацом, исходные факты остаются видны
-        lines = [summary, "", *lines]
-    return lines
+    return [f"- {fact}" for fact in facts]
 
 
 def _missing_lines(items: list[QuickMissingItem]) -> list[str]:
@@ -303,10 +304,7 @@ def render_quick_model(
         f"**Кадастровый номер {identity.cadastral_number}**"
         + (f" | {identity.address}" if identity.address else ""),
         "",
-        *_verdict_lines(
-            model.status,
-            main_conclusion=(narrative.main_conclusion if narrative else None),
-        ),
+        *_verdict_lines(model.status),
         "",
         "## Что уже удалось установить",
         "",
@@ -317,10 +315,7 @@ def render_quick_model(
         "",
         "## Факторы, требующие внимания",
         "",
-        *_factors_table(
-            model.attention_factors,
-            meanings=(narrative.factor_meanings if narrative else None),
-        ),
+        *_factors_table(model.attention_factors),
         "",
         "## Паспорт участка",
         "",

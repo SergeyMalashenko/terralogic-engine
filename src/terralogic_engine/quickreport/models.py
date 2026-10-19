@@ -34,7 +34,7 @@ class QuickFactor(BaseModel):
 
 
 class QuickVerdict(BaseModel):
-    """Вердикт методики 6.1: балл (None — не рассчитан), статус, причины."""
+    """Вердикт методики 6.2: балл (None — не рассчитан), статус, причины."""
 
     score: int | None
     status_key: str
@@ -115,7 +115,7 @@ class QuickReportContext(BaseModel):
     surroundings: QuickSurroundings
     missing: list[QuickMissingItem] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
-    protocol: "QuickProtocol | None" = None
+    protocol: QuickProtocol | None = None
 
 
 class QuickProtocolFactor(BaseModel):

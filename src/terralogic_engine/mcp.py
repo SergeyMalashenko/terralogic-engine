@@ -37,9 +37,12 @@ DEFAULT_INSTRUCTIONS = (
     "configured and applicable, performs deterministic spatial "
     "analytics, and returns case_id plus collection_run_id. Then call "
     "terralogic_prepare_quickreport with the same case_id: it builds and "
-    "persists the deterministic quick report (Russian Markdown) without any "
-    "model writing — the score and factor texts come from the versioned "
-    "scoring methodology. Return the report Markdown and report_id to the "
+    "persists the quick report (Russian Markdown) — facts, score, status, "
+    "passport, factors and marketing are deterministic and come from the "
+    "versioned scoring methodology; the only optional LLM step is the "
+    "bounded narrative of the 'Что уже удалось установить' section, which "
+    "rephrases established facts and falls back to the deterministic text "
+    "on any failure. Return the report Markdown and report_id to the "
     "user. Never calculate areas, percentages, or distances yourself. "
     "Do not present the report as a legal opinion."
 )
@@ -130,13 +133,32 @@ def create_reporting_service(
         geodocs=(McpGeodocsClient(url=geodocs_url) if geodocs_url else None),
     )
     from terralogic_engine.qa.critic import SubprocessCriticExecutor
-    from terralogic_engine.quickreport.writer import SubprocessWriterExecutor
+    from terralogic_engine.quickreport.narrative import (
+        DeterministicNarrativeGenerator,
+        FallbackNarrativeGenerator,
+        HermesNarrativeGenerator,
+        NarrativeGenerator,
+        SubprocessNarrativeExecutor,
+    )
+
+    # NarrativeGenerator блока «Что уже удалось установить»: Hermes + Qwen
+    # (scripts/hermes-writer.sh) с fail-safe деградацией в детерминированный
+    # текст; без TERRALOGIC_WRITER_CMD — только детерминированный генератор.
+    narrative_executor = SubprocessNarrativeExecutor.from_env()
+    narrative_generator: NarrativeGenerator = (
+        FallbackNarrativeGenerator(
+            HermesNarrativeGenerator(narrative_executor),
+            DeterministicNarrativeGenerator(),
+        )
+        if narrative_executor is not None
+        else DeterministicNarrativeGenerator()
+    )
 
     return ReportingService(
         store=store,
         acquisition=acquisition,
         critic=SubprocessCriticExecutor.from_env(),
-        writer=SubprocessWriterExecutor.from_env(),
+        narrative_generator=narrative_generator,
     )
 
 
@@ -236,11 +258,13 @@ def create_mcp_server(
         case_id: str,
         collection_run_id: str | None = None,
     ) -> ToolResult[QuickReportResult]:
-        """Build and persist the deterministic quick report for a case.
+        """Build and persist the quick report for a case.
 
-        The report is rendered from CaseStore facts without any model
-        involvement: the score and factor texts come from the versioned
-        scoring methodology, whose version is stored with the report.
+        The report is rendered from CaseStore facts: the score and factor
+        texts come from the versioned scoring methodology (deterministic);
+        the only optional LLM involvement is the bounded narrative of the
+        'Что уже удалось установить' section, which rephrases established
+        facts and degrades to the deterministic text on any failure.
         Returns the complete Markdown document plus its CaseStore metadata.
 
         Args:

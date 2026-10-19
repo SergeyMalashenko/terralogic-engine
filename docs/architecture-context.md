@@ -14,8 +14,10 @@
    CaseStore (SQLite + gzip-файлы);
 3. выполняет детерминированную пространственную аналитику (пересечения,
    расстояния) по снапшотам одного collection run;
-4. строит клиентский экспресс-отчёт со скорингом (методика 6.1) и сервисный
-   отчёт-протокол для разработчиков — полностью детерминированно, без LLM;
+4. строит клиентский экспресс-отчёт со скорингом (методика 6.2) и сервисный
+   отчёт-протокол для разработчиков; факты, балл, статус, паспорт и
+   маркетинг детерминированны, единственный опциональный LLM-этап —
+   bounded narrative раздела «Что уже удалось установить»;
 5. обогащает сведения нормативным классификатором ВРИ (Приказ Росреестра
    П/0412), также без LLM;
 6. предоставляет read-only вьювер кейсов (Streamlit).
@@ -105,7 +107,8 @@ reporting/              Сборка отчётного контекста из 
                           сборка карты/PDF/сервисного отчёта.
   template_registry.py    Версионируемый реестр шаблонов отчётов.
 
-quickreport/            Экспресс-отчёт со скорингом (без LLM):
+quickreport/            Экспресс-отчёт со скорингом (LLM — только один bounded
+                        narrative-слот):
   context.py              build_quick_context(_from_report) — производные:
                           классификация и слияние зон, факторы, U/A/C/G,
                           пробелы evidence (missing, §34).
@@ -117,7 +120,7 @@ quickreport/            Экспресс-отчёт со скорингом (б�
                           established_facts, attention_factors, passport,
                           environment, missing_information, limitations,
                           marketing (presentation layer).
-  rules.py                Методика 6.1 из assets/scoring_rules.yaml +
+  rules.py                Методика 6.2 из assets/scoring_rules.yaml +
                           zone_guidance.yaml; methodology_sha256();
                           MarketingConfig/load_marketing из marketing.yaml
                           (отдельный sha256, в методику не входит);
@@ -148,7 +151,9 @@ qa/                     Report QA (§61–76 ТЗ): проверка отчёт�
   validator.py            DeterministicValidator: балл=модель, статус,
                           площадь, ВРИ=классификатор, имена зон, обязательные
                           секции §23, цены=MarketingConfig, статичный
-                          дисклеймер, трассировка факторов к протоколу.
+                          дисклеймер, трассировка факторов к протоколу,
+                          минимальные narrative-checks (текст на месте, рамки
+                          длины/фраз, числа в пределах входа) — без NLP.
   critic.py               LLM-критик (Hermes + gemma3:12b): промпт с политикой §71,
                           read-only по построению (без инструментов), парсинг
                           === CRITIC_RESULT ===, fail-safe — любой сбой →
@@ -159,31 +164,56 @@ qa/                     Report QA (§61–76 ТЗ): проверка отчёт�
                           Без env критик отключён.
                           Итоги — артефакт quickreport-{run}-qa.md в CaseStore.
 
-Два профиля Hermes (ТЗ §43–45, §65–66):
+Три профиля Hermes (ТЗ §43–45, §62–66):
 
     ~/.hermes-discovery   Документный контур (geodocs): Qwen + tools
                           (MCP порталов, веб-поиск Firecrawl). Источник
                           для harness'а geodocs; переопределяется env
                           GEODOCS_HERMES_HOME.
-    ~/.hermes-critic      Report QA (критик и writer): gemma3:12b, все
-                          toolsets отключены — модель не поддерживает
-                          tools в Ollama, а ролям QA они не нужны
-                          (read-only по построению). Вызывается через
-                          scripts/hermes-qa.sh (env TERRALOGIC_CRITIC_CMD /
-                          TERRALOGIC_WRITER_CMD).
+    ~/.hermes-critic      Report QA critic: gemma3:12b, все toolsets
+                          отключены — модель не поддерживает tools в
+                          Ollama, а критику они не нужны (read-only по
+                          построению). Вызывается через
+                          scripts/hermes-qa.sh (env TERRALOGIC_CRITIC_CMD).
+    ~/.hermes-writer      Narrative writer QuickReport: qwen3.5:9b-q4_K_M,
+                          toolsets пустые, agent.max_turns=1,
+                          tool_use_enforcement=none. Вызывается через
+                          scripts/hermes-writer.sh (env
+                          TERRALOGIC_WRITER_CMD) с --reasoning none и
+                          --ignore-rules (профильные SOUL/AGENTS/memory не
+                          влияют на юридически значимый текст); при первом
+                          запуске профиль инициализируется из checked-in
+                          scripts/hermes-writer.config.yaml. Переопределяется
+                          env TERRALOGIC_WRITER_HOME / TERRALOGIC_WRITER_MODEL;
+                          TERRALOGIC_WRITER_USAGE_FILE включает запись
+                          usage-файла (model/token fields, без CoT).
 
-quickreport/writer.py   Bounded narrative writer (§62–63, §74 ТЗ): опциональный
-                        LLM-этап поверх QuickReportModel — переформулирует
-                        только main_conclusion / established_summary /
-                        factor_meanings; факты, балл, статус, цены не трогает.
-                        Рамки validate_writer_output по каждому полю (чужие
-                        числа, запрещённые фразы, длина, rule_id); битое поле →
-                        детерминированный fallback. Протокол === NARRATIVE_RESULT
-                        ===, один retry, fail-safe. Конфигурация — env
-                        TERRALOGIC_WRITER_CMD (тот же scripts/hermes-qa.sh).
+quickreport/narrative.py Bounded NarrativeGenerator (§62–63, §74 ТЗ):
+                        опциональный LLM-этап после build_quick_model —
+                        формулирует только раздел «Что уже удалось установить»
+                        (единственный narrative-слот; вывод и смыслы факторов
+                        остаются детерминированными). Вход — bounded
+                        EstablishedFactsInput (только QuickReportContext +
+                        QuickReportModel, маркетинг не передаётся); выход —
+                        strict JSON {"text": ...} после маркера
+                        === NARRATIVE_RESULT === (extra fields запрещены).
+                        Guardrails кодом: 2–3 предложения, ≤700 символов, один
+                        абзац, чужие числа против sha256-сериализованного входа,
+                        запрещённые категоричные фразы; один retry только при
+                        битом structured output. FallbackNarrativeGenerator
+                        (None/exception/timeout/invalid) →
+                        DeterministicNarrativeGenerator — тот же established
+                        bullet list, baseline не меняется. Метаданные прогона
+                        (source, model, prompt version quickreport_established_
+                        facts_prompt_v2, sha256 входа, latency, attempts, usage)
+                        — в QuickNarrative и QA-артефакте; model_name уходит в
+                        save_generated_report. Конфигурация — env
+                        TERRALOGIC_WRITER_CMD (scripts/hermes-writer.sh).
                         Targeted revision (§74): при needs_revision критика —
-                        один раунд по затронутым секциям; принимается только
-                        при pass валидатора.
+                        один раунд только по error/critical секции «Что уже
+                        удалось установить»; принимается только valid LLM-
+                        результат и только при повторном pass валидатора;
+                        writer.py — compatibility shim (алиасы executor'ов).
 
 mcp.py                  FastMCP-сервер `terralogic-mcp` :8004, два инструмента:
                         terralogic_prepare_case(cadastral_number, case_id?,
@@ -221,7 +251,7 @@ legal/sources/…docx                Immutable DOCX приказа П/0412 (ре
 Регенерация отчётов из существующих кейс-сторов — офлайн, ~10 с на 24 кейса
 (через `create_reporting_service(store_path=...)` без MCP).
 
-## 5. Скоринг (методика 6.1)
+## 5. Скоринг (методика 6.2)
 
 - Оценка = max(0; 100 − Σ вычетов групп ограничений (потолок 40/группа) −
   U − G), где U — неизвестность коммуникаций (4/3/3, макс 10),
@@ -259,10 +289,11 @@ legal/sources/…docx                Immutable DOCX приказа П/0412 (ре
 ## 7. Тесты и качество
 
 - `cd terralogic-engine && .venv/bin/python -m pytest tests/ -q` —
-  113 green. Тесты: acquisition pipeline, analytics, case store, legal VRI
-  (15), MCP, MCP-клиенты, quickreport (+карта), reporting, viewer; `fakes.py`.
-- Ruff: новые файлы чисты; 4 pre-existing ошибки (UP037 models.py:90,
-  PYI041 service.py:36, ISC004 service.py ×2).
+  205 green. Тесты: acquisition pipeline, analytics, case store, legal VRI,
+  MCP, MCP-клиенты, quickreport (+карта, narrative, PDF), reporting, viewer;
+  `fakes.py`.
+- Ruff: изменённые файлы чисты; pre-existing ошибки вне scope проверяются
+  отдельно.
 - Стиль коммитов: `feat(scope): …` / `fix(scope): …` на русском.
 
 ## 8. Известные границы и хвосты

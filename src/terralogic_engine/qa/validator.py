@@ -2,7 +2,10 @@
 
 Проверяет кодом то, что не нужно отдавать LLM: балл и статус соответствуют
 модели, площадь и ВРИ — контексту, обязательные секции на месте, цены — из
-MarketingConfig, дисклеймер не изменён. Работает по уже построенным
+MarketingConfig, дисклеймер не изменён. Для narrative-слота «Что уже
+удалось установить» — минимальные кодовые проверки (текст на месте,
+рамки длины/фраз, числа в пределах canonical input), без NLP: семантика
+остаётся задачей критика. Работает по уже построенным
 ``QuickReportModel`` + Markdown, без сети и без LLM. Неизвестное состояние
 помечается ``warning``, а не ``error``: валидатор не должен блокировать
 отчёт по собственным пробелам.
@@ -13,6 +16,13 @@ from __future__ import annotations
 import re
 
 from terralogic_engine.quickreport.model import REPORT_LIMITATIONS, QuickReportModel
+from terralogic_engine.quickreport.narrative import (
+    BANNED_NARRATIVE_PHRASES,
+    MAX_NARRATIVE_CHARS,
+    build_established_facts_input,
+    input_allowed_numbers,
+    text_numbers,
+)
 
 from .models import QaIssue, ValidatorResult
 
@@ -72,7 +82,7 @@ def _check_score(model: QuickReportModel, markdown: str) -> list[QaIssue]:
                 "critical",
                 f"в тексте {scored.group(1)}/100, в модели {model.score}/100",
                 claim=scored.group(0),
-                suggested_action="балл должен происходить только из методики 6.1",
+                suggested_action="балл должен происходить только из методики 6.2",
             )
         )
     return issues
@@ -419,6 +429,112 @@ def _g_safe(value: float) -> str:
     return f"{value:g}"
 
 
+# ---------------------------------------------------------------------------
+# Narrative-слот «Что уже удалось установить» (§62–63): кодовые рамки, без NLP
+# ---------------------------------------------------------------------------
+
+_ESTABLISHED_SECTION = "## Что уже удалось установить"
+
+
+def _established_section_text(markdown: str) -> str | None:
+    if _ESTABLISHED_SECTION not in markdown:
+        return None
+    tail = markdown.split(_ESTABLISHED_SECTION, 1)[1]
+    return tail.split("\n## ", 1)[0]
+
+
+def _check_narrative(
+    model: QuickReportModel, markdown: str, context: object | None
+) -> list[QaIssue]:
+    """Минимальные проверки narrative: присутствие, рамки, числа входа.
+
+    Смысл текста здесь не проверяется — это задача критика.
+    """
+    narrative = model.narrative
+    if narrative is None:
+        return []
+    issues: list[QaIssue] = []
+    text = narrative.established_summary
+    if narrative.source == "llm" and not (text and text.strip()):
+        issues.append(
+            _issue(
+                "narrative_llm_text",
+                "Что уже удалось установить",
+                "error",
+                "narrative источника llm без текста — слот обязан быть заполнен",
+            )
+        )
+        return issues
+    if not text:
+        return []
+    section = _established_section_text(markdown)
+    if section is None or text not in section:
+        issues.append(
+            _issue(
+                "narrative_in_report",
+                "Что уже удалось установить",
+                "error",
+                "текст narrative модели не найден в секции отчёта"
+                " (потеря или подмена при рендере)",
+            )
+        )
+    if narrative.source != "llm":
+        # deterministic fallback — собственный текст конвейера, рамки к
+        # нему не применяются.
+        return issues
+    if len(text) > MAX_NARRATIVE_CHARS:
+        issues.append(
+            _issue(
+                "narrative_llm_text",
+                "Что уже удалось установить",
+                "error",
+                f"narrative длиннее {MAX_NARRATIVE_CHARS} символов",
+                claim=text[:80],
+            )
+        )
+    folded = text.casefold()
+    for phrase in BANNED_NARRATIVE_PHRASES:
+        if phrase in folded:
+            issues.append(
+                _issue(
+                    "narrative_llm_text",
+                    "Что уже удалось установить",
+                    "error",
+                    f"запрещённая категоричная фраза «{phrase}» в narrative",
+                    claim=text[:80],
+                )
+            )
+            break
+    if "\n" in text:
+        issues.append(
+            _issue(
+                "narrative_llm_text",
+                "Что уже удалось установить",
+                "error",
+                "переводы строк в LLM narrative — допустим один абзац",
+            )
+        )
+    if context is None:
+        return issues
+    try:
+        facts_input = build_established_facts_input(context, model)  # type: ignore[arg-type]
+    except Exception:  # noqa: BLE001 — пробел валидатора, не отчёта
+        return issues
+    foreign = text_numbers(text) - input_allowed_numbers(facts_input)
+    if foreign:
+        issues.append(
+            _issue(
+                "narrative_numbers_in_context",
+                "Что уже удалось установить",
+                "error",
+                f"числа narrative выходят за множество чисел входа:"
+                f" {sorted(foreign)}",
+                claim=text[:80],
+            )
+        )
+    return issues
+
+
 def validate_quickreport(
     model: QuickReportModel,
     markdown: str,
@@ -438,6 +554,7 @@ def validate_quickreport(
     issues.extend(_check_factors_evidence(model, context))
     issues.extend(_check_q30_preliminary(model, context))
     issues.extend(_check_factor_integrity(context))
+    issues.extend(_check_narrative(model, markdown, context))
     status = (
         "fail"
         if any(issue.severity in ("error", "critical") for issue in issues)

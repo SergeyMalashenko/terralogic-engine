@@ -23,8 +23,17 @@ from terralogic_engine.quickreport.model import (
     QuickReportModel,
     build_quick_model,
 )
+from terralogic_engine.quickreport.narrative import (
+    DeterministicNarrativeGenerator,
+    EstablishedFactsInput,
+    EstablishedFactsNarrative,
+    FallbackNarrativeGenerator,
+    HermesNarrativeGenerator,
+    NarrativeExecutor,
+    NarrativeGenerator,
+    build_established_facts_input,
+)
 from terralogic_engine.quickreport.render import render_quick_model
-from terralogic_engine.quickreport.writer import WriterExecutor, run_writer
 from terralogic_engine.reporting.context import (
     build_report_context,
     collection_receipt_for_run,
@@ -50,14 +59,6 @@ MAX_MODEL_NAME_CHARACTERS = 200
 QUICK_REPORT_TEMPLATE_ID = "quick_report"
 
 
-def _narrative_empty(narrative: QuickNarrative) -> bool:
-    return (
-        narrative.main_conclusion is None
-        and narrative.established_summary is None
-        and not narrative.factor_meanings
-    )
-
-
 class CasePreparationError(RuntimeError):
     """Raised when source collection cannot produce an analyzable parcel."""
 
@@ -74,7 +75,8 @@ class ReportingService:
         tile_fetcher: Callable[[int, int, int, float], bytes | None] | None = None,
         marketing: MarketingConfig | None = None,
         critic: CriticExecutor | None = None,
-        writer: WriterExecutor | None = None,
+        narrative_generator: NarrativeGenerator | None = None,
+        writer: NarrativeExecutor | None = None,
     ) -> None:
         self.store = store
         self.acquisition = acquisition
@@ -84,8 +86,19 @@ class ReportingService:
         self._marketing = marketing if marketing is not None else load_marketing()
         # LLM-критик отчёта (§65 ТЗ); None — QA ограничено валидатором.
         self._critic = critic
-        # Bounded narrative writer (§62 ТЗ); None — текст детерминированный.
-        self._writer = writer
+        # Bounded NarrativeGenerator блока «Что уже удалось установить»
+        # (§62 ТЗ); None — текст полностью детерминированный.
+        # Compatibility shim: старый writer-executor оборачивается в
+        # HermesNarrativeGenerator с детерминированным fallback.
+        if narrative_generator is not None:
+            self._narrative_generator = narrative_generator
+        elif writer is not None:
+            self._narrative_generator = FallbackNarrativeGenerator(
+                HermesNarrativeGenerator(writer),
+                DeterministicNarrativeGenerator(),
+            )
+        else:
+            self._narrative_generator = None
 
     async def prepare_case(
         self,
@@ -148,12 +161,14 @@ class ReportingService:
         *,
         collection_run_id: str | None = None,
     ) -> QuickReportResult:
-        """Build and persist the deterministic quick report for a case run.
+        """Build and persist the quick report for a case run.
 
-        No LLM is involved: factor texts come from ``zone_guidance.yaml``
-        and the score from the stub methodology in ``scoring_rules.yaml``.
-        The report is stored with ``template_id="quick_report"`` and the
-        methodology version as the template version.
+        Факты, скоринг 6.2, паспорт, факторы и маркетинг детерминированны;
+        единственный опциональный LLM-этап — NarrativeGenerator раздела
+        «Что уже удалось установить» (§62 ТЗ) поверх готовой модели; его
+        сбой — fallback на детерминированный текст (§77). Отчёт сохраняется
+        с ``template_id="quick_report"`` и версией методики как версией
+        шаблона; при применённом LLM-narrative модель уходит в model_name.
         """
 
         context = build_quick_context(
@@ -166,31 +181,37 @@ class ReportingService:
         )
         context.warnings.extend(map_warnings)
         # Продуктовая модель → (опц.) bounded narrative → черновик → QA
-        # (§61–63 ТЗ). Writer меняет только формулировки, не факты; сбой
-        # writer'а — fallback на детерминированный текст (§77).
+        # (§61–63 ТЗ). Narrative меняет только текст раздела «Что уже
+        # удалось установить», не факты; сбой генератора — fallback на
+        # детерминированный текст (§77).
         model = build_quick_model(context, marketing=self._marketing)
-        writer_applied = False
-        writer_rejections: list[str] = []
-        if self._writer is not None:
-            narrative, writer_rejections = run_writer(
-                self._writer, model, warnings=context.warnings
+        facts_input: EstablishedFactsInput | None = None
+        narrative_result: EstablishedFactsNarrative | None = None
+        if self._narrative_generator is not None:
+            facts_input = build_established_facts_input(context, model)
+            narrative_result = self._narrative_generator.generate_established_facts(
+                facts_input
             )
-            if narrative is not None:
-                model = model.model_copy(update={"narrative": narrative})
-                writer_applied = True
+            if narrative_result is not None:
+                context.warnings.extend(narrative_result.warnings)
+                model = model.model_copy(
+                    update={"narrative": self._quick_narrative(narrative_result)}
+                )
         markdown = render_quick_model(
             model,
             map_lines=map_lines,
             zone_regulations=context.zone_regulations,
         )
-        qa_relative_path, qa_warnings, markdown = self._build_qa_report(
-            case_id,
-            context,
-            model,
-            markdown,
-            map_lines=map_lines,
-            writer_applied=writer_applied,
-            writer_rejections=writer_rejections,
+        qa_relative_path, qa_warnings, markdown, model, narrative_result = (
+            self._build_qa_report(
+                case_id,
+                context,
+                model,
+                markdown,
+                map_lines=map_lines,
+                facts_input=facts_input,
+                narrative_result=narrative_result,
+            )
         )
         context.warnings.extend(qa_warnings)
         pdf_relative_path, pdf_warnings = self._build_quick_pdf(
@@ -207,6 +228,7 @@ class ReportingService:
         )
         if analysis is None:
             raise ValueError("The selected run has no analytics result")
+        narrative = model.narrative
         report = self.store.save_generated_report(
             case_id=case_id,
             collection_run_id=context.collection_run_id,
@@ -216,6 +238,11 @@ class ReportingService:
             template_version=context.methodology_version,
             template_sha256=methodology_sha256(),
             markdown=markdown,
+            model_name=(
+                narrative.model_name
+                if narrative is not None and narrative.source == "llm"
+                else None
+            ),
         )
         return QuickReportResult(
             report_id=report.id,
@@ -236,6 +263,18 @@ class ReportingService:
             warnings=context.warnings,
         )
 
+    @staticmethod
+    def _quick_narrative(result: EstablishedFactsNarrative) -> QuickNarrative:
+        return QuickNarrative(
+            established_summary=result.text or None,
+            source=result.source,
+            model_name=result.model_name,
+            prompt_version=result.prompt_version,
+            input_sha256=result.input_sha256,
+            latency_ms=result.latency_ms,
+            attempts=result.attempts,
+        )
+
     def _build_qa_report(
         self,
         case_id: str,
@@ -244,27 +283,40 @@ class ReportingService:
         markdown: str,
         *,
         map_lines: list[str] | None,
-        writer_applied: bool,
-        writer_rejections: list[str],
-    ) -> tuple[str | None, list[str], str]:
+        facts_input: EstablishedFactsInput | None,
+        narrative_result: EstablishedFactsNarrative | None,
+    ) -> tuple[
+        str | None,
+        list[str],
+        str,
+        QuickReportModel,
+        EstablishedFactsNarrative | None,
+    ]:
         """QA-артефакт рядом с quick-отчётом: валидатор + критик (§61 ТЗ).
 
         Детерминированный валидатор — всегда; LLM-критик — если задан
         ``critic`` в конструкторе. При needs_revision критика и включённом
-        writer'е выполняется один раунд targeted revision (§74): только
-        narrative-поля затронутых секций; пересобранный текст принимается,
-        лишь если валидатор его пропускает, иначе откат. Возвращает
-        (путь к QA-артефакту, warnings, итоговый markdown).
-        Любой сбой деградирует в warning: отчёт сохраняется независимо (§77).
+        генераторе выполняется один раунд targeted revision (§74), суженный
+        до секции «Что уже удалось установить»: принимается только valid
+        LLM-результат и только после повторного pass валидатора; score,
+        вывод и смыслы факторов revision не затрагивает. Возвращает (путь
+        к QA-артефакту, warnings, итоговый markdown, итоговая модель,
+        итоговый narrative). Любой сбой деградирует в warning: отчёт
+        сохраняется независимо (§77).
         """
         from terralogic_engine.qa import run_critic, validate_quickreport
-        from terralogic_engine.quickreport.model import QuickNarrative
 
         warnings: list[str] = []
         try:
             validator_result = validate_quickreport(model, markdown, context=context)
         except Exception as exc:  # noqa: BLE001 — QA не ломает конвейер
-            return None, [f"QA-валидатор не отработал: {exc}"], markdown
+            return (
+                None,
+                [f"QA-валидатор не отработал: {exc}"],
+                markdown,
+                model,
+                narrative_result,
+            )
         critic_result = run_critic(
             self._critic, model, markdown, validator_result, warnings=warnings
         )
@@ -285,40 +337,27 @@ class ReportingService:
             critic_result is not None
             and critic_result.status == "needs_revision"
             and not critic_effective_pass
-            and self._writer is not None
+            and self._narrative_generator is not None
+            and facts_input is not None
         ):
-            narrative_sections = (
-                "Оценка", "Что уже удалось установить", "Факторы, требующие внимания",
-            )
             # Revision — только по содержательным замечаниям (error/critical)
-            # в narrative-секциях; warning фиксируется без переписывания.
+            # секции «Что уже удалось установить»; warning фиксируется без
+            # переписывания, другие секции revision не затрагивает.
             relevant = [
                 issue
                 for issue in critic_result.issues
                 if issue.severity in ("error", "critical")
-                and any(issue.section.startswith(prefix) for prefix in narrative_sections)
+                and issue.section.startswith("Что уже удалось установить")
             ]
             if relevant:
-                revised, revision_rejections = run_writer(
-                    self._writer, model, issues=relevant, warnings=warnings
+                revised = self._narrative_generator.generate_established_facts(
+                    facts_input, issues=relevant
                 )
-                writer_rejections.extend(revision_rejections)
-                if revised is not None and not _narrative_empty(revised):
-                    base = model.narrative or QuickNarrative()
-                    merged = QuickNarrative(
-                        main_conclusion=(
-                            revised.main_conclusion or base.main_conclusion
-                        ),
-                        established_summary=(
-                            revised.established_summary or base.established_summary
-                        ),
-                        factor_meanings={
-                            **base.factor_meanings,
-                            **revised.factor_meanings,
-                        },
-                    )
+                if revised is not None:
+                    warnings.extend(revised.warnings)
+                if revised is not None and revised.source == "llm" and revised.text:
                     revised_model = model.model_copy(
-                        update={"narrative": merged}
+                        update={"narrative": self._quick_narrative(revised)}
                     )
                     revised_markdown = render_quick_model(
                         revised_model,
@@ -330,8 +369,11 @@ class ReportingService:
                     )
                     if recheck.status == "pass":
                         model, markdown, validator_result = (
-                            revised_model, revised_markdown, recheck
+                            revised_model,
+                            revised_markdown,
+                            recheck,
                         )
+                        narrative_result = revised
                         revision_note = "принята (валидатор pass)"
                     else:
                         revision_note = "отклонена: валидатор fail после revision"
@@ -339,17 +381,20 @@ class ReportingService:
                             "QA revision отклонена валидатором — отчёт без изменений"
                         )
                 else:
-                    revision_note = "отклонена: writer не вернул пригодный текст"
+                    # fallback/failure — сохраняется прежний текст
+                    revision_note = "отклонена: генератор не вернул пригодный LLM-текст"
             else:
                 revision_note = (
-                    "не выполнялась: нет error/critical в narrative-секциях"
+                    "не выполнялась: нет error/critical в секции "
+                    "«Что уже удалось установить»"
                 )
 
-        writer_status = (
-            "применён"
-            if writer_applied
-            else ("отключён" if self._writer is None else "недоступен/отброшен")
-        )
+        narrative_status = "отключён (детерминированный текст)"
+        if self._narrative_generator is not None:
+            if narrative_result is not None and narrative_result.source == "llm":
+                narrative_status = "llm (применён)"
+            else:
+                narrative_status = "deterministic_fallback"
         lines = [
             f"# QA отчёта — {context.parcel.cadastral_number}",
             "",
@@ -391,12 +436,30 @@ class ReportingService:
             )
         elif critic_result is not None:
             lines.append("Проблем не найдено.")
-        lines.extend(["", f"## Writer: {writer_status}", ""])
-        if writer_rejections:
-            lines.append("Отброшенные поля writer'а (рамки §62–63):")
-            lines.extend(f"- {reason}" for reason in writer_rejections)
-        else:
-            lines.append("Отброшенных полей нет.")
+        lines.extend(["", f"## Narrative: {narrative_status}", ""])
+        if narrative_result is not None:
+            # Observability прогона генератора; chain-of-thought и сырой
+            # промпт не сохраняются.
+            lines.append(f"- источник: {narrative_result.source}")
+            if narrative_result.model_name:
+                lines.append(f"- модель: {narrative_result.model_name}")
+            if narrative_result.prompt_version:
+                lines.append(f"- версия промпта: {narrative_result.prompt_version}")
+            lines.append(f"- sha256 входа: `{narrative_result.input_sha256[:12]}`")
+            if narrative_result.latency_ms is not None:
+                lines.append(f"- latency: {narrative_result.latency_ms:.0f} мс")
+            lines.append(f"- попыток: {narrative_result.attempts}")
+            if narrative_result.usage:
+                usage = ", ".join(
+                    f"{key}={value}"
+                    for key, value in sorted(narrative_result.usage.items())
+                )
+                lines.append(f"- usage: {usage}")
+            if narrative_result.warnings:
+                lines.append("- предупреждения генератора:")
+                lines.extend(
+                    f"  - {warning}" for warning in narrative_result.warnings
+                )
         lines.extend(["", f"## Revision: {revision_note}", ""])
         qa_markdown = "\n".join(lines) + "\n"
         try:
@@ -407,7 +470,13 @@ class ReportingService:
                 payload=qa_markdown.encode("utf-8"),
             )
         except Exception as exc:  # noqa: BLE001 — QA не ломает конвейер
-            return None, [*warnings, f"QA-артефакт не сохранён: {exc}"], markdown
+            return (
+                None,
+                [*warnings, f"QA-артефакт не сохранён: {exc}"],
+                markdown,
+                model,
+                narrative_result,
+            )
         if validator_result.status == "fail":
             warnings.append(
                 "QA-валидатор: отчёт не прошёл проверку — см. QA-артефакт"
@@ -419,7 +488,7 @@ class ReportingService:
                 )
             else:
                 warnings.append("QA-критик: needs_revision — см. QA-артефакт")
-        return relative_path, warnings, markdown
+        return relative_path, warnings, markdown, model, narrative_result
 
     def _build_service_report(
         self, case_id: str, context: QuickReportContext

@@ -80,16 +80,21 @@ class QuickMarketing(BaseModel):
 
 
 class QuickNarrative(BaseModel):
-    """Пользовательские формулировки поверх детерминированного содержания.
+    """Narrative раздела «Что уже удалось установить» + observability.
 
-    Заполняется только LLM-writer'ом (§62–63 ТЗ) и только текстом: факты,
-    балл, статус и паспорт остаются детерминированными полями модели.
+    Единственный LLM-слот отчёта (§62–63 ТЗ): текст и метаданные прогона
+    NarrativeGenerator (источник, модель, версия промпта, sha256 входа,
+    latency, attempts). Балл, статус, вывод и смыслы факторов остаются
+    детерминированными полями модели — narrative на них не влияет.
     """
 
-    main_conclusion: str | None = None  # §26 — формулировка вывода
-    established_summary: str | None = None  # §27 — интерпретация фактов
-    factor_meanings: dict[str, str] = Field(default_factory=dict)  # §31
-    source: Literal["writer"] = "writer"
+    established_summary: str | None = None  # §27 — текст раздела
+    source: Literal["llm", "deterministic_fallback"] = "deterministic_fallback"
+    model_name: str | None = None
+    prompt_version: str | None = None
+    input_sha256: str | None = None
+    latency_ms: float | None = None
+    attempts: int = 0
 
 
 class QuickReportModel(BaseModel):
@@ -110,42 +115,49 @@ class QuickReportModel(BaseModel):
 
 
 def _established_facts(context: QuickReportContext) -> list[str]:
-    """«Что уже удалось установить» (§27 ТЗ) — только факты контекста.
+    """Краткая сводка результатов, а не повтор паспорта и таблицы факторов.
 
-    KNOWN — значения паспорта, подтверждённые источником (и LEGAL-разрешение
-    ВРИ); DERIVED — покрытия зон из геометрического анализа. TO_VERIFY сюда
-    не попадает: это отдельный блок missing_information.
+    Полные реквизиты остаются в parcel_passport, названия зон и их охват — в
+    attention_factors. TO_VERIFY сюда не попадает: это отдельный блок
+    missing_information.
     """
     parcel = context.parcel
     facts: list[str] = []
-    if parcel.address:
-        facts.append(f"Адрес (местоположение): {parcel.address}")
+
+    cadastral: list[str] = []
     if parcel.area_m2 is not None:
-        facts.append(f"Площадь по кадастру: {parcel.area_m2:,.0f} м²".replace(",", " "))
-    if parcel.land_category:
-        facts.append(f"Категория земель: {parcel.land_category}")
+        cadastral.append(f"площадь {parcel.area_m2:,.0f} м²".replace(",", " "))
     if parcel.permitted_use:
-        facts.append(f"Вид разрешённого использования: {parcel.permitted_use}")
-    if parcel.vri is not None:
-        facts.append(
-            f"Код ВРИ по классификатору (П/0412, ред. {parcel.vri.revision_date}): "
-            f"{parcel.vri.code} — {parcel.vri.name}"
-        )
+        cadastral.append(f"разрешённое использование — {parcel.permitted_use}")
+    if cadastral:
+        facts.append(f"По кадастровым сведениям: {'; '.join(cadastral)}.")
+
     if parcel.territorial_zone:
-        facts.append(f"Территориальная зона: {parcel.territorial_zone}")
-    if parcel.cadastral_value_rub is not None:
+        zoning = "Территориальная зона участка установлена"
+        if context.zone_regulations is not None:
+            zoning += "; регламент ПЗЗ получен"
+        facts.append(f"{zoning}.")
+    elif context.zone_regulations is not None:
+        facts.append("Регламент территориальной зоны получен из ПЗЗ.")
+
+    zone_factors = [factor for factor in context.factors if not factor.informational]
+    if zone_factors:
         facts.append(
-            f"Кадастровая стоимость: {parcel.cadastral_value_rub:,.0f} ₽".replace(
-                ",", " "
-            )
+            "Пространственный анализ выполнен: факторов, требующих внимания, "
+            f"— {len(zone_factors)}."
         )
-    for factor in context.factors:
-        if factor.informational:
-            continue
+    elif (
+        context.protocol is not None
+        and not context.protocol.unmatched_zones
+        and any(source.source == "nspd" for source in context.protocol.sources)
+    ):
         facts.append(
-            f"{factor.zone_name}: {factor.coverage_word} "
-            f"({factor.coverage_percent:.0f}%)"
+            "Пространственный анализ выполнен: факторов, требующих внимания, "
+            "не выявлено."
         )
+
+    if context.protocol is not None and context.protocol.geometry is not None:
+        facts.append("Выполнен предварительный геометрический тест конфигурации участка.")
     return facts
 
 

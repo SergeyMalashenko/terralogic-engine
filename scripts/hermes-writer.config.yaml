@@ -1,0 +1,16 @@
+# Template профиля Hermes для narrative-writer'а QuickReport
+# (scripts/hermes-writer.sh; копируется в $TERRALOGIC_WRITER_HOME при
+# первом запуске). Qwen через локальную Ollama, без toolsets:
+# writer получает bounded input промптом, инструменты ему не нужны.
+model:
+  default: qwen3.5:9b-q4_K_M
+  provider: custom
+  base_url: http://127.0.0.1:11434/v1
+  api_key: ${HERMES_CUSTOM_127_0_0_1_11434_API_KEY}
+fallback_providers: []
+toolsets: []
+platform_toolsets:
+  cli: []
+agent:
+  max_turns: 1
+  tool_use_enforcement: none

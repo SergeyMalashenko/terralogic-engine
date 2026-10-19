@@ -98,12 +98,15 @@ def test_pdf_smoke_page_count_and_long_content(tmp_path: Path) -> None:
     pdftotext = shutil.which("pdftotext")
     if pdftotext is not None:
         result = subprocess.run(
-            [pdftotext, "-layout", str(outputs["long"]), "-"],
+            [pdftotext, "-raw", str(outputs["long"]), "-"],
             capture_output=True,
             text=True,
             check=True,
         )
-        text = " ".join(result.stdout.split())
+        # raw сохраняет содержимое ячейки последовательно; -layout вставляет
+        # текст соседних колонок между строками перенесённого названия зоны.
+        unwrapped = re.sub(r"-[ \t]*\n[ \t]*", "-", result.stdout)
+        text = " ".join(unwrapped.split())
         assert LONG_ADDRESS in text
         long_context = build_fixture_context("long")
         for factor in long_context.factors:

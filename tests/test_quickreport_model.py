@@ -126,9 +126,28 @@ def test_build_quick_model_structure(quick):
     assert model.missing_information == quick.missing
     assert model.limitations  # статический disclaimer
     assert model.marketing is None  # без конфигурации блока нет
-    # established_facts — только установленное: паспорт + покрытия
-    assert any("Вид разрешённого использования" in fact for fact in model.established_facts)
-    assert any("Водоохранная зона" in fact for fact in model.established_facts)
+    # established_facts — короткая сводка, а не второй паспорт или копия таблицы зон
+    assert len(model.established_facts) <= 4
+    assert model.established_facts == [
+        "По кадастровым сведениям: площадь 1 000 м²; разрешённое использование — ИЖС.",
+        "Территориальная зона участка установлена.",
+        "Пространственный анализ выполнен: факторов, требующих внимания, — 2.",
+        "Выполнен предварительный геометрический тест конфигурации участка.",
+    ]
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+    established = markdown.split("## Что уже удалось установить", 1)[1].split(
+        "## Факторы, требующие внимания", 1
+    )[0]
+    for duplicated in (
+        "Адрес (местоположение)",
+        "Категория земель:",
+        "Кадастровая стоимость:",
+        "Водоохранная зона:",
+        "(100%)",
+    ):
+        assert duplicated not in established
+    assert "- **Разрешённое использование:** ИЖС" in markdown
+    assert "| 1 | Водоохранная зона | Практически весь участок |" in markdown
     # TO_VERIFY-формулировки не превращаются в категорические (§85)
     uncertainty_marks = ("не установлены", "не проверен", "не получен", "требуется", "Нет сведений")
     for item in model.missing_information:

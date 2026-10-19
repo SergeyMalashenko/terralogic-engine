@@ -15,6 +15,20 @@ from .models import (
     QuickZoneRegulations,
     QuickZoneUse,
 )
+from .narrative import (
+    NARRATIVE_RESULT_MARKER,
+    WRITER_PROMPT_VERSION,
+    DeterministicNarrativeGenerator,
+    EstablishedFactsInput,
+    EstablishedFactsNarrative,
+    FallbackNarrativeGenerator,
+    HermesNarrativeGenerator,
+    NarrativeExecResult,
+    NarrativeExecutor,
+    SubprocessNarrativeExecutor,
+    build_established_facts_input,
+    build_narrative_prompt,
+)
 from .render import render_quick_model, render_quickreport
 from .rules import (
     MarketingConfig,
@@ -33,17 +47,20 @@ from .rules import (
     methodology_sha256,
 )
 from .service import render_service_report
-from .writer import (
-    SubprocessWriterExecutor,
-    WriterExecutor,
-    build_writer_prompt,
-    run_writer,
-    validate_writer_output,
-)
+from .writer import SubprocessWriterExecutor, WriterExecResult, WriterExecutor
 
 __all__ = [
+    "NARRATIVE_RESULT_MARKER",
+    "WRITER_PROMPT_VERSION",
     "ConfigurationOutcome",
+    "DeterministicNarrativeGenerator",
+    "EstablishedFactsInput",
+    "EstablishedFactsNarrative",
+    "FallbackNarrativeGenerator",
+    "HermesNarrativeGenerator",
     "MarketingConfig",
+    "NarrativeExecResult",
+    "NarrativeExecutor",
     "QuickFactor",
     "QuickMissingItem",
     "QuickNarrative",
@@ -59,15 +76,18 @@ __all__ = [
     "QuickZoneUse",
     "ScoredFactor",
     "ScoringRules",
+    "SubprocessNarrativeExecutor",
     "SubprocessWriterExecutor",
     "VerdictResult",
+    "WriterExecResult",
     "WriterExecutor",
     "ZoneGuidance",
     "ZouitCatalog",
+    "build_established_facts_input",
+    "build_narrative_prompt",
     "build_quick_context",
     "build_quick_context_from_report",
     "build_quick_model",
-    "build_writer_prompt",
     "compute_verdict",
     "evaluate_configuration",
     "load_marketing",
@@ -79,6 +99,4 @@ __all__ = [
     "render_quick_model",
     "render_quickreport",
     "render_service_report",
-    "run_writer",
-    "validate_writer_output",
 ]

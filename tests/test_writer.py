@@ -1,14 +1,16 @@
-"""Тесты bounded narrative writer'а и targeted revision (§62–63, §74, §77 ТЗ).
+"""Тесты bounded NarrativeGenerator блока «Что уже удалось установить» (§62–63, §74, §77 ТЗ).
 
-Реальный LLM не запускается: writer и критик — фейк-исполнители
-с подконтрольным stdout. Ключевой инвариант: без writer'а рендер
-байт-в-байт детерминированный; балл не зависит от LLM.
+Реальный LLM не запускается: executor и критик — фейки с подконтрольным
+stdout. Ключевые инварианты: без narrative рендер байт-в-байт прежний;
+deterministic fallback даёт тот же Markdown, что deterministic-путь;
+балл, статус, факторы и маркетинг не зависят от LLM.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import subprocess
 from datetime import date
 from pathlib import Path
 
@@ -21,22 +23,31 @@ from terralogic_engine.qa import CRITIC_RESULT_MARKER, CriticExecResult
 from terralogic_engine.quickreport import (
     build_quick_context_from_report,
     build_quick_model,
+    load_marketing,
     render_quick_model,
 )
-from terralogic_engine.quickreport.writer import (
+from terralogic_engine.quickreport.model import QuickNarrative
+from terralogic_engine.quickreport.narrative import (
+    MAX_NARRATIVE_CHARS,
     NARRATIVE_RESULT_MARKER,
-    WriterExecResult,
-    _WriterOutput,
-    build_writer_prompt,
-    parse_writer_output,
-    run_writer,
-    validate_writer_output,
+    WRITER_PROMPT_VERSION,
+    DeterministicNarrativeGenerator,
+    FallbackNarrativeGenerator,
+    HermesNarrativeGenerator,
+    NarrativeExecResult,
+    build_established_facts_input,
+    build_narrative_prompt,
+    check_narrative_text,
+    input_sha256,
+    parse_narrative_output,
 )
 from terralogic_engine.reporting.service import ReportingService
 from terralogic_engine.store.local import LocalCaseStore
 
 from .fakes import FakeDgisClient, FakeNspdClient, FakeOsmClient
 from .test_quickreport import _CONFIG_OK, _base_context, _fake_tile
+
+MODEL_NAME = "qwen3.5:9b-q4_K_M"
 
 
 @pytest.fixture()
@@ -56,26 +67,40 @@ def model(quick):
     return build_quick_model(quick)
 
 
+@pytest.fixture()
+def facts_input(quick, model):
+    return build_established_facts_input(quick, model)
+
+
 def _narrative_line(payload: dict) -> str:
     return f"{NARRATIVE_RESULT_MARKER} {json.dumps(payload, ensure_ascii=False)}"
 
 
-class FakeWriter:
-    """Подконтрольный writer: очередь ответов или падение."""
+def _hermes(executor, **kwargs) -> FallbackNarrativeGenerator:
+    return FallbackNarrativeGenerator(
+        HermesNarrativeGenerator(executor, model_name=MODEL_NAME, **kwargs),
+        DeterministicNarrativeGenerator(),
+    )
 
-    def __init__(self, *payloads: dict | None, fail: bool = False) -> None:
+
+class FakeNarrativeExecutor:
+    """Подконтрольный executor: очередь ответов, падение или timeout."""
+
+    def __init__(self, *payloads: dict | None, fail: str | None = None) -> None:
         self.payloads = list(payloads)
         self.fail = fail
         self.prompts: list[str] = []
 
-    def run(self, prompt: str, workdir: Path) -> WriterExecResult:
+    def run(self, prompt: str, workdir: Path) -> NarrativeExecResult:
         self.prompts.append(prompt)
-        if self.fail:
+        if self.fail == "exception":
             raise RuntimeError("writer недоступен")
+        if self.fail == "timeout":
+            raise subprocess.TimeoutExpired(cmd="hermes", timeout=1)
         payload = self.payloads.pop(0) if self.payloads else None
         if payload is None:
-            return WriterExecResult(stdout="нет маркера", returncode=0)
-        return WriterExecResult(stdout=_narrative_line(payload), returncode=0)
+            return NarrativeExecResult(stdout="нет маркера", returncode=0)
+        return NarrativeExecResult(stdout=_narrative_line(payload), returncode=0)
 
 
 class FakeCritic:
@@ -94,128 +119,343 @@ class FakeCritic:
 
 
 # ---------------------------------------------------------------------------
-# Парсинг и рамки (§62–63)
+# Bounded input (§62): только разрешённые данные, маркетинга нет
 # ---------------------------------------------------------------------------
 
 
-def test_parse_writer_output_valid_and_invalid():
-    ok = parse_writer_output("текст\n" + _narrative_line({"main_conclusion": "Хорошо."}))
-    assert ok is not None and ok.main_conclusion == "Хорошо."
-    assert parse_writer_output("без маркера") is None
-    assert parse_writer_output(f"{NARRATIVE_RESULT_MARKER} {{битый") is None
-    assert parse_writer_output(_narrative_line({"unknown_field": 1})) is not None
+def test_bounded_input_fields(quick, model, facts_input):
+    assert facts_input.target_use == "индивидуальный жилой дом"
+    assert facts_input.parcel.cadastral_number == "50:11:0020310:49"
+    assert facts_input.parcel.area_m2 == quick.parcel.area_m2
+    assert facts_input.score == 55
+    assert facts_input.status_title == model.status.status_title
+    assert facts_input.deterministic_facts == model.established_facts
+    assert facts_input.evidence_gaps == [i.text for i in model.missing_information]
+    zone_factors = [f for f in model.attention_factors if not f.informational]
+    assert [r.rule_id for r in facts_input.restrictions] == [
+        f.rule_id for f in zone_factors
+    ]
+    # informational-факторы (коммуникации) в restrictions не попадают
+    assert "communications_unknown" not in {
+        r.rule_id for r in facts_input.restrictions
+    }
 
 
-def test_guardrails_reject_foreign_numbers(model):
-    output = _WriterOutput(
-        main_conclusion="Участок площадью 2500 м² в отличном состоянии.",
-        established_summary="Водоохранная зона покрывает 100% участка.",
+def test_bounded_input_excludes_marketing(quick, facts_input):
+    marketing = load_marketing()
+    model = build_quick_model(quick, marketing=marketing)
+    assert model.marketing is not None
+    facts_input = build_established_facts_input(quick, model)
+    serialized = facts_input.model_dump_json()
+    assert "marketing" not in serialized
+    assert "30000" not in serialized and "45000" not in serialized
+    assert marketing.cta not in serialized
+
+
+def test_input_hash_stable(facts_input):
+    assert input_sha256(facts_input) == input_sha256(facts_input)
+
+
+# ---------------------------------------------------------------------------
+# Structured output и детерминированные рамки (§62–63)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_narrative_output_valid_and_invalid():
+    ok = parse_narrative_output("текст\n" + _narrative_line({"text": "Хорошо."}))
+    assert ok is not None and ok.text == "Хорошо."
+    assert parse_narrative_output("без маркера") is None
+    assert parse_narrative_output(f"{NARRATIVE_RESULT_MARKER} {{битый") is None
+    # extra fields запрещены строгой схемой
+    assert parse_narrative_output(
+        _narrative_line({"text": "Хорошо.", "extra": 1})
+    ) is None
+    assert parse_narrative_output(_narrative_line({"summary": "нет text"})) is None
+
+
+def test_guardrails_reject_foreign_numbers(facts_input):
+    reason = check_narrative_text("Участок площадью 2500 м² осмотрен.", facts_input)
+    assert reason is not None and "чужие числа" in reason and "2500" in reason
+    # число из входа (площадь 1000 м²) допустимо
+    assert (
+        check_narrative_text("По кадастру площадь 1 000 м².", facts_input) is None
     )
-    narrative, rejections = validate_writer_output(output, model)
-    # 2500 нет в контексте → отброшено; 100% — легальное число охвата
-    assert narrative.main_conclusion is None
-    assert narrative.established_summary is not None
-    assert any("main_conclusion" in reason for reason in rejections)
 
 
-def test_guardrails_reject_banned_phrases(model):
-    output = _WriterOutput(main_conclusion="Участок юридически чист, можно строить.")
-    narrative, rejections = validate_writer_output(output, model)
-    assert narrative.main_conclusion is None
-    assert any("категоричная" in reason for reason in rejections)
+def test_guardrails_reject_banned_phrases(facts_input):
+    reason = check_narrative_text("Участок юридически чист.", facts_input)
+    assert reason is not None and "категоричная" in reason
 
 
-def test_guardrails_reject_unknown_rule_id(model):
-    output = _WriterOutput(
-        factor_meanings={
-            "water_protection": "Зона влияет на размещение дома.",
-            "invented": "Несуществующий фактор.",
-        }
+def test_guardrails_reject_repeated_identity_status_and_source_mix(facts_input):
+    reason = check_narrative_text(
+        f"Участок {facts_input.parcel.cadastral_number} проверен.", facts_input
     )
-    narrative, rejections = validate_writer_output(output, model)
-    assert narrative.factor_meanings == {"water_protection": "Зона влияет на размещение дома."}
-    assert any("invented" in reason for reason in rejections)
+    assert reason is not None and "кадастровый номер" in reason
+
+    reason = check_narrative_text(
+        f"По итогам проверки статус — {facts_input.status_title}.", facts_input
+    )
+    assert reason is not None and "статус" in reason
+
+    reason = check_narrative_text(
+        "Пространственный анализ подтвердил регламент территориальной зоны.",
+        facts_input,
+    )
+    assert reason is not None and "смешивает" in reason
 
 
-def test_guardrails_reject_overlength(model):
-    output = _WriterOutput(main_conclusion="x" * 601)
-    narrative, rejections = validate_writer_output(output, model)
-    assert narrative.main_conclusion is None
-    assert any("600" in reason for reason in rejections)
+def test_guardrails_reject_overlength_and_newlines(facts_input):
+    reason = check_narrative_text("x" * (MAX_NARRATIVE_CHARS + 1), facts_input)
+    assert reason is not None and str(MAX_NARRATIVE_CHARS) in reason
+    reason = check_narrative_text("Первое предложение.\nВторое.", facts_input)
+    assert reason is not None and "переводы строк" in reason
+    assert check_narrative_text("   ", facts_input) is not None
 
 
-def test_run_writer_failsafe_and_retry(model):
-    warnings: list[str] = []
-    narrative, _ = run_writer(FakeWriter(fail=True), model, warnings=warnings)
-    assert narrative is None
-    assert any("writer недоступен" in warning for warning in warnings)
-
-    # два ответа без маркера → None, был один retry
-    writer = FakeWriter(None, None)
-    narrative, _ = run_writer(writer, model, warnings=warnings)
-    assert narrative is None
-    assert len(writer.prompts) == 2
-    assert "ОТКЛОНЁН" in writer.prompts[1]
-
-
-def test_writer_prompt_bounds(model):
-    prompt = build_writer_prompt(model)
+def test_prompt_bounds(facts_input):
+    prompt = build_narrative_prompt(facts_input)
     assert "Не добавляй новых фактов" in prompt
     assert "50:11:0020310:49" in prompt
-    assert "water_protection" in prompt  # rule_id фактора виден writer'у
-    assert "не установлены" in prompt  # политика пробелов данных
+    assert "Что уже удалось установить" in prompt
+    assert NARRATIVE_RESULT_MARKER in prompt
+    # маркетинга и балла-инструкций нет во входе
+    assert "30 000" not in prompt
 
 
 # ---------------------------------------------------------------------------
-# Рендер с narrative; без writer — байт-стабильность (регрессионный инвариант)
+# Генераторы: success, retry, fallback (§62–63, §77)
 # ---------------------------------------------------------------------------
+
+
+def test_deterministic_generator_matches_bullet_list(facts_input):
+    narrative = DeterministicNarrativeGenerator().generate_established_facts(
+        facts_input
+    )
+    assert narrative.source == "deterministic_fallback"
+    assert narrative.text == "\n".join(
+        f"- {fact}" for fact in facts_input.deterministic_facts
+    )
+    assert narrative.model_name is None
+    assert narrative.attempts == 0
+    assert narrative.input_sha256 == input_sha256(facts_input)
+
+
+def test_hermes_success_metadata(facts_input):
+    executor = FakeNarrativeExecutor(
+        {"text": "По кадастровым сведениям известны площадь 1 000 м² и вид использования."}
+    )
+    generator = HermesNarrativeGenerator(executor, model_name=MODEL_NAME)
+    narrative = generator.generate_established_facts(facts_input)
+    assert narrative is not None
+    assert narrative.source == "llm"
+    assert narrative.model_name == MODEL_NAME
+    assert narrative.prompt_version == WRITER_PROMPT_VERSION
+    assert narrative.input_sha256 == input_sha256(facts_input)
+    assert narrative.attempts == 1
+    assert narrative.latency_ms == 0.0  # фейк не засекает время
+
+
+def test_hermes_returns_none_when_executor_missing(facts_input):
+    generator = HermesNarrativeGenerator(None)
+    assert generator.generate_established_facts(facts_input) is None
+    assert "отключён" in (generator.last_error or "")
+
+
+def test_fallback_when_executor_dead_or_timeout(facts_input):
+    for fail in ("exception", "timeout"):
+        generator = _hermes(FakeNarrativeExecutor(fail=fail))
+        narrative = generator.generate_established_facts(facts_input)
+        assert narrative.source == "deterministic_fallback"
+        assert narrative.text.startswith("- По кадастровым сведениям")
+        assert any("LLM narrative недоступен" in w for w in narrative.warnings)
+
+
+def test_retry_only_on_invalid_structured_output(facts_input):
+    # битый ответ, затем валидный: один retry, успех со второй попытки
+    executor = FakeNarrativeExecutor(
+        None,
+        {"text": "По кадастровым сведениям известны площадь и категория земель."},
+    )
+    generator = HermesNarrativeGenerator(executor, model_name=MODEL_NAME)
+    narrative = generator.generate_established_facts(facts_input)
+    assert narrative is not None and narrative.attempts == 2
+    assert "ОТКЛОНЁН" in executor.prompts[1]
+
+    # обе попытки битые → None → fallback
+    generator = _hermes(FakeNarrativeExecutor(None, None))
+    narrative = generator.generate_established_facts(facts_input)
+    assert narrative.source == "deterministic_fallback"
+
+
+def test_no_retry_on_guardrail_rejection(facts_input):
+    # чужое число → отклонение рамками без retry → fallback
+    executor = FakeNarrativeExecutor({"text": "Участок площадью 2500 м²."})
+    hermes = HermesNarrativeGenerator(executor, model_name=MODEL_NAME)
+    assert hermes.generate_established_facts(facts_input) is None
+    assert "чужие числа" in (hermes.last_error or "")
+    assert len(executor.prompts) == 1
+
+    generator = _hermes(FakeNarrativeExecutor({"text": "Можно строить без ограничений."}))
+    narrative = generator.generate_established_facts(facts_input)
+    assert narrative.source == "deterministic_fallback"
+
+    generator = _hermes(FakeNarrativeExecutor({"text": "x" * (MAX_NARRATIVE_CHARS + 1)}))
+    narrative = generator.generate_established_facts(facts_input)
+    assert narrative.source == "deterministic_fallback"
+
+
+# ---------------------------------------------------------------------------
+# Рендер: narrative только в «Что уже удалось установить»; байт-стабильность
+# ---------------------------------------------------------------------------
+
+
+def _render(model, quick):
+    return render_quick_model(
+        model, today=date(2026, 10, 7), zone_regulations=quick.zone_regulations
+    )
+
+
+def _established_section(markdown: str) -> str:
+    return markdown.split("## Что уже удалось установить", 1)[1].split(
+        "## Факторы, требующие внимания", 1
+    )[0]
 
 
 def test_render_without_narrative_byte_stable(quick, model):
-    reference = render_quick_model(
-        model, today=date(2026, 10, 7), zone_regulations=quick.zone_regulations
-    )
-    again = render_quick_model(
-        model, today=date(2026, 10, 7), zone_regulations=quick.zone_regulations
-    )
-    assert reference == again
-    # детерминированный текст — прежний
+    reference = _render(model, quick)
+    assert reference == _render(model, quick)
     assert "Возможность реализовать ваш замысел требует подробного анализа." in reference
 
 
-def test_render_with_narrative(quick, model):
-    warnings: list[str] = []
-    writer = FakeWriter(
-        {
-            "main_conclusion": "Участок можно рассматривать, но два фактора требуют проверки.",
-            "established_summary": "Из источников уже известны площадь и категория.",
-            "factor_meanings": {"water_protection": "Может влиять на размещение дома."},
+def test_render_with_deterministic_fallback_byte_identical(quick, model, facts_input):
+    baseline = _render(model, quick)
+    narrative = DeterministicNarrativeGenerator().generate_established_facts(
+        facts_input
+    )
+    narrated = model.model_copy(
+        update={
+            "narrative": QuickNarrative(
+                established_summary=narrative.text,
+                source=narrative.source,
+                input_sha256=narrative.input_sha256,
+            )
         }
     )
-    narrative, rejections = run_writer(writer, model, warnings=warnings)
-    assert narrative is not None and not rejections
-    narrated = model.model_copy(update={"narrative": narrative})
-    markdown = render_quick_model(
-        narrated, today=date(2026, 10, 7), zone_regulations=quick.zone_regulations
+    assert _render(narrated, quick) == baseline
+
+
+def test_render_with_llm_narrative_only_in_established(quick, model, facts_input):
+    text = (
+        "По кадастровым сведениям известны площадь 1 000 м² и разрешённое "
+        "использование. Территориальная зона участка установлена, "
+        "пространственный анализ выполнен."
     )
-    assert "Участок можно рассматривать, но два фактора требуют проверки." in markdown
-    assert "Из источников уже известны площадь и категория." in markdown
-    assert "Может влиять на размещение дома." in markdown
-    # детерминированное содержание не пострадало
+    executor = FakeNarrativeExecutor({"text": text})
+    narrative = _hermes(executor).generate_established_facts(facts_input)
+    assert narrative.source == "llm"
+    baseline = _render(model, quick)
+    narrated = model.model_copy(
+        update={
+            "narrative": QuickNarrative(
+                established_summary=narrative.text,
+                source="llm",
+                model_name=narrative.model_name,
+                prompt_version=narrative.prompt_version,
+                input_sha256=narrative.input_sha256,
+                latency_ms=narrative.latency_ms,
+                attempts=narrative.attempts,
+            )
+        }
+    )
+    markdown = _render(narrated, quick)
+    section = _established_section(markdown)
+    # LLM-текст заменяет deterministic-список внутри секции
+    assert text in section
+    assert "- По кадастровым сведениям" not in section
+    # и не влияет на остальные секции
+    assert markdown.count(text) == 1
     assert "## Оценка участка — 55/100" in markdown
-    assert "Водоохранная зона: практически весь участок (100%)" in markdown
-    # валидатор пропускает текст с narrative
+    assert model.status.status_summary in markdown
+    assert "| 1 | Водоохранная зона | Практически весь участок |" in markdown
+    assert "Может влиять на размещение дома" not in markdown  # guidance не из LLM
+    # секции вне established байт-совпадают с baseline
+    assert markdown.split("## Что уже удалось установить", 1)[0] == baseline.split(
+        "## Что уже удалось установить", 1
+    )[0]
+    assert markdown.split("## Факторы, требующие внимания", 1)[1] == baseline.split(
+        "## Факторы, требующие внимания", 1
+    )[1]
     from terralogic_engine.qa import validate_quickreport
 
     assert validate_quickreport(narrated, markdown, context=quick).status == "pass"
 
 
 # ---------------------------------------------------------------------------
-# Сквозные: prepare_quickreport с writer и критиком (§61, §74, §77, §83)
+# Валидатор: narrative-проверки (§64)
 # ---------------------------------------------------------------------------
 
 
-async def _prepare(tmp_path, writer, critic) -> tuple[object, LocalCaseStore]:
+def _model_with_narrative(model, text, *, source="llm"):
+    return model.model_copy(
+        update={
+            "narrative": QuickNarrative(established_summary=text, source=source)
+        }
+    )
+
+
+def test_validator_catches_narrative_drop(quick, model, facts_input):
+    from terralogic_engine.qa import validate_quickreport
+
+    text = "По кадастровым сведениям известны площадь 1 000 м² и вид использования."
+    narrated = _model_with_narrative(model, text)
+    markdown = _render(model, quick)  # рендер БЕЗ narrative — текст потерян
+    result = validate_quickreport(narrated, markdown, context=quick)
+    assert result.status == "fail"
+    assert any(i.rule_id == "narrative_in_report" for i in result.issues)
+
+
+def test_validator_catches_narrative_substitution(quick, model, facts_input):
+    from terralogic_engine.qa import validate_quickreport
+
+    text = "По кадастровым сведениям известны площадь 1 000 м²."
+    narrated = _model_with_narrative(model, text)
+    markdown = _render(narrated, quick).replace(text, "Подменённый текст секции.")
+    result = validate_quickreport(narrated, markdown, context=quick)
+    assert result.status == "fail"
+    assert any(i.rule_id == "narrative_in_report" for i in result.issues)
+
+
+def test_validator_catches_llm_narrative_violations(quick, model):
+    from terralogic_engine.qa import validate_quickreport
+
+    # источник llm без текста
+    narrated = _model_with_narrative(model, None)
+    markdown = _render(model, quick)
+    result = validate_quickreport(narrated, markdown, context=quick)
+    assert any(i.rule_id == "narrative_llm_text" for i in result.issues)
+
+    # чужое число в llm narrative
+    narrated = _model_with_narrative(model, "Площадь 2500 м² подтверждена.")
+    markdown = _render(narrated, quick)
+    result = validate_quickreport(narrated, markdown, context=quick)
+    assert any(i.rule_id == "narrative_numbers_in_context" for i in result.issues)
+
+    # категоричная фраза
+    narrated = _model_with_narrative(model, "Участок юридически чист.")
+    markdown = _render(narrated, quick)
+    result = validate_quickreport(narrated, markdown, context=quick)
+    assert any(i.rule_id == "narrative_llm_text" for i in result.issues)
+
+
+# ---------------------------------------------------------------------------
+# Сквозные: prepare_quickreport с генератором и критиком (§61, §74, §77)
+# ---------------------------------------------------------------------------
+
+
+async def _prepare(
+    tmp_path, generator=None, critic=None, *, writer=None
+) -> tuple[object, LocalCaseStore]:
     store = LocalCaseStore(tmp_path / "store")
     acquisition = AcquisitionPipeline(
         store=store, nspd=FakeNspdClient(), osm=FakeOsmClient(), dgis=FakeDgisClient(),
@@ -230,139 +470,144 @@ async def _prepare(tmp_path, writer, critic) -> tuple[object, LocalCaseStore]:
     AnalysisPipeline(store=store).analyze("case-writer")
     service = ReportingService(
         store=store, acquisition=acquisition, tile_fetcher=_fake_tile,
-        writer=writer, critic=critic,
+        narrative_generator=generator, critic=critic, writer=writer,
     )
     return service.prepare_quickreport("case-writer"), store
 
 
-async def test_quickreport_without_writer_is_deterministic(tmp_path) -> None:
-    result, store = await _prepare(tmp_path, None, None)
+def _qa(store, result) -> str:
+    return (store.cases_root / result.case_id / result.qa_relative_path).read_text(
+        encoding="utf-8"
+    )
+
+
+async def test_quickreport_without_generator_is_deterministic(tmp_path) -> None:
+    result, store = await _prepare(tmp_path)
     assert (
         "## Оценка участка —" in result.markdown
         or "Оценка не рассчитана" in result.markdown
     )
-    qa = (
-        store.cases_root / result.case_id / result.qa_relative_path
-    ).read_text(encoding="utf-8")
-    assert "## Writer: отключён" in qa
+    qa = _qa(store, result)
+    assert "## Narrative: отключён (детерминированный текст)" in qa
     assert "## Revision: не требовалась" in qa
 
 
-async def test_quickreport_with_writer_applies_narrative(tmp_path) -> None:
-    writer = FakeWriter(
-        {"main_conclusion": "Участок стоит рассмотреть дальше с проверкой факторов."}
+async def test_quickreport_with_llm_narrative(tmp_path) -> None:
+    text = (
+        "По кадастровым сведениям известны площадь участка и разрешённое "
+        "использование. Территориальная зона установлена, пространственный "
+        "анализ выполнен."
     )
-    result, store = await _prepare(tmp_path, writer, None)
-    assert "Участок стоит рассмотреть дальше с проверкой факторов." in result.markdown
-    assert writer.prompts and len(writer.prompts) == 1
-    qa = (
-        store.cases_root / result.case_id / result.qa_relative_path
-    ).read_text(encoding="utf-8")
-    assert "## Writer: применён" in qa
-    # балл не зависит от LLM (§83)
+    executor = FakeNarrativeExecutor({"text": text})
+    result, store = await _prepare(tmp_path, generator=_hermes(executor))
+    assert text in result.markdown
+    assert len(executor.prompts) == 1
+    qa = _qa(store, result)
+    assert "## Narrative: llm (применён)" in qa
+    assert f"- модель: {MODEL_NAME}" in qa
+    assert f"- версия промпта: {WRITER_PROMPT_VERSION}" in qa
+    assert "- источник: llm" in qa
+    assert "- попыток: 1" in qa
+    assert "- latency:" in qa
+    assert "- sha256 входа:" in qa
+    # model_name сохранён с отчётом, балл не зависит от LLM (§83)
+    report = store.get_latest_generated_report(
+        result.case_id, result.collection_run_id
+    )
+    assert report is not None and report.model_name == MODEL_NAME
     assert re.search(r"## Оценка (участка — \d+/100|не рассчитана)", result.markdown)
 
 
-async def test_quickreport_writer_dead_keeps_deterministic(tmp_path) -> None:
-    result, store = await _prepare(tmp_path, FakeWriter(fail=True), None)
+async def test_quickreport_compat_shim_writer_executor(tmp_path) -> None:
+    """Старый writer-executor оборачивается в HermesNarrativeGenerator."""
+    text = "По кадастровым сведениям известны площадь и вид использования участка."
+    executor = FakeNarrativeExecutor({"text": text})
+    result, store = await _prepare(tmp_path, writer=executor)
+    assert text in result.markdown
+    assert "## Narrative: llm (применён)" in _qa(store, result)
+
+
+async def test_quickreport_generator_dead_keeps_deterministic(tmp_path) -> None:
+    executor = FakeNarrativeExecutor(fail="exception")
+    result, store = await _prepare(tmp_path, generator=_hermes(executor))
     assert result.report_id
-    assert any("writer недоступен" in warning for warning in result.warnings)
-    qa = (
-        store.cases_root / result.case_id / result.qa_relative_path
-    ).read_text(encoding="utf-8")
-    assert "## Writer: недоступен/отброшен" in qa
+    assert any("LLM narrative недоступен" in w for w in result.warnings)
+    qa = _qa(store, result)
+    assert "## Narrative: deterministic_fallback" in qa
+    assert "- источник: deterministic_fallback" in qa
+    # fallback не меняет deterministic Markdown (run id в имени PNG различается)
+    deterministic, _ = await _prepare(tmp_path / "plain")
+    normalize = lambda md: re.sub(r"quickreport-run-[0-9a-f]+\.png", "map.png", md)
+    assert normalize(result.markdown) == normalize(deterministic.markdown)
+    report = store.get_latest_generated_report(
+        result.case_id, result.collection_run_id
+    )
+    assert report is not None and report.model_name is None
 
 
-async def test_targeted_revision_after_critic(tmp_path) -> None:
-    """Критик needs_revision (error) → один раунд revision; принятие при pass (§74)."""
-    writer = FakeWriter(
-        {"main_conclusion": "Первичная формулировка."},
-        {"main_conclusion": "Уточнённая формулировка после замечания."},
+def _critic_payload(section: str, severity: str = "error") -> dict:
+    return {
+        "status": "needs_revision",
+        "issues": [
+            {
+                "rule_id": "overstatement",
+                "section": section,
+                "severity": severity,
+                "message": "формулировка слишком категорична",
+                "claim": None,
+                "evidence_ids": [],
+                "suggested_action": "смягчить",
+            }
+        ],
+    }
+
+
+async def test_targeted_revision_established_section(tmp_path) -> None:
+    """Revision запускается только по error/critical секции established (§74)."""
+    executor = FakeNarrativeExecutor(
+        {"text": "Первичная формулировка раздела."},
+        {"text": "Уточнённая формулировка после замечания критика."},
     )
-    critic = FakeCritic(
-        {
-            "status": "needs_revision",
-            "issues": [
-                {
-                    "rule_id": "overstatement",
-                    "section": "Оценка участка",
-                    "severity": "error",
-                    "message": "вывод слишком категоричен",
-                    "claim": None,
-                    "evidence_ids": [],
-                    "suggested_action": "смягчить",
-                }
-            ],
-        }
-    )
-    result, store = await _prepare(tmp_path, writer, critic)
-    assert "Уточнённая формулировка после замечания." in result.markdown
-    # writer вызван дважды: начальный narrative + revision с замечанием
-    assert len(writer.prompts) == 2
-    assert "вывод слишком категоричен" in writer.prompts[1]
-    qa = (
-        store.cases_root / result.case_id / result.qa_relative_path
-    ).read_text(encoding="utf-8")
-    assert "## Revision: принята" in qa
+    critic = FakeCritic(_critic_payload("Что уже удалось установить"))
+    result, store = await _prepare(tmp_path, generator=_hermes(executor), critic=critic)
+    assert "Уточнённая формулировка после замечания критика." in result.markdown
+    assert "Первичная формулировка раздела." not in result.markdown
+    assert len(executor.prompts) == 2
+    assert "формулировка слишком категорична" in executor.prompts[1]
+    assert "## Revision: принята" in _qa(store, result)
+
+
+async def test_revision_skipped_for_other_sections(tmp_path) -> None:
+    """Замечание по другой секции не запускает revision."""
+    executor = FakeNarrativeExecutor({"text": "Первичная формулировка раздела."})
+    critic = FakeCritic(_critic_payload("Оценка участка"))
+    result, store = await _prepare(tmp_path, generator=_hermes(executor), critic=critic)
+    assert "Первичная формулировка раздела." in result.markdown
+    assert len(executor.prompts) == 1
+    qa = _qa(store, result)
+    assert "не выполнялась: нет error/critical" in qa
 
 
 async def test_revision_skipped_for_warning_level(tmp_path) -> None:
-    """Замечание уровня warning не запускает revision — только фиксация."""
-    writer = FakeWriter({"main_conclusion": "Первичная формулировка."})
-    critic = FakeCritic(
-        {
-            "status": "needs_revision",
-            "issues": [
-                {
-                    "rule_id": "overstatement",
-                    "section": "Оценка участка",
-                    "severity": "warning",
-                    "message": "неубедительно, но терпимо",
-                    "claim": None,
-                    "evidence_ids": [],
-                    "suggested_action": "",
-                }
-            ],
-        }
-    )
-    result, store = await _prepare(tmp_path, writer, critic)
-    assert "Первичная формулировка." in result.markdown
-    assert len(writer.prompts) == 1  # revision не запускалась
-    qa = (
-        store.cases_root / result.case_id / result.qa_relative_path
-    ).read_text(encoding="utf-8")
-    # needs_revision без error/critical детерминированно понижен до pass
+    executor = FakeNarrativeExecutor({"text": "Первичная формулировка раздела."})
+    critic = FakeCritic(_critic_payload("Что уже удалось установить", "warning"))
+    result, store = await _prepare(tmp_path, generator=_hermes(executor), critic=critic)
+    assert "Первичная формулировка раздела." in result.markdown
+    assert len(executor.prompts) == 1
+    qa = _qa(store, result)
     assert "→ pass (только warning/info, порог severity)" in qa
     assert "## Revision: не требовалась" in qa
 
 
-async def test_revision_rejected_when_all_fields_dropped(tmp_path) -> None:
-    """Revision отклоняется, если рамки отбросили все поля (§74)."""
-    writer = FakeWriter(
-        {"main_conclusion": "Первичная формулировка."},
-        {"main_conclusion": "Можно строить, гарантированно."},  # banned
+async def test_revision_rejected_on_fallback(tmp_path) -> None:
+    """Revision отклоняется, если повторный прогон не дал valid LLM-текст."""
+    executor = FakeNarrativeExecutor(
+        {"text": "Первичная формулировка раздела."},
+        {"text": "Можно строить, гарантированно."},  # banned → отклонено рамками
     )
-    critic = FakeCritic(
-        {
-            "status": "needs_revision",
-            "issues": [
-                {
-                    "rule_id": "missing_uncertainty",
-                    "section": "Оценка участка",
-                    "severity": "error",
-                    "message": "нет неопределённости",
-                    "claim": None,
-                    "evidence_ids": [],
-                    "suggested_action": "добавить оговорку",
-                }
-            ],
-        }
-    )
-    result, store = await _prepare(tmp_path, writer, critic)
-    # исходная формулировка сохранена
-    assert "Первичная формулировка." in result.markdown
+    critic = FakeCritic(_critic_payload("Что уже удалось установить"))
+    result, store = await _prepare(tmp_path, generator=_hermes(executor), critic=critic)
+    assert "Первичная формулировка раздела." in result.markdown
     assert "гарантированно" not in result.markdown
-    qa = (
-        store.cases_root / result.case_id / result.qa_relative_path
-    ).read_text(encoding="utf-8")
+    qa = _qa(store, result)
     assert "Revision: отклонена" in qa
