@@ -81,6 +81,7 @@ th { background: #E8F5E9; }
 .map-block { break-inside: avoid; margin: 0 0 5mm; }
 .map-block img { max-width: 80%; display: block; margin: 2mm auto; }
 .map-block p { margin-bottom: 1mm; }
+.map-caption { font-size: 8pt; color: #5A5A5A; }
 .limitations { font-size: 9pt; color: #5A5A5A; margin-top: 2mm; }
 .limitations .limitations-title { font-size: 9.5pt; font-weight: bold;
                                   margin-bottom: 1mm; }

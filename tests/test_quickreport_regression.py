@@ -137,6 +137,19 @@ def test_pdf_smoke_page_count_and_long_content(tmp_path: Path) -> None:
         assert "Стр. 1 из" in text
 
 
+def test_map_caption_styled_8pt() -> None:
+    from terralogic_engine.quickreport.pdf import _compose_html
+
+    model = _fixture_model("normal")
+    markdown = (
+        "# Т\n\nп\n\nм\n\nкн\n\n## Оценка участка — 55/100 (Т)\n\nвывод\n\n"
+        "## Схема расположения зон\n\n![карта](../maps/x.png)\n\n"
+        "Подложка — © OpenStreetMap contributors.\n"
+    )
+    html = _compose_html(model, markdown)
+    assert '<p class="map-caption">Подложка' in html
+
+
 def test_fixed_typography_baseline() -> None:
     css = _REPORT_CSS.read_text(encoding="utf-8")
     # фиксированная страница и колонтитулы
@@ -152,6 +165,7 @@ def test_fixed_typography_baseline() -> None:
     assert "font-size: 12pt;" in css  # h3 / subtitle
     assert "font-size: 10.5pt;" in css  # body
     assert "font-size: 28pt;" in css  # число оценки
+    assert ".map-caption { font-size: 8pt;" in css  # подпись подложки карты
     # shrink-to-fit запрещён: размеры не вычисляются от контента
     folded = css.casefold()
     assert "shrink" not in folded

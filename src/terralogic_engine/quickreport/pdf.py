@@ -137,9 +137,15 @@ def _compose_html(model: QuickReportModel, markdown_text: str) -> str:
                 parts.append(f'<div class="verdict-rest">{_md(remainder)}</div>')
             continue
         if section_title == _MAP_TITLE:
+            map_html = _md(body)
+            # Подпись подложки (детерминированный префикс из service.py) —
+            # второстепенный шрифт 8pt.
+            map_html = map_html.replace(
+                "<p>Подложка", '<p class="map-caption">Подложка'
+            )
             parts.append(
                 f'<div class="section map-block"><h2>{escape(section_title)}</h2>'
-                f"{_md(body)}"
+                f"{map_html}"
             )
             map_open = True
             continue
