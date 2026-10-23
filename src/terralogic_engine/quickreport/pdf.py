@@ -164,6 +164,11 @@ def _compose_html(model: QuickReportModel, markdown_text: str) -> str:
             parts.append("</div>")
             map_open = False
         css_class = _SECTION_CLASS.get(section_title, "generic")
+        if css_class == "rights":
+            # Блок прижат к низу последней страницы (position: absolute);
+            # spacer резервирует место в потоке, чтобы блок не налез
+            # на предыдущий контент.
+            parts.append('<div class="rights-spacer"></div>')
         parts.append(
             f'<div class="section s-{css_class}">'
             f"<h2>{escape(section_title)}</h2>{_md(body)}</div>"
