@@ -15,7 +15,7 @@
 
 @page {
   size: A4; margin: 16mm 16mm 18mm;
-  @bottom-left { content: "TerraLogicX";
+  @bottom-left { content: "© TerraLogicX, 2026. Все права защищены.";
                  font-family: "Carlito", "Liberation Sans", sans-serif;
                  font-size: 8.5pt; color: #5A5A5A; }
   @bottom-right { content: "Стр. " counter(page) " из " counter(pages);

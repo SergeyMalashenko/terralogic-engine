@@ -154,7 +154,7 @@ def test_fixed_typography_baseline() -> None:
     css = _REPORT_CSS.read_text(encoding="utf-8")
     # фиксированная страница и колонтитулы
     assert "size: A4;" in css
-    assert '@bottom-left { content: "TerraLogicX"' in css
+    assert '@bottom-left { content: "© TerraLogicX, 2026. Все права защищены."' in css
     assert 'counter(page) " из " counter(pages)' in css
     # фиксированный шрифт Carlito (vendor assets/fonts/carlito, SIL OFL)
     assert 'font-family: "Carlito"' in css
