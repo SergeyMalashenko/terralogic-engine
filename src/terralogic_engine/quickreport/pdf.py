@@ -38,6 +38,7 @@ _SECTION_CLASS = {
     "Окружение": "surroundings",
     "Что ещё нужно проверить": "missing",
     "Следующий шаг": "marketing",
+    "Права и использование отчёта": "rights",
 }
 _VERDICT_TITLE_PREFIX = "Оценка"
 _MAP_TITLE = "Схема расположения зон"
