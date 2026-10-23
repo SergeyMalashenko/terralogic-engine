@@ -34,6 +34,7 @@ async def test_pipeline_collects_sources_and_passes_exact_contour_to_osm(
     request = CollectionRequest(
         case_id="case-complete",
         cadastral_number="52:26:0040002:3823",
+        profile_version="3.1",
         refresh_policy="always",
     )
 
@@ -104,6 +105,7 @@ async def test_if_stale_reuses_latest_receipt_without_source_calls(tmp_path) -> 
     request = CollectionRequest(
         case_id="case-reused",
         cadastral_number="52:26:0040002:3823",
+        profile_version="3.1",
     )
 
     first = await pipeline.collect(request)
@@ -626,6 +628,7 @@ async def test_pipeline_profile_30_keeps_documents_sync_only(tmp_path) -> None:
     request = CollectionRequest(
         case_id="case-documents-30",
         cadastral_number="50:32:0000000:38218",
+        profile_version="3.0",
     )
 
     first = await pipeline.collect(request)
@@ -645,6 +648,47 @@ async def test_pipeline_profile_30_keeps_documents_sync_only(tmp_path) -> None:
         ("rgis", "documents_sync"),
         ("nspd", "documents_sync"),
     }
+
+
+async def test_pipeline_profile_32_collects_transport_from_osm(tmp_path) -> None:
+    store = LocalCaseStore(tmp_path / "store")
+    osm = FakeOsmClient(include_transport=True)
+    dgis = FakeDgisClient()
+    pipeline = AcquisitionPipeline(
+        store=store,
+        nspd=FakeNspdClient(),
+        osm=osm,
+        dgis=dgis,
+    )
+    request = CollectionRequest(
+        case_id="case-transport-32",
+        cadastral_number="50:32:0000000:38218",
+        profile_version="3.2",
+        refresh_policy="always",
+    )
+
+    receipt = await pipeline.collect(request)
+
+    assert receipt.status == "complete"
+    assert osm.arguments["blocks"] == [
+        "forests",
+        "lakes",
+        "rivers",
+        "streams",
+        "roads",
+        "transport",
+    ]
+    # транспортный опрос 2GIS отключён: меньше запросов, квота экономится
+    assert dgis.social_calls == 1
+    assert dgis.transport_calls == 0
+    assert receipt.feature_counts.get("osm.transport") == 1
+    assert not any(
+        key.startswith("dgis.public_transport") for key in receipt.feature_counts
+    )
+    dgis_snapshot = json.loads(
+        store.load_snapshot(request.case_id, receipt.dgis_snapshot_id)
+    )
+    assert dgis_snapshot["transport_infrastructure"] is None
 
 
 async def test_pipeline_without_documents_clients_keeps_old_behaviour(

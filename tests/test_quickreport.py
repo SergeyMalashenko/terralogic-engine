@@ -290,6 +290,32 @@ def test_build_quick_context_from_report(rules, guidance):
     assert "исходное предупреждение" in quick.warnings
 
 
+def test_surroundings_include_transport_stop(rules, guidance):
+    base = _base_context()
+    base.transport_nearest.append(
+        NearestObject(
+            group="transport",
+            group_name="Транспортная доступность",
+            category="transport",
+            category_name="Остановка общественного транспорта",
+            source="osm",
+            status="found",
+            candidate_count=2,
+            object_name="Тестовая",
+            distance_m=350.0,
+        )
+    )
+
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+
+    assert quick.surroundings.lines == [
+        "Водные объекты: пруд Круглый ~42 м",
+        "Остановка общественного транспорта: Тестовая ~350 м",
+    ]
+
+
 def test_unmatched_zone_suspends_score(rules, guidance):
     base = _base_context()
     base.zouit.append(_zouit("Проезд общего пользования", "проезды", 15.0))

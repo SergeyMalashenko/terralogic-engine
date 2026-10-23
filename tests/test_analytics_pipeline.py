@@ -58,3 +58,31 @@ async def test_analytics_calculates_and_persists_spatial_metrics(tmp_path) -> No
     )
     assert rerun.id == result.id
     assert len(store.list_analysis_results("case-analytics")) == 1
+
+
+async def test_analytics_finds_nearest_osm_transport_stop(tmp_path) -> None:
+    store = LocalCaseStore(tmp_path / "store")
+    receipt = await AcquisitionPipeline(
+        store=store,
+        nspd=FakeNspdClient(),
+        osm=FakeOsmClient(include_transport=True),
+        dgis=FakeDgisClient(),
+    ).collect(
+        CollectionRequest(
+            case_id="case-transport-analytics",
+            cadastral_number="52:26:0040002:3823",
+            profile_version="3.2",
+            refresh_policy="always",
+        )
+    )
+
+    assert receipt.status == "complete"
+    result = AnalysisPipeline(store=store).analyze("case-transport-analytics")
+
+    transport = {item.category: item for item in result.transport_nearest}
+    stop = transport["transport"]
+    assert stop.status == "found"
+    assert stop.source == "osm"
+    assert stop.object_name == "Остановка Тестовая"
+    assert 100 < stop.distance_m < 200
+    assert stop.group_name == "Транспортная доступность"

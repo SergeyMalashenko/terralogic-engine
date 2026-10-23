@@ -657,6 +657,7 @@ def build_report_context(
         natural_intersections=analysis.natural_summaries,
         natural_nearest=analysis.natural_nearest,
         social_nearest=analysis.social_nearest,
+        transport_nearest=analysis.transport_nearest,
         transport_inventory=_transport_context(features),
         road_inventory=_road_context(features),
         urban_planning=_urban_planning_context(

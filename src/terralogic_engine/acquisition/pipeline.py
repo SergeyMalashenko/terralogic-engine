@@ -291,6 +291,17 @@ class AcquisitionPipeline:
                     return_exceptions=True,
                 )
 
+            async def _collect_dgis_transport() -> Any:
+                if not profile.dgis_include_transport:
+                    return None
+                return await self.dgis.analyze_transport_infrastructure(
+                    latitude=latitude,
+                    longitude=longitude,
+                    radius_m=radius_m,
+                    mode=profile.dgis_mode,
+                    limit_per_category=profile.dgis_limit_per_category,
+                )
+
             (
                 layer_result,
                 osm_result,
@@ -321,13 +332,7 @@ class AcquisitionPipeline:
                     mode=profile.dgis_mode,
                     limit_per_category=profile.dgis_limit_per_category,
                 ),
-                self.dgis.analyze_transport_infrastructure(
-                    latitude=latitude,
-                    longitude=longitude,
-                    radius_m=radius_m,
-                    mode=profile.dgis_mode,
-                    limit_per_category=profile.dgis_limit_per_category,
-                ),
+                _collect_dgis_transport(),
                 _collect_rgis(),
                 self._collect_nspd_documents(request.cadastral_number),
                 return_exceptions=True,
@@ -455,18 +460,25 @@ class AcquisitionPipeline:
                 warnings=warnings,
                 errors=errors,
             )
-            transport_envelope, stored_transport_result = self._source_result(
-                transport_result,
-                tool="dgis_analyze_transport_infrastructure",
-                partial_warning="2GIS transport infrastructure coverage is partial",
-                warnings=warnings,
-                errors=errors,
-            )
+            if transport_result is None:
+                # профиль отключил транспортный опрос 2GIS (>= 3.2)
+                transport_envelope, stored_transport_result = None, None
+            else:
+                transport_envelope, stored_transport_result = self._source_result(
+                    transport_result,
+                    tool="dgis_analyze_transport_infrastructure",
+                    partial_warning="2GIS transport infrastructure coverage is partial",
+                    warnings=warnings,
+                    errors=errors,
+                )
             dgis_payload = {
                 "social_infrastructure": stored_social_result,
                 "transport_infrastructure": stored_transport_result,
             }
             dgis_adapter_payload = social_envelope or transport_envelope or {}
+            dgis_tools = ["dgis_analyze_social_infrastructure"]
+            if profile.dgis_include_transport:
+                dgis_tools.append("dgis_analyze_transport_infrastructure")
             dgis_snapshot = self.store.save_snapshot(
                 case_id=request.case_id,
                 run_id=run_id,
@@ -474,10 +486,7 @@ class AcquisitionPipeline:
                 payload=_json_bytes(dgis_payload),
                 adapter_version=_adapter_version(dgis_adapter_payload),
                 metadata={
-                    "tools": [
-                        "dgis_analyze_social_infrastructure",
-                        "dgis_analyze_transport_infrastructure",
-                    ],
+                    "tools": dgis_tools,
                     "center": {"latitude": latitude, "longitude": longitude},
                     "radius_m": radius_m,
                     "mode": profile.dgis_mode,

@@ -225,7 +225,9 @@ def create_mcp_server(
         registered in the shared document store. Collection profile 3.1
         additionally runs the second document contour (geodocs-mcp, when
         ``--geodocs-url`` is configured): acquire of pending documents plus
-        extracted permitted-use tables (ВРИ) and ZOUIT regimes.
+        extracted permitted-use tables (ВРИ) and ZOUIT regimes. Profile 3.2
+        (the default) collects public-transport stops from OSM and skips the
+        2GIS transport survey, which the reports never consumed.
         After a successful prepare, call ``terralogic_prepare_quickreport``
         with the returned ``case_id`` to build the report.
 

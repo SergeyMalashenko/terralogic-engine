@@ -77,4 +77,5 @@ class AnalysisResult(BaseModel):
     natural_intersections: list[IntersectionItem] = Field(default_factory=list)
     social_nearest: list[NearestObject] = Field(default_factory=list)
     natural_nearest: list[NearestObject] = Field(default_factory=list)
+    transport_nearest: list[NearestObject] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

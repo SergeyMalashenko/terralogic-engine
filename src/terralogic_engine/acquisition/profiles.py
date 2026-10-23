@@ -23,6 +23,7 @@ class CollectionProfile(BaseModel):
     margin_m: int = Field(default=1000, ge=0, le=10_000)
     dgis_mode: str = "minimal"
     dgis_limit_per_category: int = Field(default=10, ge=1, le=20)
+    dgis_include_transport: bool = True
     rgis_limit_per_layer: int = Field(default=50, ge=1, le=100)
     rgis_zoom: int = Field(default=14, ge=10, le=18)
     stale_after_seconds: int = Field(default=86_400, ge=0)
@@ -53,12 +54,30 @@ STANDARD_LAND_REPORT_WITH_DOCUMENTS = STANDARD_LAND_REPORT.model_copy(
     }
 )
 
+# 3.2: остановки и станции общественного транспорта собираются из OSM
+# (блок transport), транспортный опрос 2GIS отключён — его результаты
+# downstream не использовались и тратили квоту API.
+STANDARD_LAND_REPORT_WITH_OSM_TRANSPORT = STANDARD_LAND_REPORT_WITH_DOCUMENTS.model_copy(
+    update={
+        "version": "3.2",
+        "osm_blocks": (
+            *STANDARD_LAND_REPORT_WITH_DOCUMENTS.osm_blocks,
+            "transport",
+        ),
+        "dgis_include_transport": False,
+    }
+)
+
 _PROFILES = {
     (STANDARD_LAND_REPORT.name, STANDARD_LAND_REPORT.version): STANDARD_LAND_REPORT,
     (
         STANDARD_LAND_REPORT_WITH_DOCUMENTS.name,
         STANDARD_LAND_REPORT_WITH_DOCUMENTS.version,
     ): STANDARD_LAND_REPORT_WITH_DOCUMENTS,
+    (
+        STANDARD_LAND_REPORT_WITH_OSM_TRANSPORT.name,
+        STANDARD_LAND_REPORT_WITH_OSM_TRANSPORT.version,
+    ): STANDARD_LAND_REPORT_WITH_OSM_TRANSPORT,
 }
 
 

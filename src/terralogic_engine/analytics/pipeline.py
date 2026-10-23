@@ -28,7 +28,7 @@ from terralogic_engine.domain.models import (
 )
 from terralogic_engine.store.base import CaseStore
 
-ANALYTICS_VERSION = "1.1.0"
+ANALYTICS_VERSION = "1.2.0"
 
 SOCIAL_CATEGORIES: tuple[tuple[str, str, str, str], ...] = (
     (
@@ -86,9 +86,12 @@ NATURAL_CLASSES: tuple[tuple[str, str], ...] = (
     ("stream", "Ручьи"),
 )
 WATER_CLASSES = frozenset({"lake", "river", "stream"})
+TRANSPORT_CLASSES: tuple[tuple[str, str], ...] = (
+    ("transport", "Остановка общественного транспорта"),
+)
 SOCIAL_CATEGORY_KEYS = frozenset(item[2] for item in SOCIAL_CATEGORIES)
 ANALYZED_FEATURE_CLASSES = frozenset(
-    {"restriction_zone", *(item[0] for item in NATURAL_CLASSES)}
+    {"restriction_zone", *(item[0] for item in NATURAL_CLASSES), *(item[0] for item in TRANSPORT_CLASSES)}
 )
 
 
@@ -517,6 +520,24 @@ class AnalysisPipeline:
             )
         )
 
+        transport_nearest = [
+            _nearest(
+                group="transport",
+                group_name="Транспортная доступность",
+                category=feature_class,
+                category_name=class_name,
+                source="osm",
+                candidates=[
+                    pair
+                    for pair in projected.values()
+                    if pair[0].source == "osm"
+                    and pair[0].feature_class == feature_class
+                ],
+                parcel=parcel,
+            )
+            for feature_class, class_name in TRANSPORT_CLASSES
+        ]
+
         identity = f"{case_id}:{receipt.run_id}:{ANALYTICS_VERSION}"
         result = AnalysisResult(
             id=f"analysis-{sha256(identity.encode()).hexdigest()[:24]}",
@@ -535,6 +556,7 @@ class AnalysisPipeline:
             natural_intersections=natural_items,
             social_nearest=social_nearest,
             natural_nearest=natural_nearest,
+            transport_nearest=transport_nearest,
             warnings=list(dict.fromkeys(warnings)),
         )
         self.store.save_analysis_result(result)

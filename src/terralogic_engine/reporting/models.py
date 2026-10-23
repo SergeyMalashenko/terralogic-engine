@@ -271,6 +271,7 @@ class ReportContext(BaseModel):
     natural_intersections: list[IntersectionSummary] = Field(default_factory=list)
     natural_nearest: list[NearestObject] = Field(default_factory=list)
     social_nearest: list[NearestObject] = Field(default_factory=list)
+    transport_nearest: list[NearestObject] = Field(default_factory=list)
     transport_inventory: list[TransportCategoryContext] = Field(default_factory=list)
     road_inventory: list[RoadClassContext] = Field(default_factory=list)
     urban_planning: UrbanPlanningReportContext = Field(

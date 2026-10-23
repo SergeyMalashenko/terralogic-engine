@@ -31,7 +31,7 @@ class CollectionRequest(BaseModel):
     case_id: str
     cadastral_number: str
     profile: str = "standard_land_report"
-    profile_version: str = "3.0"
+    profile_version: str = "3.2"
     refresh_policy: RefreshPolicy = "if_stale"
     allow_partial: bool = True
     margin_m: int | None = Field(default=None, ge=0, le=10_000)

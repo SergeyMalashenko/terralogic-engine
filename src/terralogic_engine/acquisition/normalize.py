@@ -126,6 +126,7 @@ OSM_FEATURE_CLASSES = {
     "rivers": "river",
     "streams": "stream",
     "roads": "road",
+    "transport": "transport",
 }
 
 

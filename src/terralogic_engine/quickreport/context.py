@@ -1112,7 +1112,11 @@ def _passport(base: ReportContext) -> QuickPassport:
 
 def _surroundings(base: ReportContext, guidance: ZoneGuidance) -> QuickSurroundings:
     lines: list[str] = []
-    for item in [*base.natural_nearest, *base.social_nearest]:
+    for item in [
+        *base.natural_nearest,
+        *base.transport_nearest,
+        *base.social_nearest,
+    ]:
         if item.distance_m is None:
             continue
         # object_name бывает числовым OSM-id (объект без имени) — тогда только категория

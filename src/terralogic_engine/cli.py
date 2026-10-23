@@ -51,10 +51,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--profile-version",
-        default="3.0",
+        default="3.2",
         help=(
             "Collection profile version; 3.1 enables the geodocs document "
-            "contour (acquire + query) when --geodocs-url is configured"
+            "contour (acquire + query) when --geodocs-url is configured, "
+            "3.2 additionally collects public-transport stops from OSM "
+            "and skips the 2GIS transport survey"
         ),
     )
     parser.add_argument(

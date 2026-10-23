@@ -416,8 +416,14 @@ class FakeNspdClient:
 
 
 class FakeOsmClient:
-    def __init__(self, *, failure: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        failure: Exception | None = None,
+        include_transport: bool = False,
+    ) -> None:
         self.failure = failure
+        self.include_transport = include_transport
         self.calls = 0
         self.arguments: dict[str, Any] = {}
 
@@ -442,7 +448,31 @@ class FakeOsmClient:
         }
         if self.failure is not None:
             raise self.failure
-        return deepcopy(osm_result())
+        result = deepcopy(osm_result())
+        if self.include_transport:
+            result["data"]["blocks"].append(
+                {
+                    "block": "transport",
+                    "returned_count": 1,
+                    "features": [
+                        {
+                            "element_type": "node",
+                            "osm_id": 9001,
+                            "name": "Остановка Тестовая",
+                            "tags": {
+                                "highway": "bus_stop",
+                                "public_transport": "platform",
+                            },
+                            "distance_to_parcel_m": 111.0,
+                            "geojson": {
+                                "type": "Point",
+                                "coordinates": [43.6050, 56.0710],
+                            },
+                        }
+                    ],
+                }
+            )
+        return result
 
 
 def dgis_result(
