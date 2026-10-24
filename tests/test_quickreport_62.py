@@ -355,6 +355,51 @@ def test_62_unclassifiable_zone_blocks_score(rules, guidance, catalog):
     assert quick.protocol.unmatched_zones == ["Полоса кватарных ограничений"]
 
 
+def test_62_melioration_lands_excluded_not_zouit(rules, guidance, catalog):
+    """«Мелиорируемые земли» (категория карточки РГИС) — не ЗОУИТ ст. 105:
+    исключается из скоринга и таблицы факторов с протокольной пометкой."""
+    base = _base_with([_zouit("Мелиорируемые земли", None, 100.0, source="rgis")])
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, catalog=catalog, configuration=_CONFIG_OK
+    )
+    assert quick.verdict.score == 90  # 100 − U(10), вычетов нет
+    assert quick.protocol.unmatched_zones == []
+    assert all(
+        factor.zone_name != "Мелиорируемые земли" for factor in quick.factors
+    )
+    assert any("не является ЗОУИТ" in note for note in quick.warnings)
+
+
+def test_62_sanitary_water_supply_hits_special_rule(rules, guidance, catalog):
+    """«Зона санитарной охраны» — ЗСО водоснабжения (п. 16, спецправило 6.1),
+    а не округа лечебных ресурсов (п. 15): частное раньше общего."""
+    base = _base_with(
+        [_zouit("Зона санитарной охраны", "Зона санитарной охраны", 100.0)]
+    )
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, catalog=catalog, configuration=_CONFIG_OK
+    )
+    factor = quick.protocol.factors[0]
+    assert factor.catalog_item == "16"
+    assert factor.deduction == 30
+    assert factor.deduction_kind == "d"
+    assert quick.verdict.score == 60  # 100 − 30 − U(10)
+
+
+def test_62_sanitary_resort_district_stays_universal(rules, guidance, catalog):
+    """«Округ санитарной охраны» курорта — п. 15, универсальная шкала → Q30."""
+    base = _base_with(
+        [_zouit("Округ санитарной охраны курорта «Сестрорецк»",
+                "Округа санитарной и горно-санитарной охраны", 40.0)]
+    )
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, catalog=catalog, configuration=_CONFIG_OK
+    )
+    factor = quick.protocol.factors[0]
+    assert factor.catalog_item == "15"
+    assert factor.effect_code == "Q30"
+
+
 def test_62_regime_effect_assigns_e_level(rules, guidance):
     """Подтверждённый режим из курируемой таблицы → E-уровень (d), не Q30."""
     catalog = load_zouit_catalog()

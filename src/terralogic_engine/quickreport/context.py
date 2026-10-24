@@ -146,6 +146,8 @@ def _factors(
     for zone in base.zouit:
         entry = match_guidance(guidance, zone_type=zone.zone_type, name=zone.name)
         catalog_entry = catalog.classify(zone.zone_type, zone.name)
+        if catalog_entry is not None and catalog_entry.handling == "not_zouit":
+            continue
         if entry is None:
             if catalog_entry is None:
                 warnings.append(f"зона без текста guidance: {zone.name}")
@@ -655,6 +657,12 @@ def _classify_zones(
         entry = catalog.classify(zone.zone_type, zone.name)
         if entry is None:
             still_unmatched.append(zone.name)
+            continue
+        if entry.handling == "not_zouit":
+            notes.append(
+                f"не является ЗОУИТ по ст. 105 ЗК РФ — исключена из скоринга: "
+                f"{zone.name!r}"
+            )
             continue
         if entry.handling == "airport":
             airport_zones.append((zone, coverage))

@@ -206,3 +206,21 @@ async def test_template_v1_2_adds_documents_subsection(tmp_path) -> None:
     )
     assert saved.template_version == "1.2"
     assert saved.template_sha256 == template.content_sha256
+
+
+def test_zone_display_name_numeric_id_falls_back_to_layer():
+    """Числовой id вместо имени зоны → читаемое имя слоя РГИС."""
+    from terralogic_engine.domain.models import GeoFeature
+    from terralogic_engine.reporting.context import _zone_display_name
+
+    feature = GeoFeature(
+        id="f-1",
+        case_id="case-x",
+        snapshot_id="snap-x",
+        source="rgis",
+        source_type="drinking_water_protection",
+        feature_class="restriction_zone",
+    )
+    assert _zone_display_name("5183673830", feature) == "Зона санитарной охраны"
+    assert _zone_display_name("5183673830", None) == "5183673830"
+    assert _zone_display_name("Водоохранная зона", feature) == "Водоохранная зона"

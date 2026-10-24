@@ -217,6 +217,11 @@ def _parcel_context(
 _SOURCE_TYPE_ZONE_NAMES = {
     "water_protection": "Водоохранная зона",
     "coastal_protection": "Прибрежная защитная полоса",
+    "drinking_water_protection": "Зона санитарной охраны",
+    "flooding": "Зона затопления и подтопления",
+    "pipeline_protection": "Охранная зона трубопроводов",
+    "protected_areas": "Особо охраняемая природная территория",
+    "sanitary_protection": "Санитарно-защитная зона",
 }
 
 
