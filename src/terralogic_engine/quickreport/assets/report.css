@@ -93,5 +93,5 @@ th { background: #E8F5E9; }
    на предыдущий контент */
 .rights-spacer { height: 32mm; }
 .s-rights { position: absolute; bottom: 0; left: 0; right: 0; margin: 0; }
-.s-rights h2 { font-size: 10pt; color: #5A5A5A; margin-bottom: 1.5mm; }
-.s-rights p { font-size: 8.5pt; color: #5A5A5A; margin-bottom: 1.2mm; }
+.s-rights h2 { font-size: 8pt; color: #5A5A5A; margin-bottom: 1.5mm; }
+.s-rights p { font-size: 7pt; color: #5A5A5A; margin-bottom: 1.2mm; }
