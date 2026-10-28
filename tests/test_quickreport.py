@@ -833,6 +833,88 @@ def test_zone_regulations_absent_without_documents(rules, guidance):
     assert "Сведения о территориальной зоне из документа ПЗЗ не получены" in markdown
 
 
+def test_dacha_use_matches_gardening_row(rules, guidance):
+    """«Дачное строительство» (вне классификатора П/0412) = садоводство:
+    целевая строка «13.2*», A и C считаются, оценка не приостанавливается."""
+    base = _with_pzz(_base_context())
+    base.parcel.permitted_use = "для ведения дачного строительства"
+    base.parcel.permitted_use_vri = None
+    base.documents.pzz.zones[0].items = [
+        _vri_item(
+            "13.2*",
+            "Ведение садоводства",
+            area_min=600,
+            area_max=500000,
+            building_percentage="40%",
+            margin=3,
+        ),
+        _vri_item("13.1**", "Ведение огородничества", area_min=200, area_max=490),
+    ]
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+
+    regulations = quick.zone_regulations
+    assert regulations is not None
+    # «13.2*» — жилищный код со звёздочкой; «13.1» без дома — нет
+    assert [use.code for use in regulations.housing_uses] == ["13.2*"]
+    area = quick.protocol.area
+    assert area.status in {"computed", "min_not_set"}
+    assert area.target_code == "13.2*"
+    assert quick.verdict.score is not None
+    assert all(
+        "применимость регламента" not in reason
+        for reason in quick.verdict.reasons
+    )
+
+
+def test_gardening_use_prefers_classifier_code(rules, guidance):
+    """Разрешённый ВРИ по классификатору («13.2») матчится точно к строке
+    «13.2*» зоны, а не к «1.5»."""
+    base = _with_pzz(_base_context())
+    base.parcel.permitted_use = "Ведение садоводства"
+    base.parcel.permitted_use_vri = VriReportContext(
+        code="13.2",
+        name="Ведение садоводства",
+        act_number="П/0412",
+        revision_date="2026-06-02",
+    )
+    base.documents.pzz.zones[0].items = [
+        _vri_item("1.5", "Садоводство", area_min=10000, margin=5),
+        _vri_item(
+            "13.2*",
+            "Ведение садоводства",
+            area_min=600,
+            area_max=500000,
+            building_percentage="40%",
+            margin=3,
+        ),
+    ]
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+
+    area = quick.protocol.area
+    assert area.target_code == "13.2*"
+    assert area.s_min_m2 == 600
+
+
+def test_unstarred_gardening_row_is_not_housing(rules, guidance):
+    """«13.2» без звёздочки дом не разрешает — в жилищный блок не попадает."""
+    base = _with_pzz(_base_context())
+    base.documents.pzz.zones[0].items = [
+        _vri_item("13.2", "Ведение садоводства", area_min=600),
+        _vri_item("2.1*", "Для индивидуального жилищного строительства"),
+    ]
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+
+    regulations = quick.zone_regulations
+    assert regulations is not None
+    assert [use.code for use in regulations.housing_uses] == ["2.1*"]
+
+
 # ---------------------------------------------------------------------------
 # prepare_quickreport end-to-end
 # ---------------------------------------------------------------------------

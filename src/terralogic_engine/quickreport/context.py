@@ -18,6 +18,7 @@ from typing import Any
 
 from terralogic_engine.reporting.context import build_report_context
 from terralogic_engine.reporting.models import (
+    ParcelReportContext,
     ReportContext,
     ZouitRegimeDocumentContext,
     ZouitReportContext,
@@ -66,10 +67,15 @@ _NUMBER_RE = re.compile(r"\d[\d ]*(?:[.,]\d+)?")
 
 
 def _is_housing_use(code: str | None) -> bool:
-    """Коды классификатора ВРИ групп 1.* (садоводство/огородничество) и 2.* (жильё)."""
+    """Коды групп 1.* (садоводство/огородничество) и 2.* (жильё), а также
+    «13.2*» — ведение садоводства со звёздочкой: в ПЗЗ Московской области
+    сноска «*» у этого кода разрешает возведение одного жилого дома."""
     if not code:
         return False
-    head = code.lstrip().split(".", 1)[0].rstrip("*")
+    stripped = code.lstrip()
+    if stripped.rstrip().endswith("*") and stripped.rstrip("* ").startswith("13.2"):
+        return True
+    head = stripped.split(".", 1)[0].rstrip("*")
     return head in _HOUSING_CODE_PREFIXES
 
 
@@ -745,18 +751,28 @@ def _communications_u(rules: ScoringRules) -> float:
     return min(rules.comm_max, sum(rules.comm_weights.values()))
 
 
-def _target_use_prefix(permitted_use: str | None) -> str | None:
-    """Префикс кода ВРИ заявленной цели по тексту разрешённого использования."""
-    text = (permitted_use or "").casefold()
-    if "садовод" in text:
-        return "1"
-    if "личного подсобного" in text:
-        return "2.2"
-    if "блокированн" in text:
-        return "2.3"
-    if "ижс" in text or "жил" in text:
-        return "2.1"
-    return None
+def _target_use_prefixes(parcel: ParcelReportContext) -> list[str]:
+    """Кандидаты кодов ВРИ цели «дом/хозяйство», приоритет — по порядку.
+
+    Первичен код из классификатора П/0412 (permitted_use_vri); при его
+    отсутствии — текстовые эвристики. «Дачное строительство» исключено из
+    классификатора 217-ФЗ и приравнено к садоводству: кандидаты «13.2»
+    (строка со звёздочкой, разрешающая жилой дом) и «1.5».
+    """
+    candidates: list[str] = []
+    vri = parcel.permitted_use_vri
+    if vri is not None and vri.code:
+        candidates.append(vri.code.rstrip("*"))
+    text = (parcel.permitted_use or "").casefold()
+    if "дачн" in text or "садовод" in text:
+        candidates.extend(["13.2", "1.5"])
+    elif "личного подсобного" in text:
+        candidates.append("2.2")
+    elif "блокированн" in text:
+        candidates.append("2.3")
+    elif "ижс" in text or "жил" in text:
+        candidates.append("2.1")
+    return list(dict.fromkeys(candidates))
 
 
 def _first_number(value: object) -> float | None:
@@ -772,19 +788,19 @@ def _first_number(value: object) -> float | None:
 
 
 def _target_use_item(
-    regulations: QuickZoneRegulations, prefix: str | None
+    regulations: QuickZoneRegulations, prefixes: list[str]
 ) -> QuickZoneUse | None:
-    """Строка регламента для ВРИ участка: «2.1» — только точное совпадение
-    (2.1.1 — другой ВРИ), групповой префикс «1» — любой код 1.*."""
-    if prefix is None:
-        return None
-    for use in regulations.housing_uses:
-        code = (use.code or "").lstrip().rstrip("*")
-        if "." in prefix:
-            if code == prefix:
+    """Строка регламента для ВРИ участка: кандидаты пробуются по порядку;
+    код с точкой («2.1», «13.2») — только точное совпадение (2.1.1 — другой
+    ВРИ), групповой префикс без точки — любой код группы."""
+    for prefix in prefixes:
+        for use in regulations.housing_uses:
+            code = (use.code or "").lstrip().rstrip("*")
+            if "." in prefix:
+                if code == prefix:
+                    return use
+            elif code == prefix or code.startswith(f"{prefix}."):
                 return use
-        elif code == prefix or code.startswith(f"{prefix}."):
-            return use
     return None
 
 
@@ -1243,9 +1259,9 @@ def build_quick_context_from_report(
         f"{rules.texts.get('unruled_zone', '')}: {name}" for name in unmatched
     )
 
-    prefix = _target_use_prefix(base.parcel.permitted_use)
+    prefixes = _target_use_prefixes(base.parcel)
     target_item = (
-        _target_use_item(regulations, prefix) if regulations is not None else None
+        _target_use_item(regulations, prefixes) if regulations is not None else None
     )
     a, area_notes, area_suspend, area_info = _area_deduction(
         base, rules, regulations, target_item
@@ -1287,7 +1303,7 @@ def build_quick_context_from_report(
         area_info=area_info,
         configuration=configuration,
         regulations=regulations,
-        target_prefix=prefix,
+        target_prefix=", ".join(prefixes) if prefixes else None,
         verdict_result=verdict_result,
     )
     missing = _missing_items(
@@ -1333,8 +1349,8 @@ def _configuration_from_store(
     """Геометрическая проверка п. 4.4: контур участка + применимые отступы."""
     if regulations is None:
         return None
-    prefix = _target_use_prefix(base.parcel.permitted_use)
-    target_item = _target_use_item(regulations, prefix)
+    prefixes = _target_use_prefixes(base.parcel)
+    target_item = _target_use_item(regulations, prefixes)
     margin = _first_number(target_item.margin) if target_item is not None else None
     if margin is None:
         warnings.append("конфигурация: нет применимых отступов из регламента ПЗЗ")
