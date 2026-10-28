@@ -218,3 +218,12 @@ def test_create_reporting_service_wires_geodocs_client(tmp_path) -> None:
     assert service.acquisition.geodocs.read_timeout_seconds == (
         DEFAULT_GEODOCS_READ_TIMEOUT_SECONDS
     )
+
+
+def test_tool_failure_maps_parcel_not_found() -> None:
+    from terralogic_engine.mcp import _tool_failure
+    from terralogic_engine.reporting.service import ParcelNotFoundError
+
+    error = _tool_failure(ParcelNotFoundError("Parcel not found: nspd: not_found"))
+    assert error.code == "not_found"
+    assert error.retryable is False

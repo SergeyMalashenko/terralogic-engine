@@ -68,6 +68,10 @@ class CasePreparationError(RuntimeError):
     """Raised when source collection cannot produce an analyzable parcel."""
 
 
+class ParcelNotFoundError(CasePreparationError):
+    """Источник однозначно сообщил: участок с таким КН не существует."""
+
+
 class ReportingService:
     """Coordinate collection, analytics, report context, and persistence."""
 
@@ -127,6 +131,10 @@ class ReportingService:
         )
         if receipt.aoi_id is None:
             details = "; ".join(receipt.errors) or "collection produced no AOI"
+            # Отказ источника «участок не найден» (конверт not_found) — это
+            # финальный ответ о несуществующем КН, а не временный сбой сбора.
+            if any("not_found:" in error for error in receipt.errors):
+                raise ParcelNotFoundError(f"Parcel not found: {details}")
             raise CasePreparationError(f"Case preparation failed: {details}")
         analysis = self.store.get_analysis_result(
             receipt.case_id,

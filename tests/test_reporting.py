@@ -224,3 +224,50 @@ def test_zone_display_name_numeric_id_falls_back_to_layer():
     assert _zone_display_name("5183673830", feature) == "Зона санитарной охраны"
     assert _zone_display_name("5183673830", None) == "5183673830"
     assert _zone_display_name("Водоохранная зона", feature) == "Водоохранная зона"
+
+
+async def test_prepare_case_source_not_found_raises_parcel_not_found(tmp_path) -> None:
+    """Конверт not_found источника → ParcelNotFoundError (не временный сбой)."""
+    from terralogic_engine.domain.models import CollectionReceipt, utc_now
+    from terralogic_engine.reporting.service import (
+        CasePreparationError,
+        ParcelNotFoundError,
+    )
+
+    class _FailedAcquisition:
+        def __init__(self, errors: list[str]) -> None:
+            self._errors = errors
+
+        async def collect(self, request):
+            return CollectionReceipt(
+                case_id=request.case_id,
+                run_id="run-x",
+                status="failed",
+                aoi_id=None,
+                errors=self._errors,
+                started_at=utc_now(),
+                completed_at=utc_now(),
+            )
+
+    store = LocalCaseStore(tmp_path / "store")
+    service = ReportingService(
+        store=store,
+        acquisition=_FailedAcquisition(
+            [
+                (
+                    "nspd_get_land_parcel_info: not_found: "
+                    "Land parcel 50:21:0030210:123 was not found"
+                )
+            ]
+        ),
+    )
+    with pytest.raises(ParcelNotFoundError):
+        await service.prepare_case("50:21:0030210:123")
+
+    service = ReportingService(
+        store=store,
+        acquisition=_FailedAcquisition(["nspd: connection timeout"]),
+    )
+    with pytest.raises(CasePreparationError) as exc_info:
+        await service.prepare_case("50:21:0030210:123")
+    assert not isinstance(exc_info.value, ParcelNotFoundError)

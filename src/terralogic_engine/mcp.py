@@ -27,6 +27,7 @@ from terralogic_engine.reporting.context import ReportContextError
 from terralogic_engine.reporting.models import PrepareCaseResult
 from terralogic_engine.reporting.service import (
     CasePreparationError,
+    ParcelNotFoundError,
     ReportingService,
 )
 from terralogic_engine.store.local import LocalCaseStore
@@ -173,6 +174,8 @@ def create_reporting_service(
 
 
 def _tool_failure(exc: Exception) -> ToolError:
+    if isinstance(exc, ParcelNotFoundError):
+        return ToolError(code="not_found", message=str(exc), retryable=False)
     if isinstance(exc, KeyError):
         return ToolError(code="not_found", message=str(exc))
     if isinstance(exc, (ReportContextError, ValueError)):
