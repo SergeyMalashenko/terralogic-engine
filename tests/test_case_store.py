@@ -183,3 +183,37 @@ def test_local_case_store_saves_and_filters_facts(tmp_path) -> None:
 
     reopened = LocalCaseStore(tmp_path / "store")
     assert reopened.list_facts("case-facts") == facts
+
+
+def test_read_case_artifact_roundtrip_and_errors(tmp_path) -> None:
+    import pytest
+
+    store = LocalCaseStore(tmp_path / "store")
+    store.create_case(
+        case_id="case-art",
+        cadastral_number="52:26:0040002:3823",
+        report_profile="land_report",
+    )
+    relative = store.save_case_artifact(
+        case_id="case-art",
+        kind="reports",
+        filename="quickreport-run-1.pdf",
+        payload=b"%PDF-1.4 payload",
+    )
+    assert relative == "reports/quickreport-run-1.pdf"
+    assert (
+        store.read_case_artifact(
+            case_id="case-art",
+            kind="reports",
+            filename="quickreport-run-1.pdf",
+        )
+        == b"%PDF-1.4 payload"
+    )
+    with pytest.raises(KeyError):
+        store.read_case_artifact(
+            case_id="case-art", kind="reports", filename="missing.pdf"
+        )
+    with pytest.raises(ValueError):
+        store.read_case_artifact(
+            case_id="case-art", kind="..", filename="x.pdf"
+        )

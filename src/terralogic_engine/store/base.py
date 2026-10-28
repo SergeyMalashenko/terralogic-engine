@@ -68,6 +68,18 @@ class CaseStore(Protocol):
         Returns the case-relative POSIX path (e.g. ``maps/overview.png``).
         """
 
+    def read_case_artifact(
+        self,
+        *,
+        case_id: str,
+        kind: str,
+        filename: str,
+    ) -> bytes:
+        """Read a binary artifact saved with ``save_case_artifact``.
+
+        Raises ``KeyError`` when the artifact does not exist.
+        """
+
     def load_snapshot(self, case_id: str, snapshot_id: str) -> bytes: ...
 
     def list_snapshots(

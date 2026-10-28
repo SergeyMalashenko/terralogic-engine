@@ -459,6 +459,26 @@ class LocalCaseStore:
         self._atomic_write(self._case_dir(case_id) / relative_path, payload)
         return relative_path.as_posix()
 
+    def read_case_artifact(
+        self,
+        *,
+        case_id: str,
+        kind: str,
+        filename: str,
+    ) -> bytes:
+        """Read a case artifact saved with :meth:`save_case_artifact`."""
+
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", kind):
+            raise ValueError("artifact kind must be a simple directory name")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", filename) or filename.startswith(
+            "."
+        ):
+            raise ValueError("artifact filename must be a plain file name")
+        stored = self._case_dir(case_id) / kind / filename
+        if not stored.is_file():
+            raise KeyError(f"Artifact {kind}/{filename} does not exist for {case_id}")
+        return stored.read_bytes()
+
     def load_snapshot(self, case_id: str, snapshot_id: str) -> bytes:
         with self._connection(case_id) as connection:
             row = connection.execute(

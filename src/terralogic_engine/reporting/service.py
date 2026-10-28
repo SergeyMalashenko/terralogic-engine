@@ -13,6 +13,7 @@ from terralogic_engine.qa.critic import CriticExecutor
 from terralogic_engine.quickreport import (
     MarketingConfig,
     QuickReportContext,
+    QuickReportPdf,
     QuickReportResult,
     build_quick_context,
     load_marketing,
@@ -57,6 +58,10 @@ MAX_REPORT_TITLE_CHARACTERS = 300
 MAX_MODEL_NAME_CHARACTERS = 200
 
 QUICK_REPORT_TEMPLATE_ID = "quick_report"
+
+
+def _quick_pdf_filename(collection_run_id: str) -> str:
+    return f"quickreport-{collection_run_id}.pdf"
 
 
 class CasePreparationError(RuntimeError):
@@ -261,6 +266,30 @@ class ReportingService:
             service_markdown=service_markdown,
             qa_relative_path=qa_relative_path,
             warnings=context.warnings,
+        )
+
+    def get_quickreport_pdf(
+        self,
+        case_id: str,
+        *,
+        collection_run_id: str,
+    ) -> QuickReportPdf:
+        """PDF-артефакт quick-отчёта кейса для delivery-интерфейсов.
+
+        Чтение из CaseStore по детерминированному имени артефакта
+        (``reports/quickreport-<run_id>.pdf``); отсутствие — ``KeyError``.
+        """
+        filename = _quick_pdf_filename(collection_run_id)
+        payload = self.store.read_case_artifact(
+            case_id=case_id,
+            kind="reports",
+            filename=filename,
+        )
+        return QuickReportPdf(
+            case_id=case_id,
+            collection_run_id=collection_run_id,
+            filename=filename,
+            payload=payload,
         )
 
     @staticmethod
@@ -543,7 +572,7 @@ class ReportingService:
             relative_path = self.store.save_case_artifact(
                 case_id=case_id,
                 kind="reports",
-                filename=f"quickreport-{context.collection_run_id}.pdf",
+                filename=_quick_pdf_filename(context.collection_run_id),
                 payload=tmp_path.read_bytes(),
             )
         finally:

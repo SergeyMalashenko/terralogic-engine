@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import logging
 from collections.abc import Sequence
 from pathlib import Path
@@ -71,6 +72,15 @@ class ToolMetadata(BaseModel):
             "RGIS MO (Геопортал Подмосковья)",
         ]
     )
+
+
+class QuickReportPdfPayload(BaseModel):
+    """PDF quick-отчёта для delivery-интерфейсов (base64 по MCP-каналу)."""
+
+    case_id: str
+    collection_run_id: str
+    filename: str
+    content_base64: str
 
 
 class ToolResult(BaseModel, Generic[T]):
@@ -286,6 +296,38 @@ def create_mcp_server(
                 error=_tool_failure(exc),
             )
         return ToolResult[QuickReportResult](ok=True, data=data)
+
+    @server.tool()
+    async def terralogic_get_report_pdf(
+        case_id: str,
+        collection_run_id: str,
+    ) -> ToolResult[QuickReportPdfPayload]:
+        """Return the persisted quick-report PDF as base64 for delivery UIs.
+
+        Intended for remote consumers (e.g. the Telegram bot) that cannot
+        read the CaseStore filesystem directly. Use the ``case_id`` and
+        ``collection_run_id`` returned by ``terralogic_prepare_quickreport``.
+        """
+
+        try:
+            pdf = service.get_quickreport_pdf(
+                case_id,
+                collection_run_id=collection_run_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - MCP application boundary
+            return ToolResult[QuickReportPdfPayload](
+                ok=False,
+                error=_tool_failure(exc),
+            )
+        return ToolResult[QuickReportPdfPayload](
+            ok=True,
+            data=QuickReportPdfPayload(
+                case_id=pdf.case_id,
+                collection_run_id=pdf.collection_run_id,
+                filename=pdf.filename,
+                content_base64=base64.b64encode(pdf.payload).decode("ascii"),
+            ),
+        )
 
     return server
 

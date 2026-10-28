@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from collections.abc import Callable
 from typing import Any
 
@@ -62,6 +63,7 @@ def test_mcp_registers_case_and_quickreport_tools(
     assert list(server.tools) == [
         "terralogic_prepare_case",
         "terralogic_prepare_quickreport",
+        "terralogic_get_report_pdf",
     ]
     assert server.kwargs["port"] == 8004
     assert server.kwargs["stateless_http"] is True
@@ -108,6 +110,7 @@ async def test_real_streamable_http_lists_two_tools(tmp_path) -> None:
     assert [tool["name"] for tool in listed.json()["result"]["tools"]] == [
         "terralogic_prepare_case",
         "terralogic_prepare_quickreport",
+        "terralogic_get_report_pdf",
     ]
 
 
@@ -148,6 +151,33 @@ async def test_mcp_supports_prepare_case_then_quickreport_workflow(
     assert persisted is not None
     assert persisted.id == quick.data.report_id
     assert persisted.template_id == "quick_report"
+
+    pdf = await server.tools["terralogic_get_report_pdf"](
+        prepared.data.case_id,
+        prepared.data.collection_run_id,
+    )
+    assert pdf.ok
+    assert pdf.data is not None
+    assert pdf.data.filename == f"quickreport-{prepared.data.collection_run_id}.pdf"
+    payload = base64.b64decode(pdf.data.content_base64)
+    assert payload.startswith(b"%PDF")
+
+
+async def test_mcp_get_report_pdf_unknown_case(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        "terralogic_engine.mcp._load_mcp_server_class",
+        lambda: FakeFastMCP,
+    )
+    server = create_mcp_server(_service(tmp_path))
+
+    result = await server.tools["terralogic_get_report_pdf"]("missing", "run-x")
+
+    assert not result.ok
+    assert result.error is not None
+    assert result.error.code == "not_found"
 
 
 async def test_mcp_returns_structured_error_for_unknown_case(

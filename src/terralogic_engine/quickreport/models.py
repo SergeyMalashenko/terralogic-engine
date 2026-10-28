@@ -253,3 +253,12 @@ class QuickReportResult(BaseModel):
     service_markdown: str | None = None
     qa_relative_path: str | None = None
     warnings: list[str] = Field(default_factory=list)
+
+
+class QuickReportPdf(BaseModel):
+    """PDF-артефакт quick-отчёта для выдачи delivery-интерфейсам (бот и т.п.)."""
+
+    case_id: str
+    collection_run_id: str
+    filename: str
+    payload: bytes
