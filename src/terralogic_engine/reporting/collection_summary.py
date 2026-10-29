@@ -267,6 +267,10 @@ def _final_status(slot: dict[str, Any]) -> str:
 
 def _documents(store: CaseStore, run_snapshots) -> list[DocumentStatusEntry]:
     entries: dict[str, dict[str, Any]] = {}
+    vri_attempted = any(
+        (snapshot.metadata or {}).get("snapshot_type") == _DOCUMENT_VRI
+        for snapshot in run_snapshots
+    )
     for snapshot in run_snapshots:
         snapshot_type = (snapshot.metadata or {}).get("snapshot_type")
         if snapshot_type in (
@@ -287,6 +291,12 @@ def _documents(store: CaseStore, run_snapshots) -> list[DocumentStatusEntry]:
         )
         for slot in entries.values()
     ]
+    if vri_attempted:
+        # ПЗЗ скачан, но таблица ВРИ не извлечена (скан, нет раздела и т.п.) —
+        # важная для /status развилка «файл есть, данных нет».
+        for doc in documents:
+            if doc.doc_type == "pzz" and doc.status == "downloaded":
+                doc.reason = doc.reason or "таблица ВРИ не извлечена"
     order = {"extracted": 0, "downloaded": 1, "pending": 2, "not_found": 3, "failed": 4}
     documents.sort(key=lambda doc: (order[doc.status], doc.doc_type or ""))
     return documents

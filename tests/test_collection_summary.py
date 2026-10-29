@@ -168,6 +168,30 @@ async def test_prepare_case_attaches_collection(tmp_path) -> None:
     assert any(doc.status == "extracted" for doc in result.collection.documents)
 
 
+async def test_summary_downloaded_pzz_without_extraction_has_reason(tmp_path) -> None:
+    """ПЗЗ скачан, но таблица ВРИ не извлечена → явная причина в сводке."""
+    store = LocalCaseStore(tmp_path / "store")
+    geodocs = FakeGeodocsClient(
+        vri_result={
+            "status": "success",
+            "data": {"zones": []},
+            "evidence": [],
+            "answer_text": "",
+            "documents": [],
+            "executor": "static:vri",
+            "warnings": [],
+            "duration_seconds": 0.0,
+        }
+    )
+    pipeline = _pipeline(store, geodocs=geodocs)
+    receipt = await pipeline.collect(_request())
+
+    summary = build_collection_summary(store, receipt)
+    documents = {doc.number: doc for doc in summary.documents}
+    assert documents["ПЗЗ-Т-592"].status == "downloaded"
+    assert documents["ПЗЗ-Т-592"].reason == "таблица ВРИ не извлечена"
+
+
 async def test_never_without_run_raises_not_collected(tmp_path) -> None:
     store = LocalCaseStore(tmp_path / "store")
     pipeline = _pipeline(store)
