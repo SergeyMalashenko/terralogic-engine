@@ -35,6 +35,7 @@ from terralogic_engine.quickreport.narrative import (
     build_established_facts_input,
 )
 from terralogic_engine.quickreport.render import render_quick_model
+from terralogic_engine.reporting.collection_summary import build_collection_summary
 from terralogic_engine.reporting.context import (
     build_report_context,
     collection_receipt_for_run,
@@ -154,6 +155,7 @@ class ReportingService:
             feature_counts=receipt.feature_counts,
             warnings=list(dict.fromkeys([*receipt.warnings, *analysis.warnings])),
             errors=receipt.errors,
+            collection=build_collection_summary(self.store, receipt),
         )
 
     def get_report_context(

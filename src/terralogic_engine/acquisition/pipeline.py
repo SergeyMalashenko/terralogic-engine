@@ -69,6 +69,10 @@ DOCUMENTS_SNAPSHOT_TYPE_PREFIX = "document"
 EXTERNAL_DOCUMENT_WARNING = "external document source not configured"
 
 
+class CaseNotCollectedError(RuntimeError):
+    """refresh_policy='never': нет совместимого завершённого run кейса."""
+
+
 def _json_bytes(value: Any) -> bytes:
     return json.dumps(
         value,
@@ -922,6 +926,18 @@ class AcquisitionPipeline:
     ) -> CollectionReceipt | None:
         if request.refresh_policy == "always":
             return None
+        reusable = self._compatible_receipt(request, profile)
+        if reusable is None and request.refresh_policy == "never":
+            # never — строго read-only (например, /status в боте): нет
+            # совместимого run — ошибка вместо запуска полного сбора.
+            raise CaseNotCollectedError(
+                f"Case {request.case_id!r} has no compatible completed collection run"
+            )
+        return reusable
+
+    def _compatible_receipt(
+        self, request: CollectionRequest, profile: CollectionProfile
+    ) -> CollectionReceipt | None:
         latest = self.store.get_latest_collection_receipt(request.case_id)
         if latest is None or latest.status not in {"complete", "partial"}:
             return None

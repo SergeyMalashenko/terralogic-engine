@@ -21,7 +21,10 @@ from terralogic_engine.acquisition.clients import (
     McpRgisDocumentsClient,
     StreamableHttpMcpTransport,
 )
-from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
+from terralogic_engine.acquisition.pipeline import (
+    AcquisitionPipeline,
+    CaseNotCollectedError,
+)
 from terralogic_engine.quickreport.models import QuickReportResult
 from terralogic_engine.reporting.context import ReportContextError
 from terralogic_engine.reporting.models import PrepareCaseResult
@@ -176,6 +179,8 @@ def create_reporting_service(
 def _tool_failure(exc: Exception) -> ToolError:
     if isinstance(exc, ParcelNotFoundError):
         return ToolError(code="not_found", message=str(exc), retryable=False)
+    if isinstance(exc, CaseNotCollectedError):
+        return ToolError(code="not_collected", message=str(exc), retryable=False)
     if isinstance(exc, KeyError):
         return ToolError(code="not_found", message=str(exc))
     if isinstance(exc, (ReportContextError, ValueError)):
@@ -251,7 +256,9 @@ def create_mcp_server(
             margin_m: Metres added to the parcel minimum enclosing radius,
                 from 0 to 10000.
             refresh_policy: ``if_stale`` reuses fresh data, ``always`` obtains
-                new source snapshots, and ``never`` reuses any compatible run.
+                new source snapshots, and ``never`` reuses any compatible run
+                without collecting (fails with ``not_collected`` when none
+                exists — safe read-only status queries).
         """
 
         try:

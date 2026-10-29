@@ -282,6 +282,33 @@ class ReportContext(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class SourceStatusEntry(BaseModel):
+    """Итоговый статус одного источника данных в collection run."""
+
+    source: str
+    status: Literal["ok", "partial", "failed", "skipped", "not_applicable"]
+    detail: str | None = None
+
+
+class DocumentStatusEntry(BaseModel):
+    """Статус одного нормативного документа: найден → скачан → извлечён."""
+
+    doc_type: str | None = None
+    number: str | None = None
+    version_date: str | None = None
+    municipality: str | None = None
+    status: Literal["extracted", "downloaded", "pending", "not_found", "failed"]
+    reason: str | None = None
+
+
+class CollectionSummary(BaseModel):
+    """Постатусная сводка сбора: источники и документы одного run."""
+
+    duration_s: float | None = None
+    sources: list[SourceStatusEntry] = Field(default_factory=list)
+    documents: list[DocumentStatusEntry] = Field(default_factory=list)
+
+
 class PrepareCaseResult(BaseModel):
     """Compact result of collection plus deterministic analytics."""
 
@@ -294,6 +321,7 @@ class PrepareCaseResult(BaseModel):
     feature_counts: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    collection: CollectionSummary | None = None
 
 
 class GeneratedReport(BaseModel):
