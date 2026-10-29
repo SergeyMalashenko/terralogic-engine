@@ -1,7 +1,8 @@
-"""Правила скоринга QuickReport — методика 6.2.
+"""Правила скоринга QuickReport — методика 6.3.
 
 Оценка = max(0; base − Σ вычетов групп ограничений (потолок group_cap на
-группу) − U − G), G = max(A; C). Статусы первичного отбора — по приоритету
+группу) − U − G), G = max(A; C). Специальный маршрут мелиорации §6.1:
+INFO_MELIORATION — информационная запись вне суммы вычетов. Статусы первичного отбора — по приоритету
 из yaml (первое выполненное условие): stop → insufficient → attention → ok.
 Веса, бэнды охвата, пороги и клиентские тексты — в `assets/scoring_rules.yaml`;
 тексты факторов для таблицы отчёта — в `assets/zone_guidance.yaml`.
@@ -22,7 +23,7 @@ _ASSETS = Path(__file__).resolve().parent / "assets"
 def methodology_sha256() -> str:
     """Отпечаток методики: sha256 активов скоринга, каталога и текстов guidance."""
     digest = hashlib.sha256()
-    for name in ("scoring_rules.yaml", "zouit_catalog_62.yaml", "zone_guidance.yaml"):
+    for name in ("scoring_rules.yaml", "zouit_catalog_63.yaml", "zone_guidance.yaml"):
         digest.update((_ASSETS / name).read_bytes())
     return digest.hexdigest()
 
@@ -333,7 +334,7 @@ def load_scoring_rules(path: Path | None = None) -> ScoringRules:
 
 
 # ---------------------------------------------------------------------------
-# Каталог классов ЗОУИТ ст. 105 ЗК РФ (zouit_catalog_62.yaml) — методика 6.2
+# Каталог классов ЗОУИТ ст. 105 ЗК РФ (zouit_catalog_63.yaml) — методика 6.3
 # ---------------------------------------------------------------------------
 
 
@@ -390,8 +391,8 @@ class ZouitCatalog:
 
 
 def load_zouit_catalog(path: Path | None = None) -> ZouitCatalog:
-    """Загружает zouit_catalog_62.yaml; без path — пакетный актив."""
-    raw = _load_yaml(path or _ASSETS / "zouit_catalog_62.yaml")
+    """Загружает zouit_catalog_63.yaml; без path — пакетный актив."""
+    raw = _load_yaml(path or _ASSETS / "zouit_catalog_63.yaml")
     try:
         entries: list[CatalogEntry] = []
         for section in ("catalog", "extra"):
@@ -434,7 +435,7 @@ def load_zouit_catalog(path: Path | None = None) -> ZouitCatalog:
             },
         )
     except (KeyError, TypeError, ValueError) as exc:
-        raise QuickRulesError(f"zouit_catalog_62.yaml: битая структура: {exc}") from exc
+        raise QuickRulesError(f"zouit_catalog_63.yaml: битая структура: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +463,11 @@ class ScoredFactor:
     act_number: str | None = None  # акт, устанавливающий зону (если найден)
     act_date: str | None = None
     registry_number: str | None = None  # реестровый номер зоны (zone_id протокола)
+    # --- методика 6.3 ---
+    # False — информационная запись (INFO_MELIORATION): в сумму вычетов не
+    # входит, в протоколе и отчёте остаётся видимой (6.3 §6.1.6).
+    contributes_to_score: bool = True
+    decision_reason: str = ""  # почему выбран этот маршрут (протокол §10)
 
 
 @dataclass(frozen=True)
@@ -515,6 +521,14 @@ def compute_verdict(
     totals: dict[str, GroupDeduction] = {}
     for factor in scored_factors:
         display = factor.display_name or factor.factor_title
+        if not factor.contributes_to_score:
+            # 6.3: информационные записи (INFO_MELIORATION) видимы в протоколе,
+            # но не входят в суммы вычетов (deduction хранится нулевым).
+            notes.append(
+                f"информационная запись вне скоринга: {display!r}"
+                + (f" — {factor.decision_reason}" if factor.decision_reason else "")
+            )
+            continue
         q_part = factor.deduction if factor.deduction_kind == "q" else 0.0
         current = totals.get(factor.group_key)
         if current is None:

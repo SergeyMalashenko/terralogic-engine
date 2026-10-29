@@ -71,7 +71,7 @@ def guidance():
 
 
 def test_package_assets_load_and_keys_are_consistent(rules, guidance):
-    assert rules.methodology_version == "6.2"
+    assert rules.methodology_version == "6.3"
     assert rules.base_score == 100
     assert rules.group_cap == 40
     assert sum(rules.comm_weights.values()) == rules.comm_max == 10
@@ -266,7 +266,7 @@ def test_build_quick_context_from_report(rules, guidance):
         _base_context(), rules=rules, guidance=guidance, configuration=_CONFIG_OK
     )
 
-    assert quick.methodology_version == "6.2"
+    assert quick.methodology_version == "6.3"
     # водоохранная 100% (25) + прибрежная 40% (10) = 35; U = 10; G = 0 → 55
     assert quick.verdict.score == 55
     assert quick.verdict.status_key == "attention"
@@ -538,7 +538,7 @@ def test_protocol_and_service_report(rules, guidance):
 
     markdown = render_service_report(quick, today=date(2026, 10, 7))
     assert markdown.startswith("# Сервисный отчёт скоринга — 50:11:0020310:49\n")
-    assert "Методика 6.2 · sha256 активов:" in markdown
+    assert "Методика 6.3 · sha256 активов:" in markdown
     assert "**Оценка = max(0; 100 − 35 (ограничения) − 10 (U) − 0 (G)) = 55/100**" in markdown
     assert "правило 3" in markdown
     # протокольная таблица зон хранит сырые наименования представителей
@@ -655,7 +655,7 @@ def test_render_quickreport_structure(rules, guidance):
 
     assert markdown.startswith("# Экспресс-оценка земельного участка\n")
     assert (
-        "Отчёт от 07.10.2026 · Данные от 06.10.2026 · Методика оценки — версия 6.2"
+        "Отчёт от 07.10.2026 · Данные от 06.10.2026 · Методика оценки — версия 6.3"
     ) in markdown
     assert "**Кадастровый номер 50:11:0020310:49**" in markdown
     # балл + статус + отметка «предварительная» (U > 0) + причины + пояснение
@@ -1123,7 +1123,7 @@ async def test_prepare_quickreport_persists_markdown(tmp_path) -> None:
     assert result.case_id == "case-quickreport"
     assert result.collection_run_id == receipt.run_id
     assert result.analysis_id == analysis.id
-    assert result.methodology_version == "6.2"
+    assert result.methodology_version == "6.3"
     assert result.markdown.startswith("# Экспресс-оценка земельного участка\n")
     assert "52:26:0040002:3823" in result.markdown
     persisted = store.get_latest_generated_report("case-quickreport", receipt.run_id)

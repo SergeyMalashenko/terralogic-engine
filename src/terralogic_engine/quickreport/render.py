@@ -107,6 +107,17 @@ def _factors_table(factors: list[QuickFactor]) -> list[str]:
     return lines
 
 
+def _info_melioration_lines(factors: list[QuickFactor]) -> list[str]:
+    """Абзац INFO_MELIORATION (6.3 §6.1.7): информационная запись видима
+    клиенту, но не входит в таблицу ограничений и в балл."""
+    notes = [
+        factor.guidance
+        for factor in factors
+        if factor.informational and factor.rule_id == "info_melioration"
+    ]
+    return ["", *notes] if notes else []
+
+
 def _permitted_use_display(parcel: QuickPassport) -> str | None:
     """Исходный текст ВРИ источника + каноническая ссылка на классификатор."""
     text = parcel.permitted_use
@@ -358,6 +369,7 @@ def render_quick_model(
         "## Факторы, требующие внимания",
         "",
         *_factors_table(model.attention_factors),
+        *_info_melioration_lines(model.attention_factors),
         "",
         "## Паспорт участка",
         "",

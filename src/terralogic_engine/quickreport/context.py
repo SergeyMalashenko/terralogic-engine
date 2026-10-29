@@ -21,6 +21,7 @@ from terralogic_engine.reporting.models import (
     DocumentVriZoneContext,
     ParcelPlanningZoneReportContext,
     ParcelReportContext,
+    ReclamationReportContext,
     ReportContext,
     ZouitRegimeDocumentContext,
     ZouitReportContext,
@@ -213,6 +214,24 @@ def _factors(
         catalog_entry = catalog.classify(zone.zone_type, zone.name)
         if catalog_entry is not None and catalog_entry.handling == "not_zouit":
             continue
+        if (
+            catalog_entry is not None
+            and catalog_entry.handling == "melioration"
+            and not base.reclamation
+        ):
+            # INFO_MELIORATION (6.3 §6.1): общий слой без подтверждённой
+            # системы — информационная запись вне таблицы ограничений,
+            # но видимая клиенту (рендерится отдельным абзацем).
+            collapsed["info_melioration"] = QuickFactor(
+                rule_id="info_melioration",
+                title="Мелиорируемые земли",
+                zone_name=zone.name,
+                coverage_percent=zone.parcel_coverage_percent,
+                coverage_word=rules.coverage_word(zone.parcel_coverage_percent),
+                guidance=rules.texts.get("info_melioration", ""),
+                informational=True,
+            )
+            continue
         if entry is None:
             if catalog_entry is None:
                 warnings.append(f"зона без текста guidance: {zone.name}")
@@ -251,6 +270,33 @@ def _factors(
                 action=action,
                 informational=False,
             )
+    valuable_rows = [
+        row
+        for row in base.reclamation
+        if str(row.is_valuable or "").casefold() == "да"
+    ]
+    if valuable_rows:
+        # Перечень особо ценных угодий — не зона из base.zouit, а вывод
+        # маршрута §6.1.5 по reclamation; строка таблицы добавляется явно.
+        valuable_entry = next(
+            (item for item in guidance.zones.values() if item.key == "valuable_list"),
+            None,
+        )
+        valuable_coverage = max(
+            row.parcel_coverage_percent or 0.0 for row in valuable_rows
+        )
+        collapsed["valuable_list"] = QuickFactor(
+            rule_id="valuable_list",
+            title="Перечень особо ценных с/х угодий",
+            zone_name="Перечень особо ценных с/х угодий",
+            coverage_percent=valuable_coverage,
+            coverage_word=rules.coverage_word(valuable_coverage),
+            guidance=(
+                valuable_entry.guidance if valuable_entry is not None else ""
+            ),
+            action=valuable_entry.action if valuable_entry is not None else None,
+            informational=False,
+        )
     factors = list(collapsed.values())
     comm_note = guidance.misc.get("communications")
     if comm_note:
@@ -494,6 +540,121 @@ def _q30_factor(
     )
 
 
+def _melioration_factors(
+    rules: ScoringRules,
+    guidance: ZoneGuidance,
+    catalog: ZouitCatalog,
+    *,
+    entry: Any,
+    zone: ZouitReportContext,
+    coverage: float,
+    reclamation: list[ReclamationReportContext],
+    act: ZouitRegimeDocumentContext | None,
+    notes: list[str],
+) -> list[ScoredFactor]:
+    """Мелиорация — специальный маршрут §6.1 методики 6.3.
+
+    Только общий слой (reclamation-пересечений нет) → INFO_MELIORATION:
+    информационная запись вне суммы вычетов. Подтверждённая система
+    (тип Орошение/Осушение известен) при неизвестном режиме → Q30.
+    Признак is_valuable=да → отдельный Q30 за перечень особо ценных угодий
+    (нагрузка правовая, отлична от физической — §6.1.5); противоречие
+    источников фиксируется, но не разрешается «в пользу клиента».
+    """
+    guidance_entry = match_guidance(guidance, zone_type=zone.zone_type, name=zone.name)
+    common: dict[str, Any] = {
+        "group_key": entry.group_key,
+        "group_title": catalog.groups.get(entry.group_key, entry.group_key),
+        "source": str(getattr(zone.source, "value", zone.source)),
+        "coverage": coverage,
+        "catalog_item": entry.item,
+        "act_number": act.document_number if act else None,
+        "act_date": (act.registration_date if act else None),
+        "registry_number": zone.registry_number,
+    }
+    if not reclamation:
+        return [
+            ScoredFactor(
+                **common,
+                factor_title=entry.class_name,
+                zone_name=zone.name,
+                deduction=0.0,
+                display_name=(
+                    guidance_entry.title if guidance_entry else entry.class_name
+                ),
+                effect_code="INFO_MELIORATION",
+                deduction_kind="info",
+                regime_state="unknown",
+                contributes_to_score=False,
+                decision_reason=(
+                    "общий информационный слой; reclamation-пересечений нет — "
+                    "конкретная система не установлена; проверены: карточка "
+                    "РГИС (agriculture/reclamation), документальный контур "
+                    "(6.3 §6.1.2–6.1.3)"
+                ),
+            )
+        ]
+    types = sorted(
+        {row.reclamation_type for row in reclamation if row.reclamation_type}
+    )
+    type_note = f" (тип: {', '.join(types)})" if types else ""
+    factors = [
+        ScoredFactor(
+            **common,
+            factor_title=f"{entry.class_name}{type_note}",
+            zone_name=zone.name,
+            deduction=rules.q_regime_unknown,
+            display_name=guidance_entry.title if guidance_entry else entry.class_name,
+            effect_code="Q30",
+            deduction_kind="q",
+            regime_state="unknown",
+            decision_reason=(
+                f"подтверждена мелиоративная система{type_note} "
+                "(agriculture/reclamation РГИС); существенный режим для цели "
+                "не установлен — Q30 (6.3 §6.1.3)"
+            ),
+        )
+    ]
+    marks = {
+        str(row.is_valuable).casefold() for row in reclamation if row.is_valuable
+    }
+    if "да" in marks:
+        factors.append(
+            ScoredFactor(
+                **common,
+                factor_title="Перечень особо ценных с/х угодий",
+                zone_name="Перечень особо ценных с/х угодий",
+                deduction=rules.q_regime_unknown,
+                display_name="Перечень особо ценных с/х угодий",
+                effect_code="Q30",
+                deduction_kind="q",
+                regime_state="unknown",
+                decision_reason=(
+                    "is_valuable=да (agriculture/reclamation РГИС): участок "
+                    "в перечне особо ценных угодий; применимость к текущему "
+                    "зонированию не установлена — противоречие источников "
+                    "зафиксировано, не разрешается в пользу клиента "
+                    "(6.3 §6.1.3, §6.1.5)"
+                ),
+            )
+        )
+        notes.append(
+            "противоречие источников: участок в перечне особо ценных с/х "
+            "угодий (is_valuable=да) при текущем зонировании — проверить "
+            "применимость и основания включения"
+        )
+    elif marks == {"нет"}:
+        notes.append(
+            "перечень особо ценных угодий: участок не входит "
+            "(is_valuable=нет, agriculture/reclamation РГИС)"
+        )
+    else:
+        notes.append(
+            "перечень особо ценных угодий: признак is_valuable не получен"
+        )
+    return factors
+
+
 def _catalog_group_key(catalog: ZouitCatalog, item: str) -> str:
     for entry in catalog.entries:
         if entry.item == item:
@@ -727,6 +888,21 @@ def _classify_zones(
             notes.append(
                 f"не является ЗОУИТ по ст. 105 ЗК РФ — исключена из скоринга: "
                 f"{zone.name!r}"
+            )
+            continue
+        if entry.handling == "melioration":
+            classified.extend(
+                _melioration_factors(
+                    rules,
+                    guidance,
+                    catalog,
+                    entry=entry,
+                    zone=zone,
+                    coverage=coverage,
+                    reclamation=base.reclamation,
+                    act=_regime_document(base, zone),
+                    notes=notes,
+                )
             )
             continue
         if entry.handling == "airport":
@@ -1107,6 +1283,8 @@ def _protocol(
                 act_number=item.act_number,
                 act_date=item.act_date,
                 registry_number=item.registry_number,
+                contributes_to_score=item.contributes_to_score,
+                decision_reason=item.decision_reason,
             )
             for item in scored
         ],
@@ -1246,6 +1424,8 @@ def _missing_items(
     zoning_known: bool,
     area_status: str | None,
     regulations_source: str | None = None,
+    melioration_present: bool = False,
+    valuable_unchecked: bool = False,
 ) -> list[QuickMissingItem]:
     """Детерминированная сборка пробелов evidence (§34 ТЗ).
 
@@ -1276,6 +1456,11 @@ def _missing_items(
         _add("pzz_missing")
     if regulations_source == "rgis_card":
         _add("pzz_card_unverified")
+    if melioration_present:
+        # 6.3 §6.1.2: расположение сооружений источники не локализуют.
+        _add("melioration_structures_unknown")
+    if valuable_unchecked:
+        _add("valuable_list_unchecked")
     _add("access_unchecked")  # методика 6.2: подъезд — пробел без вычета
     return items
 
@@ -1371,6 +1556,12 @@ def build_quick_context_from_report(
 
     u = _communications_u(rules)
     preliminary_flags = _preliminary_flags(base, conservative)
+    if any(factor.effect_code == "INFO_MELIORATION" for factor in scored):
+        # 6.3 §6.1.6: информационная запись не меняет порог статуса,
+        # но оценка маркируется предварительной.
+        preliminary_flags.append(
+            "информационная запись о мелиорируемых землях (6.3 §6.1)"
+        )
     verdict_result = compute_verdict(
         rules,
         scored,
@@ -1407,6 +1598,13 @@ def build_quick_context_from_report(
         zoning_known=zoning_known,
         area_status=area_info.status if area_info is not None else None,
         regulations_source=regulations.source if regulations is not None else None,
+        melioration_present=any(
+            factor.catalog_item == "melioration_lands" for factor in scored
+        ),
+        valuable_unchecked=any(
+            factor.catalog_item == "melioration_lands" for factor in scored
+        )
+        and not base.reclamation,
     )
     return QuickReportContext(
         case_id=base.case_id,

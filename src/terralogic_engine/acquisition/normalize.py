@@ -510,3 +510,56 @@ def zouit_regime_facts_from_geodocs(
         )
     return facts
 
+
+
+def rgis_reclamation_features(
+    *,
+    case_id: str,
+    snapshot_id: str,
+    parcel_info_envelope: dict[str, Any] | None,
+) -> list[GeoFeature]:
+    """Пересечения с мелиорируемыми землями из карточки РГИС (методика 6.3).
+
+    Источник — agriculture/intersections/reclamation: тип системы
+    (Орошение/Осушение), площадь/охват, геометрия и признак перечня особо
+    ценных с/х угодий (is_valuable). Пустой список провайдера означает
+    «пересечений нет» и features не создаёт. Класс reclamation не входит
+    в zouit-пересечения аналитики — зона-носитель уже приходит слоем
+    parcel_zouit (code 56), эти features её обогащают (§7, без двойного счёта).
+    """
+    if not parcel_info_envelope or parcel_info_envelope.get("ok") is not True:
+        return []
+    data = parcel_info_envelope.get("data")
+    if not isinstance(data, dict):
+        return []
+    rows = data.get("reclamation")
+    if not isinstance(rows, list):
+        return []
+    result: list[GeoFeature] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, Mapping):
+            continue
+        properties = {
+            key: value
+            for key, value in {
+                "reclamation_type": row.get("type"),
+                "area_m2": row.get("area"),
+                "parcel_coverage_percent": row.get("percent"),
+                "is_valuable": row.get("is_valuable"),
+            }.items()
+            if value is not None
+        }
+        result.append(
+            GeoFeature(
+                id=_feature_id(snapshot_id, f"rgis:reclamation:{index}"),
+                case_id=case_id,
+                snapshot_id=snapshot_id,
+                source="rgis",
+                source_type="agriculture_reclamation",
+                source_id=str(index),
+                feature_class="reclamation",
+                geometry=_geometry_from_geojson(row.get("geometry")),
+                properties=properties,
+            )
+        )
+    return result

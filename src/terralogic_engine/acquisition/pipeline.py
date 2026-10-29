@@ -44,6 +44,7 @@ from terralogic_engine.acquisition.normalize import (
     osm_features,
     parcel_feature,
     rgis_features,
+    rgis_reclamation_features,
     zouit_regime_facts_from_geodocs,
 )
 from terralogic_engine.acquisition.profiles import (
@@ -552,6 +553,13 @@ class AcquisitionPipeline:
                         case_id=request.case_id,
                         snapshot_id=rgis_snapshot.id,
                         envelope=rgis_layer_envelope,
+                    )
+                )
+                all_features.extend(
+                    rgis_reclamation_features(
+                        case_id=request.case_id,
+                        snapshot_id=rgis_snapshot.id,
+                        parcel_info_envelope=rgis_info_envelope,
                     )
                 )
                 rgis_sync_envelope = self._store_rgis_documents_sync(

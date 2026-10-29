@@ -141,6 +141,9 @@ class QuickProtocolFactor(BaseModel):
     act_number: str | None = None  # акт, устанавливающий зону
     act_date: str | None = None
     registry_number: str | None = None  # zone_id: реестровый номер зоны
+    # --- методика 6.3 ---
+    contributes_to_score: bool = True  # False — INFO_MELIORATION (вне суммы)
+    decision_reason: str = ""  # обоснование маршрута фактора (§10)
 
 
 class QuickProtocolClassState(BaseModel):

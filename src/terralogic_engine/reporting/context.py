@@ -26,6 +26,7 @@ from terralogic_engine.reporting.models import (
     ParcelReportContext,
     PermittedUseReportContext,
     PzzDocumentContext,
+    ReclamationReportContext,
     ReportContext,
     RoadClassContext,
     SearchAreaReportContext,
@@ -277,6 +278,36 @@ def _zouit_context(
                 intersection_area_m2=item.intersection_area_m2 or 0.0,
                 parcel_coverage_percent=item.parcel_coverage_percent or 0.0,
                 zone_coverage_percent=item.object_coverage_percent or 0.0,
+            )
+        )
+    return result
+
+
+def _reclamation_context(
+    features: Iterable[GeoFeature],
+) -> list[ReclamationReportContext]:
+    """Пересечения с мелиорируемыми землями (features класса reclamation)."""
+    result: list[ReclamationReportContext] = []
+    for feature in features:
+        if feature.feature_class != "reclamation":
+            continue
+        properties = feature.properties
+        result.append(
+            ReclamationReportContext(
+                reclamation_type=(
+                    str(properties["reclamation_type"])
+                    if properties.get("reclamation_type") is not None
+                    else None
+                ),
+                area_m2=_optional_float(properties.get("area_m2")),
+                parcel_coverage_percent=_optional_float(
+                    properties.get("parcel_coverage_percent")
+                ),
+                is_valuable=(
+                    str(properties["is_valuable"])
+                    if properties.get("is_valuable") is not None
+                    else None
+                ),
             )
         )
     return result
@@ -672,4 +703,5 @@ def build_report_context(
         documents=_documents_context(store, receipt, document_snapshots),
         sources=sources,
         warnings=warnings,
+        reclamation=_reclamation_context(features),
     )

@@ -253,6 +253,19 @@ class ReportTemplate(BaseModel):
     content_sha256: str
 
 
+class ReclamationReportContext(BaseModel):
+    """Пересечение с мелиорируемыми землями (РГИС agriculture/reclamation).
+
+    is_valuable — признак включения в перечень особо ценных продуктивных
+    с/х угодий МО («да»/«нет»); None — признак не получен.
+    """
+
+    reclamation_type: str | None = None  # Орошение / Осушение
+    area_m2: float | None = None
+    parcel_coverage_percent: float | None = None
+    is_valuable: str | None = None
+
+
 class ReportContext(BaseModel):
     """Bounded factual context supplied to Hermes for narrative generation."""
 
@@ -280,6 +293,9 @@ class ReportContext(BaseModel):
     documents: DocumentReportContext | None = None
     sources: list[SourceEvidenceContext] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    # Методика 6.3: пересечения с мелиорируемыми землями из карточки РГИС
+    # (agriculture/intersections/reclamation), обогащение зоны code 56.
+    reclamation: list[ReclamationReportContext] = Field(default_factory=list)
 
 
 class SourceStatusEntry(BaseModel):

@@ -179,6 +179,15 @@ def _classification_lines(protocol: QuickProtocol) -> list[str]:
         lines.extend(f"- {note}" for note in protocol.classify_notes)
     else:
         lines.append("Заметок слияния нет.")
+    reasoned = [factor for factor in protocol.factors if factor.decision_reason]
+    if reasoned:
+        lines.append("")
+        lines.append("Обоснования маршрутов факторов (6.3 §10):")
+        lines.extend(
+            f"- {factor.display_name}: {factor.decision_reason}"
+            + ("" if factor.contributes_to_score else " (вне суммы вычетов)")
+            for factor in reasoned
+        )
     lines.append("")
     conservative = "да" if protocol.conservative else "нет"
     lines.append(f"Консервативный сценарий (расхождение версий границ): {conservative}.")

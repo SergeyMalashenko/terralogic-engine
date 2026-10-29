@@ -355,19 +355,32 @@ def test_62_unclassifiable_zone_blocks_score(rules, guidance, catalog):
     assert quick.protocol.unmatched_zones == ["Полоса кватарных ограничений"]
 
 
-def test_62_melioration_lands_excluded_not_zouit(rules, guidance, catalog):
-    """«Мелиорируемые земли» (категория карточки РГИС) — не ЗОУИТ ст. 105:
-    исключается из скоринга и таблицы факторов с протокольной пометкой."""
+def test_63_melioration_info_route_without_reclamation(rules, guidance, catalog):
+    """«Мелиорируемые земли» без reclamation-пересечений → INFO_MELIORATION
+    (6.3 §6.1): информационная запись вне балла, видна клиенту, оценка
+    предварительная, перечень особо ценных угодий не проверен."""
     base = _base_with([_zouit("Мелиорируемые земли", None, 100.0, source="rgis")])
     quick = build_quick_context_from_report(
         base, rules=rules, guidance=guidance, catalog=catalog, configuration=_CONFIG_OK
     )
     assert quick.verdict.score == 90  # 100 − U(10), вычетов нет
+    assert quick.verdict.preliminary is True
     assert quick.protocol.unmatched_zones == []
-    assert all(
-        factor.zone_name != "Мелиорируемые земли" for factor in quick.factors
+    factor = quick.protocol.factors[0]
+    assert factor.effect_code == "INFO_MELIORATION"
+    assert factor.contributes_to_score is False
+    assert factor.deduction == 0.0
+    assert factor.group_key == "melioration_influence"
+    info = [factor for factor in quick.factors if factor.rule_id == "info_melioration"]
+    assert info and info[0].informational is True
+    assert "не означает запрета" in info[0].guidance
+    assert any(
+        "мелиорируемых землях" in flag
+        for flag in quick.protocol.preliminary_flags
     )
-    assert any("не является ЗОУИТ" in note for note in quick.warnings)
+    missing_keys = {item.key for item in quick.missing}
+    assert "melioration_structures_unknown" in missing_keys
+    assert "valuable_list_unchecked" in missing_keys
 
 
 def test_62_sanitary_water_supply_hits_special_rule(rules, guidance, catalog):
