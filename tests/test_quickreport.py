@@ -30,6 +30,7 @@ from terralogic_engine.reporting.models import (
     DocumentVriZoneContext,
     ParcelPlanningZoneReportContext,
     ParcelReportContext,
+    PermittedUseReportContext,
     PzzDocumentContext,
     ReportContext,
     SearchAreaReportContext,
@@ -913,6 +914,183 @@ def test_unstarred_gardening_row_is_not_housing(rules, guidance):
     regulations = quick.zone_regulations
     assert regulations is not None
     assert [use.code for use in regulations.housing_uses] == ["2.1*"]
+
+
+# ---------------------------------------------------------------------------
+# Fallback «документ ПЗЗ → карточка РГИС»
+# ---------------------------------------------------------------------------
+
+
+def _with_card_usages(base: ReportContext) -> ReportContext:
+    """Карточка РГИС (parcel_usage) со списком ВРИ и параметрами зоны."""
+    base.urban_planning.parcel_zones = [
+        ParcelPlanningZoneReportContext(
+            feature_id="pz-1",
+            zone="Ж-2",
+            name="Зона застройки ИЖС",
+            parcel_coverage_percent=100.0,
+            permitted_uses=[
+                PermittedUseReportContext(
+                    code="2.1",
+                    name="Для индивидуального жилищного строительства",
+                    area_min="500",
+                    area_max="500000",
+                    building_percentage="40%",
+                    margin="3",
+                ),
+                PermittedUseReportContext(
+                    code="2.2",
+                    name="Для ведения личного подсобного хозяйства",
+                ),
+                # дубль той же строки и нежилищный код — как в документе
+                PermittedUseReportContext(
+                    code="2.1",
+                    name="Для индивидуального жилищного строительства",
+                ),
+                PermittedUseReportContext(code="4.2", name="Торговые центры"),
+            ],
+        )
+    ]
+    return base
+
+
+def test_zone_regulations_card_fallback_full_params(rules, guidance):
+    """Документ ПЗЗ не получен, карточка РГИС содержит параметры зоны:
+    регламент строится из карточки, A и C считаются, источник помечен."""
+    quick = build_quick_context_from_report(
+        _with_card_usages(_base_context()),
+        rules=rules,
+        guidance=guidance,
+        configuration=_CONFIG_OK,
+    )
+
+    regulations = quick.zone_regulations
+    assert regulations is not None
+    assert regulations.source == "rgis_card"
+    assert regulations.zone_code == "Ж-2"
+    assert regulations.doc_number is None
+    assert regulations.total_uses == 4
+    # дубль схлопнут, 4.2 отфильтрован
+    assert [use.code for use in regulations.housing_uses] == ["2.1", "2.2"]
+
+    # скоринг по параметрам карточки: A вычислен (S=1000 > Smin=500)
+    area = quick.protocol.area
+    assert area.status == "computed"
+    assert area.deduction == 0.0
+    assert "источник: карточка РГИС" in (area.note or "")
+    assert quick.verdict.score == 55  # как в базовом сценарии с документом
+
+    zoning = next(
+        check
+        for check in quick.protocol.checks
+        if check.name == "Территориальное зонирование (ПЗЗ)"
+    )
+    assert "параметры из карточки РГИС" in zoning.result
+    assert "документ ПЗЗ не получен" in zoning.result
+    assert "pzz_card_unverified" in [item.key for item in quick.missing]
+
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+    assert "Зона Ж-2 — по данным карточки РГИС (документ ПЗЗ не получен)" in markdown
+
+
+def test_zone_regulations_document_preferred_over_card(rules, guidance):
+    """Документ совпадает с зоной карточки — карточка не используется."""
+    quick = build_quick_context_from_report(
+        _with_card_usages(_with_pzz(_base_context())), rules=rules, guidance=guidance
+    )
+    regulations = quick.zone_regulations
+    assert regulations is not None
+    assert regulations.source == "document"
+    assert regulations.doc_number == "1986/8"
+    assert "pzz_card_unverified" not in [item.key for item in quick.missing]
+
+
+def test_zone_regulations_document_zone_mismatch_uses_card(rules, guidance):
+    """Зона участка отсутствует в документе: fallback на карточку,
+    чужая зона документа не показывается."""
+    base = _with_card_usages(_base_context())
+    base.documents = DocumentReportContext(
+        pzz=PzzDocumentContext(
+            number="1986/8",
+            version_date="2026-08-06",
+            zones=[DocumentVriZoneContext(zone_code="СХ-1", found=True, items=[
+                _vri_item("1.1", "Выращивание сельхозкультур"),
+            ])],
+        )
+    )
+    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
+
+    regulations = quick.zone_regulations
+    assert regulations is not None
+    assert regulations.source == "rgis_card"
+    assert regulations.zone_code == "Ж-2"
+    assert regulations.doc_number == "1986/8"
+    assert all("СХ-1" not in use.name for use in regulations.housing_uses)
+    assert any("не найдена в документе ПЗЗ" in note for note in quick.warnings)
+
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+    assert "в документе ПЗЗ № 1986/8 не найдена" in markdown
+    assert "СХ-1" not in markdown
+
+
+def test_zone_regulations_mismatch_without_card_returns_none(rules, guidance):
+    """Нет карточной зоны, в документе несколько зон — неоднозначность,
+    первая зона документа молча не подставляется."""
+    base = _base_context()
+    base.urban_planning.parcel_zones = []
+    base.documents = DocumentReportContext(
+        pzz=PzzDocumentContext(
+            number="1986/8",
+            zones=[
+                DocumentVriZoneContext(zone_code="Ж-1", found=True, items=[
+                    _vri_item("2.1", "Для индивидуального жилищного строительства"),
+                ]),
+                DocumentVriZoneContext(zone_code="СХ-1", found=True, items=[
+                    _vri_item("1.1", "Выращивание сельхозкультур"),
+                ]),
+            ],
+        )
+    )
+    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
+
+    assert quick.zone_regulations is None
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+    assert "Сведения о территориальной зоне из документа ПЗЗ не получены" in markdown
+    assert "Ж-1" not in markdown
+
+
+def test_zone_regulations_single_document_zone_without_card(rules, guidance):
+    """Нет карточной зоны, в документе ровно одна зона — однозначна, берём её."""
+    base = _base_context()
+    base.urban_planning.parcel_zones = []
+    base.documents = DocumentReportContext(
+        pzz=PzzDocumentContext(
+            number="1986/8",
+            zones=[
+                DocumentVriZoneContext(zone_code="Ж-2", found=True, items=[
+                    _vri_item("2.1", "Для индивидуального жилищного строительства"),
+                ]),
+                DocumentVriZoneContext(zone_code="СХ-1", found=False),
+            ],
+        )
+    )
+    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
+
+    regulations = quick.zone_regulations
+    assert regulations is not None
+    assert regulations.source == "document"
+    assert regulations.zone_code == "Ж-2"
+
+
+def test_zone_regulations_card_without_usages_returns_none(rules, guidance):
+    """Карточная зона есть, но usages пусты (сценарий 50:09:0080502:21) —
+    заглушка, карточный fallback не срабатывает."""
+    base = _base_context()  # parcel_zones без permitted_uses
+    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
+
+    assert quick.zone_regulations is None
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+    assert "Сведения о территориальной зоне из документа ПЗЗ не получены" in markdown
 
 
 # ---------------------------------------------------------------------------

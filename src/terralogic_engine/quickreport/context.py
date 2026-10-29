@@ -18,6 +18,8 @@ from typing import Any
 
 from terralogic_engine.reporting.context import build_report_context
 from terralogic_engine.reporting.models import (
+    DocumentVriZoneContext,
+    ParcelPlanningZoneReportContext,
     ParcelReportContext,
     ReportContext,
     ZouitRegimeDocumentContext,
@@ -79,21 +81,19 @@ def _is_housing_use(code: str | None) -> bool:
     return head in _HOUSING_CODE_PREFIXES
 
 
-def _zone_regulations(base: ReportContext) -> QuickZoneRegulations | None:
-    """ВРИ территориальной зоны участка из документального контура (ПЗЗ)."""
-    documents = base.documents
-    if documents is None or documents.pzz is None:
+def _primary_parcel_zone(
+    base: ReportContext,
+) -> ParcelPlanningZoneReportContext | None:
+    """Зона карточки РГИС с максимальной долей покрытия участка."""
+    zones = base.urban_planning.parcel_zones
+    if not zones:
         return None
-    found = [zone for zone in documents.pzz.zones if zone.found]
-    if not found:
-        return None
-    passport_zone = base.urban_planning.parcel_zones[0].zone if (
-        base.urban_planning.parcel_zones
-    ) else None
-    zone = next(
-        (item for item in found if item.zone_code == passport_zone),
-        found[0],
-    )
+    return max(zones, key=lambda zone: zone.parcel_coverage_percent or 0.0)
+
+
+def _housing_uses(items: list) -> list[QuickZoneUse]:
+    """Жилищные строки ВРИ без дублей (одна строка встречается в
+    пересекающихся таблицах документа)."""
     housing = [
         QuickZoneUse(
             code=item.code,
@@ -103,25 +103,84 @@ def _zone_regulations(base: ReportContext) -> QuickZoneRegulations | None:
             building_percentage=item.building_percentage,
             margin=item.margin,
         )
-        for item in zone.items
+        for item in items
         if _is_housing_use(item.code)
     ]
-    # одна и та же строка ВРИ встречается в пересекающихся таблицах документа
     seen: set[tuple[str | None, str | None]] = set()
-    unique_housing: list[QuickZoneUse] = []
+    unique: list[QuickZoneUse] = []
     for use in housing:
         key = (use.code, use.name)
         if key in seen:
             continue
         seen.add(key)
-        unique_housing.append(use)
+        unique.append(use)
+    return unique
+
+
+def _document_regulations(
+    zone: DocumentVriZoneContext,
+    documents,
+) -> QuickZoneRegulations:
+    """Регламент зоны из документа ПЗЗ (авторитетный источник)."""
     return QuickZoneRegulations(
         zone_code=zone.zone_code,
         doc_number=documents.pzz.number,
         doc_version_date=documents.pzz.version_date,
+        source="document",
         total_uses=len(zone.items),
-        housing_uses=unique_housing,
+        housing_uses=_housing_uses(zone.items),
     )
+
+
+def _card_zone_regulations(
+    card_zone: ParcelPlanningZoneReportContext | None,
+    documents,
+) -> QuickZoneRegulations | None:
+    """Fallback: регламент из карточки РГИС (слой parcel_usage).
+
+    Реквизиты документа сохраняются, если ПЗЗ получен, но зоны участка
+    в нём нет — рендер различит «документ не получен» и «зона не найдена».
+    """
+    if card_zone is None or not card_zone.permitted_uses:
+        return None
+    pzz = documents.pzz if documents is not None else None
+    return QuickZoneRegulations(
+        zone_code=card_zone.zone or "",
+        zone_name=card_zone.name,
+        doc_number=pzz.number if pzz is not None else None,
+        doc_version_date=pzz.version_date if pzz is not None else None,
+        source="rgis_card",
+        total_uses=len(card_zone.permitted_uses),
+        housing_uses=_housing_uses(list(card_zone.permitted_uses)),
+    )
+
+
+def _zone_regulations(base: ReportContext) -> QuickZoneRegulations | None:
+    """ВРИ территориальной зоны участка.
+
+    Приоритет: таблица документа ПЗЗ, совпадающая с зоной карточки, →
+    карточка РГИС (документ не получен / зоны участка в нём нет).
+    Чужая зона документа никогда не подставляется молча: без карточки
+    несколько найденных зон документа неоднозначны → None.
+    """
+    documents = base.documents
+    found: list[DocumentVriZoneContext] = []
+    if documents is not None and documents.pzz is not None:
+        found = [zone for zone in documents.pzz.zones if zone.found]
+    card_zone = _primary_parcel_zone(base)
+    passport_zone = card_zone.zone if card_zone is not None else None
+    if found and passport_zone:
+        match = next(
+            (zone for zone in found if zone.zone_code == passport_zone), None
+        )
+        if match is not None:
+            return _document_regulations(match, documents)
+        return _card_zone_regulations(card_zone, documents)
+    if found and passport_zone is None and len(found) == 1:
+        return _document_regulations(found[0], documents)
+    if not found:
+        return _card_zone_regulations(card_zone, documents)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -911,7 +970,19 @@ def _protocol_checks(
 ) -> list[QuickProtocolCheck]:
     """Обязательные проверки ключевых зон (п. 4.1) и их результат для протокола."""
     checks: list[QuickProtocolCheck] = []
-    if regulations is not None:
+    if regulations is not None and regulations.source == "rgis_card":
+        result = (
+            f"зона {regulations.zone_code}: параметры из карточки РГИС"
+        )
+        if regulations.doc_number:
+            result += f"; в документе ПЗЗ № {regulations.doc_number} зона не найдена"
+        else:
+            result += "; документ ПЗЗ не получен"
+        result += " — не подтверждены первичным документом"
+        checks.append(
+            QuickProtocolCheck(name="Территориальное зонирование (ПЗЗ)", result=result)
+        )
+    elif regulations is not None:
         doc = "ПЗЗ"
         if regulations.doc_number:
             doc += f" № {regulations.doc_number}"
@@ -1112,9 +1183,9 @@ def _protocol(
 def _passport(base: ReportContext) -> QuickPassport:
     parcel = base.parcel
     territorial_zone = None
-    if base.urban_planning.parcel_zones:
-        first = base.urban_planning.parcel_zones[0]
-        parts = [p for p in (first.zone, first.name) if p]
+    primary_zone = _primary_parcel_zone(base)
+    if primary_zone is not None:
+        parts = [p for p in (primary_zone.zone, primary_zone.name) if p]
         territorial_zone = ", ".join(parts) or None
     return QuickPassport(
         cadastral_number=parcel.cadastral_number,
@@ -1174,6 +1245,7 @@ def _missing_items(
     geometry_checked: bool,
     zoning_known: bool,
     area_status: str | None,
+    regulations_source: str | None = None,
 ) -> list[QuickMissingItem]:
     """Детерминированная сборка пробелов evidence (§34 ТЗ).
 
@@ -1202,6 +1274,8 @@ def _missing_items(
         _add("no_zoning")
     if area_status == "no_regulations":
         _add("pzz_missing")
+    if regulations_source == "rgis_card":
+        _add("pzz_card_unverified")
     _add("access_unchecked")  # методика 6.2: подъезд — пробел без вычета
     return items
 
@@ -1238,6 +1312,17 @@ def build_quick_context_from_report(
     catalog = catalog or load_zouit_catalog()
     warnings = list(base.warnings)
     regulations = _zone_regulations(base)
+    if (
+        regulations is not None
+        and regulations.source == "rgis_card"
+        and base.documents is not None
+        and base.documents.pzz is not None
+        and any(zone.found for zone in base.documents.pzz.zones)
+    ):
+        warnings.append(
+            f"зона {regulations.zone_code} не найдена в документе ПЗЗ "
+            f"№ {regulations.doc_number or '—'}; использованы данные карточки РГИС"
+        )
 
     scored, unmatched, conservative, classify_notes = _classify_zones(
         base, rules, guidance, catalog
@@ -1266,6 +1351,14 @@ def build_quick_context_from_report(
     a, area_notes, area_suspend, area_info = _area_deduction(
         base, rules, regulations, target_item
     )
+    if (
+        regulations is not None
+        and regulations.source == "rgis_card"
+        and area_info.note
+    ):
+        area_info = area_info.model_copy(
+            update={"note": f"{area_info.note}; источник: карточка РГИС"}
+        )
     warnings.extend(note for note in area_notes if note)
     suspend_reasons.extend(area_suspend)
 
@@ -1313,6 +1406,7 @@ def build_quick_context_from_report(
         geometry_checked=configuration is not None,
         zoning_known=zoning_known,
         area_status=area_info.status if area_info is not None else None,
+        regulations_source=regulations.source if regulations is not None else None,
     )
     return QuickReportContext(
         case_id=base.case_id,

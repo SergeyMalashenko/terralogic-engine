@@ -83,11 +83,15 @@ class QuickZoneUse(BaseModel):
 
 
 class QuickZoneRegulations(BaseModel):
-    """Территориальная зона участка и её ВРИ по документу ПЗЗ."""
+    """Территориальная зона участка и её ВРИ по документу ПЗЗ или карточке РГИС."""
 
     zone_code: str
+    zone_name: str | None = None
     doc_number: str | None = None
     doc_version_date: str | None = None
+    # document — таблица из документа ПЗЗ; rgis_card — карточка РГИС (fallback,
+    # когда документ не получен или не содержит зону участка).
+    source: Literal["document", "rgis_card"] = "document"
     total_uses: int = 0
     housing_uses: list[QuickZoneUse] = Field(default_factory=list)
 

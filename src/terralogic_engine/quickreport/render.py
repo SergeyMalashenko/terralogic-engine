@@ -199,18 +199,39 @@ def _zone_regulations_lines(regulations: QuickZoneRegulations | None) -> list[st
                 "документу — в подробном заключении."
             )
         ]
-    doc = "ПЗЗ"
-    if regulations.doc_number:
-        doc += f" № {regulations.doc_number}"
-    if regulations.doc_version_date:
-        doc += f", редакция от {regulations.doc_version_date}"
-    lines = [
-        f"Зона {regulations.zone_code} — по данным {doc}.",
-        (
-            f"Всего видов разрешённого использования в таблице зоны: "
-            f"{regulations.total_uses}."
-        ),
-    ]
+    if regulations.source == "rgis_card":
+        if regulations.doc_number:
+            header = (
+                f"Зона {regulations.zone_code} — в документе ПЗЗ "
+                f"№ {regulations.doc_number} не найдена; параметры приведены "
+                "по карточке РГИС и требуют подтверждения первичным документом."
+            )
+        else:
+            header = (
+                f"Зона {regulations.zone_code} — по данным карточки РГИС "
+                "(документ ПЗЗ не получен); параметры требуют подтверждения "
+                "первичным документом."
+            )
+        lines = [
+            header,
+            (
+                f"Всего видов разрешённого использования в карточке зоны: "
+                f"{regulations.total_uses}."
+            ),
+        ]
+    else:
+        doc = "ПЗЗ"
+        if regulations.doc_number:
+            doc += f" № {regulations.doc_number}"
+        if regulations.doc_version_date:
+            doc += f", редакция от {regulations.doc_version_date}"
+        lines = [
+            f"Зона {regulations.zone_code} — по данным {doc}.",
+            (
+                f"Всего видов разрешённого использования в таблице зоны: "
+                f"{regulations.total_uses}."
+            ),
+        ]
     if regulations.housing_uses:
         lines.extend(
             [
