@@ -192,6 +192,37 @@ async def test_summary_downloaded_pzz_without_extraction_has_reason(tmp_path) ->
     assert documents["ПЗЗ-Т-592"].reason == "таблица ВРИ не извлечена"
 
 
+async def test_summary_vri_list_shaped_payload_does_not_crash(tmp_path) -> None:
+    """VRI-снапшот с data-списком (карточная форма без extractions) —
+    сводка собирается без ошибки (регрессия: 50:19:0030201:489)."""
+    store = LocalCaseStore(tmp_path / "store")
+    geodocs = FakeGeodocsClient(
+        vri_result={
+            "status": "success",
+            "data": [
+                {
+                    "vri_count": 44,
+                    "vri_items_sample": [{"code": "2.1", "name": "ИЖС"}],
+                    "zone_code": "КРТ-3-63",
+                    "zone_description": "…",
+                    "zone_name": "…",
+                }
+            ],
+            "evidence": [],
+            "answer_text": "",
+            "documents": [],
+            "executor": "static:vri",
+            "warnings": [],
+            "duration_seconds": 0.0,
+        }
+    )
+    pipeline = _pipeline(store, geodocs=geodocs)
+    receipt = await pipeline.collect(_request())
+
+    summary = build_collection_summary(store, receipt)
+    assert summary is not None
+
+
 async def test_never_without_run_raises_not_collected(tmp_path) -> None:
     store = LocalCaseStore(tmp_path / "store")
     pipeline = _pipeline(store)

@@ -228,7 +228,12 @@ def _merge_document(entries: dict[str, dict[str, Any]], store: CaseStore, snapsh
                     slot["reason"] = "; ".join(warnings)
     elif snapshot_type == _DOCUMENT_VRI:
         data = payload.get("data") or {}
-        for zone in data.get("zones") or []:
+        # Два вида полезной нагрузки: dict {zones: [...]} (geodocs-запрос
+        # с экстракциями) и непосредственный список зон (карточный VRI).
+        zones = data if isinstance(data, list) else data.get("zones") or []
+        for zone in zones:
+            if not isinstance(zone, dict):
+                continue
             for extraction in zone.get("extractions") or []:
                 version_id = extraction.get("version_id")
                 if version_id is None:
