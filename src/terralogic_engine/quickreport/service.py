@@ -33,7 +33,7 @@ def _format_date(value: date) -> str:
     return f"{value:%d.%m.%Y}"
 
 
-def _g(value: float | int | None) -> str:
+def _g(value: float | None) -> str:
     if value is None:
         return "—"
     return f"{value:g}"
@@ -335,8 +335,10 @@ def render_service_report(
     header = [
         f"# Сервисный отчёт скоринга — {context.parcel.cadastral_number}",
         "",
-        "Протокол работы скоринговой модели: из чего сложились цифры "
-        "экспресс-отчёта. Для разработчиков, не для клиента.",
+        (
+            "Протокол работы скоринговой модели: из чего сложились цифры "
+            "экспресс-отчёта. Для разработчиков, не для клиента."
+        ),
         "",
         (
             f"Кейс {context.case_id} · Run {context.collection_run_id} · "
@@ -355,8 +357,10 @@ def render_service_report(
         )
     lines = [
         *header,
-        f"Методика {context.methodology_version} · "
-        f"sha256 активов: `{protocol.methodology_sha256[:12]}`",
+        (
+            f"Методика {context.methodology_version} · "
+            f"sha256 активов: `{protocol.methodology_sha256[:12]}`"
+        ),
         "",
         f"Формула: {protocol.formula}.",
         "",

@@ -92,6 +92,22 @@ def _primary_parcel_zone(
     return max(zones, key=lambda zone: zone.parcel_coverage_percent or 0.0)
 
 
+def _zone_code_head(
+    regulations: QuickZoneRegulations | None,
+    card_zone: ParcelPlanningZoneReportContext | None,
+) -> str | None:
+    """Базовый код зоны: «П(НП)» → «П», «СХ-3» → «СХ» (для non_housing_zones)."""
+    code = (
+        regulations.zone_code
+        if regulations is not None
+        else (card_zone.zone if card_zone is not None else None)
+    )
+    if not code:
+        return None
+    head = re.split(r"[-(]", code.strip(), maxsplit=1)[0].strip().upper()
+    return head or None
+
+
 def _housing_uses(items: list) -> list[QuickZoneUse]:
     """Жилищные строки ВРИ без дублей (одна строка встречается в
     пересекающихся таблицах документа)."""
@@ -1039,6 +1055,21 @@ def _target_use_item(
     return None
 
 
+# Коды ВРИ, совместимые с целью методики «индивидуальный жилой дом»:
+# ИЖС, ЛПХ, блокированная застройка, садоводство (13.2*/1.5). Гаражи и
+# автостоянки (2.7.*) цели не совместимы, хотя входят в жилищную группу 2.
+_TARGET_USE_CODES = ("2.1", "2.2", "2.3", "13.2", "1.5")
+
+
+def _has_target_use(regulations: QuickZoneRegulations) -> bool:
+    """Есть ли в регламенте зоны ВРИ, совместимый с целью «жилой дом»."""
+    for use in regulations.housing_uses:
+        code = (use.code or "").lstrip().rstrip("*")
+        if code in _TARGET_USE_CODES:
+            return True
+    return False
+
+
 def _area_deduction(
     base: ReportContext,
     rules: ScoringRules,
@@ -1521,8 +1552,20 @@ def build_quick_context_from_report(
         base, rules, guidance, warnings, unknown_regime=unknown_regime, catalog=catalog
     )
     stop_reasons: list[str] = []
-    if regulations is not None and not regulations.housing_uses:
+    if regulations is not None and not _has_target_use(regulations):
         stop_reasons.append(rules.texts.get("stop_no_target_use", ""))
+    elif regulations is None:
+        # Регламента нет вовсе (карточка РГИС без перечня ВРИ, документ не
+        # получен): для нецелевых зон (П/Т/К/СХ) это «не соответствует цели»,
+        # а не «недостаточно данных» — методика 6.3, non_housing_zones.
+        zone_head = _zone_code_head(
+            regulations,
+            _primary_parcel_zone(base),
+        )
+        if zone_head is not None and zone_head in rules.non_housing_zones:
+            stop_reasons.append(
+                rules.texts.get("stop_non_housing_zone", "").format(zone=zone_head)
+            )
     zoning_known = bool(base.urban_planning.parcel_zones) or regulations is not None
     suspend_reasons = _sufficiency_blockers(base, rules, zoning_known=zoning_known)
     suspend_reasons.extend(

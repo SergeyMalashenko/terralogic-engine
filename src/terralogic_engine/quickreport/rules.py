@@ -196,6 +196,7 @@ class ScoringRules:
     texts: dict[str, str]
     universal_scale: dict[str, float]
     q_regime_unknown: float
+    non_housing_zones: tuple[str, ...] = ()
 
     def coverage_word(self, percent: float) -> str:
         for min_pct, word in self.coverage_words:
@@ -328,6 +329,11 @@ def load_scoring_rules(path: Path | None = None) -> ScoringRules:
                 for key, value in (raw.get("universal_scale") or {}).items()
             },
             q_regime_unknown=float(raw.get("q_regime_unknown", 30)),
+            non_housing_zones=tuple(
+                str(zone).strip().upper()
+                for zone in (raw.get("non_housing_zones") or [])
+                if str(zone).strip()
+            ),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise QuickRulesError(f"scoring_rules.yaml: битая структура: {exc}") from exc

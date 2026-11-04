@@ -604,6 +604,71 @@ def test_stop_factor_without_housing_use(rules, guidance):
     assert any("отсутствует в регламенте" in r for r in quick.verdict.reasons)
 
 
+def test_stop_factor_garages_are_not_target_use(rules, guidance):
+    """Гаражи/автостоянки (2.7.*) — жилищная группа, но не цель «жилой дом»:
+    зона только с ними — стоп-фактор (6.3, кейс зоны П Волоколамска)."""
+    base = _with_pzz(_base_context())
+    base.documents.pzz.zones[0].items = [
+        _vri_item("2.7.1", "Хранение автотранспорта"),
+        _vri_item("2.7.2", "Размещение гаражей для собственных нужд"),
+        _vri_item("6.2", "Тяжелая промышленность"),
+    ]
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+    assert quick.verdict.score is None
+    assert quick.verdict.status_key == "stop"
+    assert any("отсутствует в регламенте" in r for r in quick.verdict.reasons)
+
+
+def _zone_only(base: ReportContext, code: str, name: str) -> ReportContext:
+    """Зона карточки РГИС без перечня ВРИ и без документа ПЗЗ."""
+    base.urban_planning.parcel_zones = [
+        ParcelPlanningZoneReportContext(feature_id="pz-1", zone=code, name=name)
+    ]
+    return base
+
+
+def test_stop_non_housing_zone_without_regulations(rules, guidance):
+    """Зона П/СХ без регламента — «не соответствует цели», а не
+    «недостаточно данных» (6.3, non_housing_zones)."""
+    for code, name in (
+        ("П(НП)", "Производственная зона (в границах населенного пункта)"),
+        ("Т", "Зона транспортной инфраструктуры"),
+        ("К(НП)", "Коммунальная зона"),
+        ("СХ-3", "Зона сельскохозяйственного производства"),
+    ):
+        base = _zone_only(_base_context(), code, name)
+        quick = build_quick_context_from_report(
+            base, rules=rules, guidance=guidance, configuration=None
+        )
+        assert quick.verdict.score is None, code
+        assert quick.verdict.status_key == "stop", code
+        assert any("не предусмотрено" in r for r in quick.verdict.reasons), code
+
+
+def test_non_housing_zone_rule_keeps_residential_insufficient(rules, guidance):
+    """Ж-2 без регламента — по-прежнему insufficient, список её не касается."""
+    base = _zone_only(_base_context(), "Ж-2", "Зона застройки ИЖС")
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=None
+    )
+    assert quick.verdict.status_key == "insufficient"
+
+
+def test_non_housing_zone_rule_respects_document(rules, guidance):
+    """Регламент документа авторитетен: жилищные ВРИ в зоне — стопа нет,
+    даже если код зоны входит в non_housing_zones."""
+    base = _with_pzz(_base_context())
+    # документ даёт Ж-2 с жильём; карточку метим той же зоной
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+    assert quick.zone_regulations is not None
+    assert quick.zone_regulations.housing_uses
+    assert quick.verdict.status_key != "stop"
+
+
 def _rectangle(width: float, depth: float) -> dict:
     return {
         "type": "Polygon",
