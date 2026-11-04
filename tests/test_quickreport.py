@@ -604,6 +604,33 @@ def test_stop_factor_without_housing_use(rules, guidance):
     assert any("отсутствует в регламенте" in r for r in quick.verdict.reasons)
 
 
+def test_stop_verdict_omits_missing_section(rules, guidance):
+    """Стоп-вердикт: «Что ещё нужно проверить» в отчёт не включается
+    (решение 2026-11-04)."""
+    base = _with_pzz(_base_context())
+    base.documents.pzz.zones[0].items = [_vri_item("4.2", "Торговые центры")]
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+    assert quick.verdict.status_key == "stop"
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+    assert (
+        "## Оценка не рассчитана — Не соответствует заявленной цели" in markdown
+    )
+    assert "## Что ещё нужно проверить" not in markdown
+
+
+def test_insufficient_verdict_keeps_missing_section(rules, guidance):
+    """«Недостаточно данных»: раздел проверок остаётся в отчёте."""
+    base = _zone_only(_base_context(), "Ж-2", "Зона застройки ИЖС")
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=None
+    )
+    assert quick.verdict.status_key == "insufficient"
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+    assert "## Что ещё нужно проверить" in markdown
+
+
 def test_stop_factor_garages_are_not_target_use(rules, guidance):
     """Гаражи/автостоянки (2.7.*) — жилищная группа, но не цель «жилой дом»:
     зона только с ними — стоп-фактор (6.3, кейс зоны П Волоколамска)."""

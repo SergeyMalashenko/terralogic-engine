@@ -198,10 +198,12 @@ def _mandatory_sections(model: QuickReportModel) -> list[str]:
         "## Паспорт участка",
         "## Территориальная зона и разрешённое использование",
         "## Окружение",
-        "## Что ещё нужно проверить",
         "## Схема расположения зон",
         "## Ограничения отчёта",
     ]
+    if model.status.status_key != "stop":
+        # при стоп-вердикте раздел проверок не рендерится (6.3)
+        sections.append("## Что ещё нужно проверить")
     if model.marketing is not None:
         sections.append("## Следующий шаг")
     return sections
