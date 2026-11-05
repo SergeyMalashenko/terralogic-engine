@@ -302,6 +302,20 @@ def rgis_layer_analysis_result() -> dict[str, Any]:
                                     "id": 102,
                                     "relation": "parcel_inside_object",
                                     "properties": {"label": "СХ-3"},
+                                    "zone_card": {
+                                        "zone_code": "СХ-3",
+                                        "zone_name": "Зона сельскохозяйственного производства",
+                                        "description": "Зона СХ-3 установлена для теста.",
+                                        "usages": {
+                                            "main": [
+                                                {"name": "Растениеводство", "code": "1.1"}
+                                            ],
+                                            "conditional": [
+                                                {"name": "Садоводство", "code": "13.2"}
+                                            ],
+                                        },
+                                        "quality_flags": {"data_current": "да"},
+                                    },
                                     "geometry": deepcopy(PARCEL_GEOMETRY),
                                 }
                             ],

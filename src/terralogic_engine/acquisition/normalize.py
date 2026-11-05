@@ -326,6 +326,10 @@ def rgis_features(
                 )
                 properties.pop("properties", None)
                 properties.pop("geometry", None)
+                if value.get("zone_card") is not None:
+                    # zone_card — верхнеуровневое поле записи (слой 379),
+                    # в nested properties его нет.
+                    properties["zone_card"] = value["zone_card"]
                 properties["block"] = str(block_name)
                 properties["layer"] = str(layer_name)
                 properties["layer_title"] = layer.get("title")

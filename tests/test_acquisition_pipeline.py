@@ -276,6 +276,14 @@ async def test_pipeline_collects_rgis_source(tmp_path) -> None:
     assert context.urban_planning.gpzu[0].name == "РФ-50-TEST-001 04.03.2021"
     assert context.urban_planning.gpzu[0].relation == "intersects"
     assert context.urban_planning.pzz_territorial_zones[0].name == "СХ-3"
+    # zone_card — верхнеуровневое поле записи слоя 379, доезжает до контекста
+    zone_cards = context.urban_planning.pzz_zone_cards
+    assert len(zone_cards) == 1
+    assert zone_cards[0].zone_code == "СХ-3"
+    assert zone_cards[0].description == "Зона СХ-3 установлена для теста."
+    assert zone_cards[0].usages_main[0].code == "1.1"
+    assert zone_cards[0].usages_conditional[0].code == "13.2"
+    assert zone_cards[0].usages_aux == []
     assert context.urban_planning.planning_projects[0].name == "ППТ-TEST"
     assert context.urban_planning.surveying_projects[0].name == "ПМТ-TEST"
     assert '"coordinates"' not in context.model_dump_json()
