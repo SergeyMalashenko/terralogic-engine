@@ -32,6 +32,7 @@ from terralogic_engine.reporting.models import (
     ParcelReportContext,
     PermittedUseReportContext,
     PzzDocumentContext,
+    PzzZoneCardReportContext,
     ReportContext,
     SearchAreaReportContext,
     SourceEvidenceContext,
@@ -1175,6 +1176,82 @@ def test_zone_regulations_suffix_match_requires_same_base(rules, guidance):
 
     regulations = quick.zone_regulations
     assert regulations is None
+
+
+def test_zone_regulations_card_zone_with_zrz_suffix_matches(rules, guidance):
+    """Карточка «Ж-2 (ЗРЗ-3)» ≡ документ «Ж-2»: уточнение ЗРЗ отбрасывается."""
+    base = _with_pzz(_base_context())
+    base.urban_planning.parcel_zones = [
+        ParcelPlanningZoneReportContext(
+            feature_id="pz-1", zone="Ж-2 (ЗРЗ-3)", name="Зона застройки ИЖС"
+        )
+    ]
+    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
+
+    regulations = quick.zone_regulations
+    assert regulations is not None
+    assert regulations.zone_code == "Ж-2"
+    assert regulations.doc_number == "1986/8"
+    assert not any("не найдена в документе ПЗЗ" in note for note in quick.warnings)
+
+
+def test_zone_regulations_zone_card_fallback(rules, guidance):
+    """Карточка участка без ВРИ (uses=0), документ не получен: состав ВРИ
+    берётся из карточки зоны РГИС (terZone), источник помечается карточкой."""
+    base = _base_context()
+    base.urban_planning.parcel_zones = [
+        ParcelPlanningZoneReportContext(
+            feature_id="pz-1",
+            zone="Ж-2.2",
+            name="Зона застройки индивидуальными и блокированными жилыми домами",
+        )
+    ]
+    base.urban_planning.pzz_zone_cards = [
+        PzzZoneCardReportContext(
+            feature_id="zc-1",
+            zone_code="Ж-2.2",
+            zone_name="Зона застройки индивидуальными и блокированными жилыми домами",
+            description="Зона Ж-2.2 установлена для жилых районов.",
+            usages_main=[
+                PermittedUseReportContext(
+                    code="2.1", name="Для индивидуального жилищного строительства"
+                ),
+                PermittedUseReportContext(code="6.8", name="Связь"),
+            ],
+            usages_aux=[PermittedUseReportContext(code="3.1", name="Коммунальное обслуживание")],
+        )
+    ]
+    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
+
+    regulations = quick.zone_regulations
+    assert regulations is not None
+    assert regulations.source == "rgis_card"
+    assert regulations.zone_code == "Ж-2.2"
+    assert regulations.zone_description == "Зона Ж-2.2 установлена для жилых районов."
+    assert regulations.total_uses == 3
+    assert [use.code for use in regulations.housing_uses] == ["2.1"]
+
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+    assert "Зона Ж-2.2" in markdown
+    assert "2.1 Для индивидуального жилищного строительства" in markdown
+
+
+def test_zone_regulations_zone_card_mismatch_not_substituted(rules, guidance):
+    """Карточка чужой зоны молча не подставляется."""
+    base = _base_context()
+    base.urban_planning.parcel_zones = [
+        ParcelPlanningZoneReportContext(feature_id="pz-1", zone="Ж-2.2")
+    ]
+    base.urban_planning.pzz_zone_cards = [
+        PzzZoneCardReportContext(
+            feature_id="zc-1",
+            zone_code="СХ-1",
+            usages_main=[PermittedUseReportContext(code="1.1", name="Сельхоз")],
+        )
+    ]
+    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
+
+    assert quick.zone_regulations is None
 
 
 def test_zone_regulations_mismatch_without_card_returns_none(rules, guidance):

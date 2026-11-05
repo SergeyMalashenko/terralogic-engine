@@ -26,6 +26,7 @@ from terralogic_engine.reporting.models import (
     ParcelReportContext,
     PermittedUseReportContext,
     PzzDocumentContext,
+    PzzZoneCardReportContext,
     ReclamationReportContext,
     ReportContext,
     RoadClassContext,
@@ -457,10 +458,46 @@ def _urban_planning_context(
             for feature in by_type[source_type][:MAX_PLANNING_OBJECTS_PER_LAYER]
         ]
 
+    zone_cards: list[PzzZoneCardReportContext] = []
+    for feature in by_type["territorial_zones"][:MAX_PLANNING_OBJECTS_PER_LAYER]:
+        card = feature.properties.get("zone_card")
+        if not isinstance(card, Mapping):
+            continue
+
+        def _card_usages(key: str) -> list[PermittedUseReportContext]:
+            raw = card.get("usages")
+            items = raw.get(key) if isinstance(raw, Mapping) else None
+            return [
+                PermittedUseReportContext(
+                    code=_optional_text(item.get("code")),
+                    name=_optional_text(item.get("name")),
+                )
+                for item in (
+                    items[:MAX_PERMITTED_USES_PER_ZONE] if isinstance(items, list) else []
+                )
+                if isinstance(item, Mapping)
+            ]
+
+        zone_cards.append(
+            PzzZoneCardReportContext(
+                feature_id=feature.id,
+                zone_code=_optional_text(card.get("zone_code")),
+                zone_name=_optional_text(card.get("zone_name")),
+                description=_optional_text(card.get("description")),
+                common_requirements=_optional_text(card.get("common_requirements")),
+                zone_class_rr=_optional_text(card.get("zone_class_rr")),
+                regulation_article=_optional_text(card.get("regulation_article")),
+                usages_main=_card_usages("main"),
+                usages_aux=_card_usages("aux"),
+                usages_conditional=_card_usages("conditional"),
+            )
+        )
+
     return UrbanPlanningReportContext(
         collected=collected,
         parcel_zones=parcel_zones,
         pzz_territorial_zones=objects("territorial_zones"),
+        pzz_zone_cards=zone_cards,
         gpzu=objects("gpzu"),
         planning_projects=objects("planning_projects"),
         surveying_projects=objects("surveying_projects"),

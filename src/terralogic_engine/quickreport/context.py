@@ -83,10 +83,16 @@ def _is_housing_use(code: str | None) -> bool:
 
 
 def _normalize_zone_code(code: str | None) -> str:
-    """Код зоны для сравнения: верхний регистр, без пробелов, единый дефис."""
+    """Код зоны для сравнения: верхний регистр, без пробелов, единый дефис.
+
+    Хвост в скобках после пробела отбрасывается: «Ж-2 (ЗРЗ-3)» ≡ «Ж-2»
+    (уточнение зоны регулирования застройки из карточки участка),
+    а «П(НП)» сохраняется — там скобки без пробела, часть кода.
+    """
     if not code:
         return ""
-    normalized = code.strip().upper().replace("—", "-").replace("–", "-")
+    stripped = re.sub(r"\s+\([^)]*\)$", "", code.strip())
+    normalized = stripped.upper().replace("—", "-").replace("–", "-")
     return re.sub(r"\s+", "", normalized)
 
 
@@ -199,11 +205,56 @@ def _card_zone_regulations(
     )
 
 
+def _zone_card_regulations(
+    base: ReportContext,
+    passport_zone: str | None,
+    documents,
+) -> QuickZoneRegulations | None:
+    """Fallback: официальный состав ВРИ из карточки зоны РГИС (слой 379).
+
+    Параметров (площадь/отступы) в карточке зоны нет — только перечень ВРИ;
+    используется, когда карточка участка (parcel_usage) перечня не содержит.
+    """
+    cards = base.urban_planning.pzz_zone_cards
+    if not cards:
+        return None
+    match = None
+    if passport_zone:
+        match = next(
+            (
+                card
+                for card in cards
+                if card.zone_code and _zone_codes_match(card.zone_code, passport_zone)
+            ),
+            None,
+        )
+    elif len(cards) == 1:
+        match = cards[0]
+    if match is None or not match.usages_main:
+        return None
+    pzz = documents.pzz if documents is not None else None
+    return QuickZoneRegulations(
+        zone_code=match.zone_code or "",
+        zone_name=match.zone_name,
+        zone_description=match.description,
+        doc_number=pzz.number if pzz is not None else None,
+        doc_version_date=pzz.version_date if pzz is not None else None,
+        source="rgis_card",
+        total_uses=(
+            len(match.usages_main)
+            + len(match.usages_aux)
+            + len(match.usages_conditional)
+        ),
+        housing_uses=_housing_uses(list(match.usages_main)),
+    )
+
+
 def _zone_regulations(base: ReportContext) -> QuickZoneRegulations | None:
     """ВРИ территориальной зоны участка.
 
     Приоритет: таблица документа ПЗЗ, совпадающая с зоной карточки, →
-    карточка РГИС (документ не получен / зоны участка в нём нет).
+    карточка участка РГИС (parcel_usage) → карточка зоны РГИС (слой 379,
+    официальный состав ВРИ без параметров).
     Чужая зона документа никогда не подставляется молча: без карточки
     несколько найденных зон документа неоднозначны → None.
     """
@@ -224,11 +275,15 @@ def _zone_regulations(base: ReportContext) -> QuickZoneRegulations | None:
         )
         if match is not None:
             return _document_regulations(match, documents)
-        return _card_zone_regulations(card_zone, documents)
+        return _card_zone_regulations(card_zone, documents) or _zone_card_regulations(
+            base, passport_zone, documents
+        )
     if found and passport_zone is None and len(found) == 1:
         return _document_regulations(found[0], documents)
     if not found:
-        return _card_zone_regulations(card_zone, documents)
+        return _card_zone_regulations(card_zone, documents) or _zone_card_regulations(
+            base, passport_zone, documents
+        )
     return None
 
 

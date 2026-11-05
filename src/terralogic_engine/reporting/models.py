@@ -114,6 +114,25 @@ class PermittedUseReportContext(BaseModel):
     building_percentage: str | None = None
 
 
+class PzzZoneCardReportContext(BaseModel):
+    """Карточка территориальной зоны ПЗЗ (слой 379 РГИС, card/main + terZone).
+
+    Официальный состав ВРИ без параметров: используется как fallback,
+    когда карточка участка (parcel_usage) перечня ВРИ не содержит.
+    """
+
+    feature_id: str
+    zone_code: str | None = None
+    zone_name: str | None = None
+    description: str | None = None
+    common_requirements: str | None = None
+    zone_class_rr: str | None = None
+    regulation_article: str | None = None
+    usages_main: list[PermittedUseReportContext] = Field(default_factory=list)
+    usages_aux: list[PermittedUseReportContext] = Field(default_factory=list)
+    usages_conditional: list[PermittedUseReportContext] = Field(default_factory=list)
+
+
 class ParcelPlanningZoneReportContext(BaseModel):
     """RGIS planning zone assigned to the parcel with its permitted uses."""
 
@@ -146,6 +165,7 @@ class UrbanPlanningReportContext(BaseModel):
     pzz_territorial_zones: list[UrbanPlanningObjectReportContext] = Field(
         default_factory=list
     )
+    pzz_zone_cards: list[PzzZoneCardReportContext] = Field(default_factory=list)
     gpzu: list[UrbanPlanningObjectReportContext] = Field(default_factory=list)
     planning_projects: list[UrbanPlanningObjectReportContext] = Field(
         default_factory=list
