@@ -179,7 +179,11 @@ def _format_limit_value(value: object) -> str | None:
         return None
     if isinstance(value, (int, float)):
         return _format_number(float(value))
-    return " ".join(str(value).split()) or None
+    text = " ".join(str(value).split())
+    if not text or not any(ch.isdigit() for ch in text):
+        # «Не подлежат установлению» и прочие нечисловые маркеры — не лимит
+        return None
+    return text
 
 
 def _zone_use_line(use: QuickZoneUse) -> str:
