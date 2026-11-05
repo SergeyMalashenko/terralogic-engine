@@ -216,11 +216,18 @@ def _zone_regulations_lines(regulations: QuickZoneRegulations | None) -> list[st
             )
         ]
     if regulations.source == "rgis_card":
-        if regulations.doc_number:
+        if regulations.doc_number and regulations.doc_zone_absent:
             header = (
                 f"Зона {regulations.zone_code} — в документе ПЗЗ "
                 f"№ {regulations.doc_number} не найдена; параметры приведены "
                 "по карточке РГИС и требуют подтверждения первичным документом."
+            )
+        elif regulations.doc_number:
+            header = (
+                f"Зона {regulations.zone_code} — документ ПЗЗ "
+                f"№ {regulations.doc_number} известен, но таблица зоны из него "
+                "не извлечена; параметры приведены по карточке РГИС и требуют "
+                "подтверждения первичным документом."
             )
         else:
             header = (
@@ -249,7 +256,12 @@ def _zone_regulations_lines(regulations: QuickZoneRegulations | None) -> list[st
             ),
         ]
     if regulations.zone_description:
-        lines.extend(["", f"Назначение зоны по документу: {regulations.zone_description}"])
+        description_source = (
+            "по документу" if regulations.source == "document" else "по карточке РГИС"
+        )
+        lines.extend(
+            ["", f"Назначение зоны {description_source}: {regulations.zone_description}"]
+        )
     if regulations.housing_uses:
         lines.extend(
             [

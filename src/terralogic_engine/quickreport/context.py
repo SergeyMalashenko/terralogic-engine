@@ -275,9 +275,12 @@ def _zone_regulations(base: ReportContext) -> QuickZoneRegulations | None:
         )
         if match is not None:
             return _document_regulations(match, documents)
-        return _card_zone_regulations(card_zone, documents) or _zone_card_regulations(
-            base, passport_zone, documents
-        )
+        fallback = _card_zone_regulations(
+            card_zone, documents
+        ) or _zone_card_regulations(base, passport_zone, documents)
+        if fallback is not None:
+            fallback.doc_zone_absent = True
+        return fallback
     if found and passport_zone is None and len(found) == 1:
         return _document_regulations(found[0], documents)
     if not found:

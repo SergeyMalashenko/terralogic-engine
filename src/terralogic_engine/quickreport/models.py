@@ -90,6 +90,9 @@ class QuickZoneRegulations(BaseModel):
     zone_description: str | None = None
     doc_number: str | None = None
     doc_version_date: str | None = None
+    # True — документ ПЗЗ обработан и зоны участка в нём нет;
+    # False — документ известен, но таблица зон из него не извлечена.
+    doc_zone_absent: bool = False
     # document — таблица из документа ПЗЗ; rgis_card — карточка РГИС (fallback,
     # когда документ не получен или не содержит зону участка).
     source: Literal["document", "rgis_card"] = "document"
