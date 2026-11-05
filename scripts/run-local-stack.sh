@@ -49,8 +49,11 @@ start pyrgis-agents pyrgis-mcp --transport streamable-http --host 127.0.0.1 --po
 start geodocs-store geodocs-mcp --transport streamable-http --host 127.0.0.1 --port 8006
 
 if [ "$WITH_ENGINE" -eq 1 ]; then
+    # terralogic-mcp — публичная точка входа: Telegram-бот на удалённой
+    # машине ходит на http://192.168.55.100:8004/mcp (USB-C линк),
+    # поэтому движок слушает все интерфейсы; остальные сервисы — localhost.
     start terralogic-engine terralogic-mcp \
-        --transport streamable-http --host 127.0.0.1 --port 8004 \
+        --transport streamable-http --host 0.0.0.0 --port 8004 \
         --nspd-url http://127.0.0.1:8001/mcp \
         --osm-url http://127.0.0.1:8002/mcp \
         --dgis-url http://127.0.0.1:8003/mcp \
