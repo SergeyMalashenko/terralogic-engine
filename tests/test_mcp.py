@@ -64,6 +64,7 @@ def test_mcp_registers_case_and_quickreport_tools(
         "terralogic_prepare_case",
         "terralogic_prepare_quickreport",
         "terralogic_get_report_pdf",
+        "terralogic_submit_feedback",
     ]
     assert server.kwargs["port"] == 8004
     assert server.kwargs["stateless_http"] is True
@@ -111,6 +112,7 @@ async def test_real_streamable_http_lists_two_tools(tmp_path) -> None:
         "terralogic_prepare_case",
         "terralogic_prepare_quickreport",
         "terralogic_get_report_pdf",
+        "terralogic_submit_feedback",
     ]
 
 
@@ -227,3 +229,62 @@ def test_tool_failure_maps_parcel_not_found() -> None:
     error = _tool_failure(ParcelNotFoundError("Parcel not found: nspd: not_found"))
     assert error.code == "not_found"
     assert error.retryable is False
+
+
+async def test_mcp_submit_feedback_roundtrip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        "terralogic_engine.mcp._load_mcp_server_class",
+        lambda: FakeFastMCP,
+    )
+    service = _service(tmp_path)
+    server = create_mcp_server(service)
+
+    result = await server.tools["terralogic_submit_feedback"](
+        "52:26:0040002:3823",
+        "up",
+        collection_run_id="run-001",
+        user_id=12345,
+    )
+
+    assert result.ok
+    assert result.data is not None
+    assert result.data.cadastral_number == "52:26:0040002:3823"
+    assert result.data.vote == "up"
+    assert result.data.case_id == "case-52-26-0040002-3823"
+
+    stored = service.store.list_report_feedback("52:26:0040002:3823")
+    assert len(stored) == 1
+    assert stored[0].vote == "up"
+    assert stored[0].user_id == 12345
+
+    # повторная оценка того же пользователя заменяет предыдущую
+    updated = await server.tools["terralogic_submit_feedback"](
+        "52:26:0040002:3823",
+        "down",
+        user_id=12345,
+    )
+    assert updated.ok
+    stored = service.store.list_report_feedback("52:26:0040002:3823")
+    assert len(stored) == 1
+    assert stored[0].vote == "down"
+
+
+async def test_mcp_submit_feedback_rejects_invalid_input(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        "terralogic_engine.mcp._load_mcp_server_class",
+        lambda: FakeFastMCP,
+    )
+    server = create_mcp_server(_service(tmp_path))
+
+    bad_cadastral = await server.tools["terralogic_submit_feedback"](
+        "не номер", "up"
+    )
+    assert not bad_cadastral.ok
+    assert bad_cadastral.error is not None
+    assert bad_cadastral.error.code == "invalid_request"

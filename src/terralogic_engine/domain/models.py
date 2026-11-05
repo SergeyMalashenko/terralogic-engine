@@ -152,3 +152,34 @@ class CollectionReceipt(BaseModel):
     started_at: datetime
     completed_at: datetime
     reused: bool = False
+
+
+FeedbackVote = Literal["up", "down"]
+
+
+class ReportFeedback(BaseModel):
+    """Оценка отчёта пользователем (👍/👎), привязанная к кадастровому номеру.
+
+    Хранится в общем хранилище (feedback.sqlite3 в корне case-store);
+    повторная оценка того же пользователя по тому же номеру заменяет
+    предыдущую.
+    """
+
+    cadastral_number: str
+    vote: FeedbackVote
+    case_id: str | None = None
+    collection_run_id: str | None = None
+    user_id: int | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("cadastral_number", mode="before")
+    @classmethod
+    def normalize_cadastral_number(cls, value: Any) -> str:
+        if not isinstance(value, str):
+            raise TypeError("cadastral_number must be a string")
+        normalized = re.sub(r"\s+", "", value)
+        if not CADASTRAL_NUMBER_PATTERN.fullmatch(normalized):
+            raise ValueError(
+                "cadastral_number must contain four numeric parts separated by ':'"
+            )
+        return normalized

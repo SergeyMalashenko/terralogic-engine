@@ -27,6 +27,7 @@ from terralogic_engine.domain.models import (
     CollectionReceipt,
     CollectionRequest,
     GeoFeature,
+    ReportFeedback,
     SourceName,
     SourceSnapshot,
     utc_now,
@@ -927,3 +928,89 @@ class LocalCaseStore:
                 )
             )
         return result
+
+    _FEEDBACK_SCHEMA = """
+        CREATE TABLE IF NOT EXISTS report_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cadastral_number TEXT NOT NULL,
+            vote TEXT NOT NULL CHECK (vote IN ('up', 'down')),
+            case_id TEXT,
+            collection_run_id TEXT,
+            user_id INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            UNIQUE (cadastral_number, user_id)
+        );
+    """
+
+    @contextmanager
+    def _feedback_db(self) -> Iterator[sqlite3.Connection]:
+        """Единая БД оценок отчётов — общая для всех кейсов хранилища."""
+        database = self.root / "feedback.sqlite3"
+        connection = sqlite3.connect(database)
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.executescript(self._FEEDBACK_SCHEMA)
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
+    def save_report_feedback(self, feedback: ReportFeedback) -> ReportFeedback:
+        """Save one report rating; same (cadastral_number, user_id) replaces."""
+
+        stored = ReportFeedback(
+            cadastral_number=feedback.cadastral_number,
+            vote=feedback.vote,
+            case_id=feedback.case_id,
+            collection_run_id=feedback.collection_run_id,
+            user_id=feedback.user_id,
+            created_at=utc_now(),
+        )
+        with self._feedback_db() as connection:
+            connection.execute(
+                """
+                INSERT INTO report_feedback (
+                    cadastral_number, vote, case_id, collection_run_id,
+                    user_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (cadastral_number, user_id) DO UPDATE SET
+                    vote = excluded.vote,
+                    case_id = excluded.case_id,
+                    collection_run_id = excluded.collection_run_id,
+                    created_at = excluded.created_at
+                """,
+                (
+                    stored.cadastral_number,
+                    stored.vote,
+                    stored.case_id,
+                    stored.collection_run_id,
+                    stored.user_id or 0,
+                    stored.created_at.isoformat(),
+                ),
+            )
+        return stored
+
+    def list_report_feedback(
+        self, cadastral_number: str | None = None
+    ) -> list[ReportFeedback]:
+        """Return stored ratings, newest first; optionally filter by parcel."""
+
+        sql = "SELECT * FROM report_feedback"
+        parameters: list[object] = []
+        if cadastral_number is not None:
+            sql += " WHERE cadastral_number = ?"
+            parameters.append(cadastral_number)
+        sql += " ORDER BY created_at DESC, id DESC"
+        with self._feedback_db() as connection:
+            rows = connection.execute(sql, parameters).fetchall()
+        return [
+            ReportFeedback(
+                cadastral_number=row["cadastral_number"],
+                vote=row["vote"],
+                case_id=row["case_id"],
+                collection_run_id=row["collection_run_id"],
+                user_id=row["user_id"] or None,
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]

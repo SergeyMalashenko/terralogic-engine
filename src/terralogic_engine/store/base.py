@@ -13,6 +13,7 @@ from terralogic_engine.domain.models import (
     CollectionReceipt,
     CollectionRequest,
     GeoFeature,
+    ReportFeedback,
     SourceName,
     SourceSnapshot,
 )
@@ -149,3 +150,17 @@ class CaseStore(Protocol):
         *,
         collection_run_id: str | None = None,
     ) -> list[GeneratedReport]: ...
+
+    def save_report_feedback(self, feedback: ReportFeedback) -> ReportFeedback:
+        """Persist a report rating (👍/👎) into the shared feedback store.
+
+        Repeated vote by the same ``user_id`` for the same cadastral number
+        replaces the previous one.
+        """
+        ...
+
+    def list_report_feedback(
+        self, cadastral_number: str | None = None
+    ) -> list[ReportFeedback]:
+        """Ratings from the shared store, newest first (optionally per parcel)."""
+        ...

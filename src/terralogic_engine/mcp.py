@@ -25,6 +25,7 @@ from terralogic_engine.acquisition.pipeline import (
     AcquisitionPipeline,
     CaseNotCollectedError,
 )
+from terralogic_engine.domain.models import ReportFeedback
 from terralogic_engine.quickreport.models import QuickReportResult
 from terralogic_engine.reporting.context import ReportContextError
 from terralogic_engine.reporting.models import PrepareCaseResult
@@ -338,6 +339,47 @@ def create_mcp_server(
                 content_base64=base64.b64encode(pdf.payload).decode("ascii"),
             ),
         )
+
+    @server.tool()
+    async def terralogic_submit_feedback(
+        cadastral_number: str,
+        vote: Literal["up", "down"],
+        case_id: str | None = None,
+        collection_run_id: str | None = None,
+        user_id: int | None = None,
+    ) -> ToolResult[ReportFeedback]:
+        """Record a report rating (thumbs up/down) for a cadastral number.
+
+        Ratings are stored in the shared feedback store of the CaseStore
+        (feedback.sqlite3), keyed by cadastral number. A repeated vote by the
+        same ``user_id`` for the same cadastral number replaces the previous
+        one. Intended for delivery interfaces (e.g. the Telegram bot) after
+        the user receives the quick-report PDF.
+
+        Args:
+            cadastral_number: Four numeric parts separated by colons.
+            vote: ``up`` (👍) or ``down`` (👎).
+            case_id: Optional CaseStore identifier; derived from the
+                cadastral number when omitted.
+            collection_run_id: Optional source run the rated report was
+                built from.
+            user_id: Optional opaque identifier of the voting user.
+        """
+
+        try:
+            data = service.submit_report_feedback(
+                cadastral_number,
+                vote,
+                case_id=case_id,
+                collection_run_id=collection_run_id,
+                user_id=user_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - MCP application boundary
+            return ToolResult[ReportFeedback](
+                ok=False,
+                error=_tool_failure(exc),
+            )
+        return ToolResult[ReportFeedback](ok=True, data=data)
 
     return server
 

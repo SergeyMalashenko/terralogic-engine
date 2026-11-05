@@ -8,7 +8,12 @@ from pathlib import Path
 
 from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
 from terralogic_engine.analytics.pipeline import AnalysisPipeline
-from terralogic_engine.domain.models import CollectionRequest, RefreshPolicy
+from terralogic_engine.domain.models import (
+    CollectionRequest,
+    FeedbackVote,
+    RefreshPolicy,
+    ReportFeedback,
+)
 from terralogic_engine.qa.critic import CriticExecutor
 from terralogic_engine.quickreport import (
     MarketingConfig,
@@ -169,6 +174,30 @@ class ReportingService:
             case_id,
             collection_run_id=collection_run_id,
         )
+
+    def submit_report_feedback(
+        self,
+        cadastral_number: str,
+        vote: FeedbackVote,
+        *,
+        case_id: str | None = None,
+        collection_run_id: str | None = None,
+        user_id: int | None = None,
+    ) -> ReportFeedback:
+        """Сохраняет оценку отчёта (👍/👎) в общем хранилище оценок.
+
+        Оценка привязывается к кадастровому номеру; case_id по умолчанию
+        выводится из номера тем же правилом, что в prepare_case.
+        """
+        feedback = ReportFeedback(
+            cadastral_number=cadastral_number,
+            vote=vote,
+            case_id=case_id
+            or f"case-{cadastral_number.replace(':', '-').replace(' ', '')}",
+            collection_run_id=collection_run_id,
+            user_id=user_id,
+        )
+        return self.store.save_report_feedback(feedback)
 
     def prepare_quickreport(
         self,

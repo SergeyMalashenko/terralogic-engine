@@ -217,3 +217,44 @@ def test_read_case_artifact_roundtrip_and_errors(tmp_path) -> None:
         store.read_case_artifact(
             case_id="case-art", kind="..", filename="x.pdf"
         )
+
+
+def test_report_feedback_roundtrip_and_upsert(tmp_path) -> None:
+    from terralogic_engine.domain.models import ReportFeedback
+
+    store = LocalCaseStore(tmp_path / "store")
+    first = store.save_report_feedback(
+        ReportFeedback(
+            cadastral_number="52:26:0040002:3823",
+            vote="up",
+            case_id="case-52-26-0040002-3823",
+            collection_run_id="run-1",
+            user_id=42,
+        )
+    )
+    assert first.vote == "up"
+
+    # другой пользователь — отдельная запись
+    store.save_report_feedback(
+        ReportFeedback(cadastral_number="52:26:0040002:3823", vote="down", user_id=43)
+    )
+    # повторная оценка того же пользователя заменяет предыдущую
+    store.save_report_feedback(
+        ReportFeedback(cadastral_number="52:26:0040002:3823", vote="down", user_id=42)
+    )
+    store.save_report_feedback(
+        ReportFeedback(cadastral_number="50:01:0010101:1", vote="up", user_id=42)
+    )
+
+    per_parcel = store.list_report_feedback("52:26:0040002:3823")
+    assert len(per_parcel) == 2
+    assert {item.user_id for item in per_parcel} == {42, 43}
+    assert all(item.vote == "down" for item in per_parcel)
+    assert per_parcel[0].created_at >= per_parcel[1].created_at
+
+    everything = store.list_report_feedback()
+    assert len(everything) == 3
+
+    # хранилище переживает переоткрытие
+    reopened = LocalCaseStore(tmp_path / "store")
+    assert len(reopened.list_report_feedback()) == 3
