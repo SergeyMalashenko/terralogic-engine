@@ -172,6 +172,8 @@ class DocumentVriZoneContext(BaseModel):
 
     zone_code: str
     found: bool
+    zone_name: str | None = None
+    zone_description: str | None = None
     items: list[DocumentVriItemContext] = Field(default_factory=list)
 
 

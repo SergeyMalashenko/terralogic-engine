@@ -82,6 +82,31 @@ def _is_housing_use(code: str | None) -> bool:
     return head in _HOUSING_CODE_PREFIXES
 
 
+def _normalize_zone_code(code: str | None) -> str:
+    """Код зоны для сравнения: верхний регистр, без пробелов, единый дефис."""
+    if not code:
+        return ""
+    normalized = code.strip().upper().replace("—", "-").replace("–", "-")
+    return re.sub(r"\s+", "", normalized)
+
+
+def _zone_codes_match(document_code: str, passport_code: str) -> bool:
+    """Код зоны из документа ПЗЗ vs код из карточки участка.
+
+    Регламенты РГИС маркируют зону суффиксом «-Р» (СХ-2-Р ≡ СХ-2);
+    сравнение иначе строгое — «Ж-2Б» и «Ж-2.1» различны.
+    """
+    doc = _normalize_zone_code(document_code)
+    passport = _normalize_zone_code(passport_code)
+    if not doc or not passport:
+        return False
+    if doc == passport:
+        return True
+    return doc.removesuffix("-Р") == passport.removesuffix("-Р") and (
+        doc.endswith("-Р") or passport.endswith("-Р")
+    )
+
+
 def _primary_parcel_zone(
     base: ReportContext,
 ) -> ParcelPlanningZoneReportContext | None:
@@ -141,6 +166,8 @@ def _document_regulations(
     """Регламент зоны из документа ПЗЗ (авторитетный источник)."""
     return QuickZoneRegulations(
         zone_code=zone.zone_code,
+        zone_name=zone.zone_name,
+        zone_description=zone.zone_description,
         doc_number=documents.pzz.number,
         doc_version_date=documents.pzz.version_date,
         source="document",
@@ -188,7 +215,12 @@ def _zone_regulations(base: ReportContext) -> QuickZoneRegulations | None:
     passport_zone = card_zone.zone if card_zone is not None else None
     if found and passport_zone:
         match = next(
-            (zone for zone in found if zone.zone_code == passport_zone), None
+            (
+                zone
+                for zone in found
+                if _zone_codes_match(zone.zone_code, passport_zone)
+            ),
+            None,
         )
         if match is not None:
             return _document_regulations(match, documents)

@@ -562,6 +562,46 @@ async def test_pipeline_collects_document_contour(tmp_path) -> None:
     assert '"coordinates"' not in context.model_dump_json()
 
 
+async def test_pipeline_pzz_context_falls_back_to_geodocs_registry(tmp_path) -> None:
+    """RGIS sync не вернул ПЗЗ, но документ известен geodocs (реестр в
+    documents_vri-снапшоте): documents.pzz строится из geodocs, а не
+    «документ не получен»."""
+    store = LocalCaseStore(tmp_path / "store")
+    sync = rgis_documents_sync_result()
+    sync["data"]["documents"] = [
+        document
+        for document in sync["data"]["documents"]
+        if document["doc_type"] != "pzz"
+    ]
+    pipeline = AcquisitionPipeline(
+        store=store,
+        nspd=FakeNspdClient(),
+        osm=FakeOsmClient(),
+        dgis=FakeDgisClient(),
+        rgis=FakeRgisClient(),
+        rgis_documents=FakeRgisDocumentsClient(sync_result=sync),
+        nspd_documents=FakeNspdDocumentsClient(),
+        geodocs=FakeGeodocsClient(),
+    )
+    request = CollectionRequest(
+        case_id="case-geodocs-pzz",
+        cadastral_number="50:32:0000000:38218",
+        profile_version="3.1",
+        refresh_policy="always",
+    )
+
+    receipt = await pipeline.collect(request)
+
+    AnalysisPipeline(store=store).analyze(request.case_id, run_id=receipt.run_id)
+    context = build_report_context(
+        store, request.case_id, collection_run_id=receipt.run_id
+    )
+    assert context.documents is not None
+    assert context.documents.pzz is not None
+    assert context.documents.pzz.number == "ПЗЗ-Т-592"
+    assert context.documents.pzz.version_date == "2021-04-03"
+
+
 async def test_pipeline_geodocs_municipality_fallback_without_pzz_ref(
     tmp_path,
 ) -> None:

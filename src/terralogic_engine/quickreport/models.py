@@ -87,6 +87,7 @@ class QuickZoneRegulations(BaseModel):
 
     zone_code: str
     zone_name: str | None = None
+    zone_description: str | None = None
     doc_number: str | None = None
     doc_version_date: str | None = None
     # document — таблица из документа ПЗЗ; rgis_card — карточка РГИС (fallback,

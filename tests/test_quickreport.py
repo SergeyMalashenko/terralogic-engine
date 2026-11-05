@@ -1125,6 +1125,58 @@ def test_zone_regulations_document_zone_mismatch_uses_card(rules, guidance):
     assert "СХ-1" not in markdown
 
 
+def test_zone_regulations_document_zone_regulation_suffix_matches(rules, guidance):
+    """Регламент РГИС маркирует зону суффиксом «-Р»: СХ-2-Р ≡ СХ-2 карточки."""
+    base = _base_context()
+    base.urban_planning.parcel_zones = [
+        ParcelPlanningZoneReportContext(
+            feature_id="pz-1", zone="СХ-2", name="Зона ведения садоводства"
+        )
+    ]
+    base.documents = DocumentReportContext(
+        pzz=PzzDocumentContext(
+            number="2547/7",
+            version_date="2026-07-03",
+            zones=[DocumentVriZoneContext(zone_code="СХ-2-Р", found=True, items=[
+                _vri_item("1.1", "Выращивание сельхозкультур"),
+            ])],
+        )
+    )
+    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
+
+    regulations = quick.zone_regulations
+    assert regulations is not None
+    assert regulations.zone_code == "СХ-2-Р"
+    assert regulations.doc_number == "2547/7"
+    assert not any("не найдена в документе ПЗЗ" in note for note in quick.warnings)
+
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+    assert "не найдена" not in markdown
+
+
+def test_zone_regulations_suffix_match_requires_same_base(rules, guidance):
+    """Суффикс «-Р» не склеивает разные зоны: СХ-1-Р ≠ СХ-2."""
+    base = _base_context()
+    base.urban_planning.parcel_zones = [
+        ParcelPlanningZoneReportContext(
+            feature_id="pz-1", zone="СХ-2", name="Зона ведения садоводства"
+        )
+    ]
+    base.documents = DocumentReportContext(
+        pzz=PzzDocumentContext(
+            number="2547/7",
+            version_date="2026-07-03",
+            zones=[DocumentVriZoneContext(zone_code="СХ-1-Р", found=True, items=[
+                _vri_item("1.1", "Выращивание сельхозкультур"),
+            ])],
+        )
+    )
+    quick = build_quick_context_from_report(base, rules=rules, guidance=guidance)
+
+    regulations = quick.zone_regulations
+    assert regulations is None
+
+
 def test_zone_regulations_mismatch_without_card_returns_none(rules, guidance):
     """Нет карточной зоны, в документе несколько зон — неоднозначность,
     первая зона документа молча не подставляется."""

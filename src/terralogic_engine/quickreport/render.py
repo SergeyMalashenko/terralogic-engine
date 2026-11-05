@@ -244,6 +244,8 @@ def _zone_regulations_lines(regulations: QuickZoneRegulations | None) -> list[st
                 f"{regulations.total_uses}."
             ),
         ]
+    if regulations.zone_description:
+        lines.extend(["", f"Назначение зоны по документу: {regulations.zone_description}"])
     if regulations.housing_uses:
         lines.extend(
             [

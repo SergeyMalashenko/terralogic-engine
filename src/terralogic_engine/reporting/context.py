@@ -505,6 +505,8 @@ def _vri_zone_context(fact: CaseFact) -> DocumentVriZoneContext:
     return DocumentVriZoneContext(
         zone_code=str(fact.value.get("zone_code") or ""),
         found=True,
+        zone_name=_optional_text(fact.value.get("zone_name")),
+        zone_description=_optional_text(fact.value.get("zone_description")),
         items=items,
     )
 
@@ -544,6 +546,7 @@ def _documents_context(
     ]
     partial = False
     pzz_documents: list[Mapping[str, Any]] = []
+    geodocs_pzz_documents: list[Mapping[str, Any]] = []
     general_plan_documents: list[Mapping[str, Any]] = []
     for snapshot in snapshots:
         envelope = _snapshot_envelope(store, receipt.case_id, snapshot)
@@ -557,7 +560,19 @@ def _documents_context(
         # geodocs — верхнеуровневый status == "partial" (§80).
         if data.get("partial") is True or envelope.get("status") == "partial":
             partial = True
-        if snapshot.metadata.get("snapshot_type") != "documents_sync":
+        snapshot_type = snapshot.metadata.get("snapshot_type")
+        if snapshot_type == "documents_vri":
+            # Сырой ответ geodocs query_documents: реестр ПЗЗ, связанных
+            # с участком, даже если RGIS-sync документ не вернул.
+            linked = envelope.get("documents")
+            if isinstance(linked, list):
+                for document in linked:
+                    if not isinstance(document, Mapping):
+                        continue
+                    if str(document.get("doc_type") or "") == "pzz":
+                        geodocs_pzz_documents.append(document)
+            continue
+        if snapshot_type != "documents_sync":
             continue
         raw_documents = data.get("documents")
         if not isinstance(raw_documents, list):
@@ -579,6 +594,13 @@ def _documents_context(
         ),
         pzz_documents[0] if pzz_documents else None,
     )
+    if selected_pzz is None and geodocs_pzz_documents:
+        # ПЗЗ известен geodocs (скачан ранее и привязан к участку), но RGIS
+        # его не вернул: честнее «редакция от …», чем «документ не получен».
+        selected_pzz = max(
+            geodocs_pzz_documents,
+            key=lambda document: str(document.get("version_date") or ""),
+        )
     first_vri_fact = next(
         (fact for fact in facts if fact.fact_type == DOCUMENT_VRI_FACT_TYPE),
         None,

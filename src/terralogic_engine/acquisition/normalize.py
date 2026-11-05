@@ -449,6 +449,8 @@ def document_vri_facts_from_geodocs(
                 predicate=DOCUMENT_VRI_FACT_TYPE,
                 value={
                     "zone_code": zone_code,
+                    "zone_name": str(table.get("zone_name") or ""),
+                    "zone_description": str(table.get("zone_description") or ""),
                     "doc_number": str(document.get("number") or ""),
                     "version_date": str(document.get("version_date") or ""),
                     "items": items if isinstance(items, list) else [],
