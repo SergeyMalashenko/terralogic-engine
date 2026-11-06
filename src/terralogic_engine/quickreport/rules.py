@@ -515,6 +515,7 @@ def compute_verdict(
     stop_reasons: list[str],
     suspend_reasons: list[str],
     preliminary_flags: list[str],
+    vri_change_reason: str | None = None,
 ) -> VerdictResult:
     """Балл и статус по методике 6.2.
 
@@ -522,6 +523,8 @@ def compute_verdict(
     suspend_reasons — нет ключевых данных / приостановка по п. 3.3 (статус
     insufficient без балла); preliminary_flags — некритичные пробелы и
     консервативные допущения (отметка «предварительная»).
+    vri_change_reason — оценка выполнена для целевого ВРИ зоны, а не для
+    текущего ВРИ участка (6.3 §6): причина выносится в начало списка.
     """
     notes: list[str] = []
     totals: dict[str, GroupDeduction] = {}
@@ -621,6 +624,10 @@ def compute_verdict(
     score = max(rules.score_min, min(rules.score_max, score))
 
     reasons: list[str] = []
+    if vri_change_reason:
+        # Условие применимости оценки (смена ВРИ) — первая причина, не уходит
+        # за срез [:3].
+        reasons.append(vri_change_reason)
     for group in sorted(groups, key=lambda item: -item.deduction):
         if group.deduction <= 0:
             continue

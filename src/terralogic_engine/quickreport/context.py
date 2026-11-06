@@ -1160,6 +1160,20 @@ def _has_target_use(regulations: QuickZoneRegulations) -> bool:
     return False
 
 
+def _goal_target_item(regulations: QuickZoneRegulations) -> QuickZoneUse | None:
+    """Лучший целевой ВРИ зоны по приоритету _TARGET_USE_CODES.
+
+    Fallback для случая, когда ВРИ участка в регламенте зоны не найден
+    (6.3 §6): несовместимость текущего ВРИ устранима его сменой, если зона
+    содержит целевой вид — A и C оцениваются по целевому виду зоны.
+    """
+    for target_code in _TARGET_USE_CODES:
+        for use in regulations.housing_uses:
+            if (use.code or "").lstrip().rstrip("*") == target_code:
+                return use
+    return None
+
+
 def _area_deduction(
     base: ReportContext,
     rules: ScoringRules,
@@ -1547,6 +1561,7 @@ def _missing_items(
     regulations_source: str | None = None,
     melioration_present: bool = False,
     valuable_unchecked: bool = False,
+    vri_change: bool = False,
 ) -> list[QuickMissingItem]:
     """Детерминированная сборка пробелов evidence (§34 ТЗ).
 
@@ -1582,6 +1597,8 @@ def _missing_items(
         _add("melioration_structures_unknown")
     if valuable_unchecked:
         _add("valuable_list_unchecked")
+    if vri_change:
+        _add("vri_change")
     _add("access_unchecked")  # методика 6.2: подъезд — пробел без вычета
     return items
 
@@ -1666,8 +1683,15 @@ def build_quick_context_from_report(
     target_item = (
         _target_use_item(regulations, prefixes) if regulations is not None else None
     )
+    goal_fallback: QuickZoneUse | None = None
+    if target_item is None and regulations is not None:
+        # Методика 6.3 §6: ВРИ участка не найден в регламенте зоны, но зона
+        # содержит целевой вид — несовместимость текущего ВРИ устранима его
+        # сменой, это не «недостаточно данных»: A и C оцениваются по целевому
+        # виду зоны, а необходимость смены ВРИ отражается в отчёте.
+        goal_fallback = _goal_target_item(regulations)
     a, area_notes, area_suspend, area_info = _area_deduction(
-        base, rules, regulations, target_item
+        base, rules, regulations, target_item or goal_fallback
     )
     if (
         regulations is not None
@@ -1677,6 +1701,25 @@ def build_quick_context_from_report(
         area_info = area_info.model_copy(
             update={"note": f"{area_info.note}; источник: карточка РГИС"}
         )
+    vri_change_note = ""
+    if goal_fallback is not None:
+        vri_change_note = rules.texts.get("vri_change_required", "").format(
+            current=base.parcel.permitted_use or "не указан",
+            goal=(
+                f"{goal_fallback.name} (код {goal_fallback.code})"
+                if goal_fallback.name
+                else f"код {goal_fallback.code}"
+            ),
+        )
+        if vri_change_note:
+            warnings.append(vri_change_note)
+            area_info = area_info.model_copy(
+                update={
+                    "note": "; ".join(
+                        part for part in (area_info.note, vri_change_note) if part
+                    )
+                }
+            )
     warnings.extend(note for note in area_notes if note)
     suspend_reasons.extend(area_suspend)
 
@@ -1695,6 +1738,10 @@ def build_quick_context_from_report(
         preliminary_flags.append(
             "информационная запись о мелиорируемых землях (6.3 §6.1)"
         )
+    if goal_fallback is not None:
+        flag = rules.texts.get("vri_change_preliminary", "")
+        if flag:
+            preliminary_flags.append(flag)
     verdict_result = compute_verdict(
         rules,
         scored,
@@ -1704,6 +1751,7 @@ def build_quick_context_from_report(
         stop_reasons=stop_reasons,
         suspend_reasons=suspend_reasons,
         preliminary_flags=preliminary_flags,
+        vri_change_reason=vri_change_note or None,
     )
     warnings.extend(verdict_result.notes)
     protocol = _protocol(
@@ -1738,6 +1786,7 @@ def build_quick_context_from_report(
             factor.catalog_item == "melioration_lands" for factor in scored
         )
         and not base.reclamation,
+        vri_change=goal_fallback is not None,
     )
     return QuickReportContext(
         case_id=base.case_id,
@@ -1776,6 +1825,10 @@ def _configuration_from_store(
         return None
     prefixes = _target_use_prefixes(base.parcel)
     target_item = _target_use_item(regulations, prefixes)
+    if target_item is None:
+        # Тот же fallback, что и в скоринге: ВРИ участка нет в регламенте
+        # зоны — отступы берутся по целевому виду зоны (смена ВРИ).
+        target_item = _goal_target_item(regulations)
     margin = _first_number(target_item.margin) if target_item is not None else None
     if margin is None:
         warnings.append("конфигурация: нет применимых отступов из регламента ПЗЗ")

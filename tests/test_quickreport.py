@@ -1010,8 +1010,135 @@ def test_unstarred_gardening_row_is_not_housing(rules, guidance):
 
 
 # ---------------------------------------------------------------------------
-# Fallback «документ ПЗЗ → карточка РГИС»
+# 6.3 §6: ВРИ участка вне регламента зоны → оценка по целевому виду зоны
 # ---------------------------------------------------------------------------
+
+
+def _shop_parcel(base: ReportContext) -> ReportContext:
+    """Участок с нецелевым ВРИ «Магазины» (4.4) — кейс 50:41:0030201:82."""
+    base.parcel.permitted_use = "Магазины"
+    base.parcel.permitted_use_vri = VriReportContext(
+        code="4.4",
+        name="Магазины",
+        act_number="П/0412",
+        revision_date="2026-06-02",
+    )
+    return base
+
+
+def test_vri_fallback_scores_against_zone_goal_use(rules, guidance):
+    """ВРИ участка нет в регламенте зоны, зона содержит целевой вид →
+    A и C считаются по целевому виду (2.1*), оценка выдаётся с причиной
+    о смене ВРИ, а не «применимость регламента не установлена»."""
+    base = _shop_parcel(_with_pzz(_base_context()))
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+
+    assert quick.verdict.score == 55  # 100 − 35 (водные) − 10 (U) − 0 (G)
+    assert all(
+        "применимость регламента" not in reason for reason in quick.verdict.reasons
+    )
+    # причина о смене ВРИ — первая в списке (условие применимости оценки)
+    assert quick.verdict.reasons[0].startswith(
+        "Текущий вид разрешённого использования участка (Магазины)"
+    )
+    assert "2.1*" in quick.verdict.reasons[0]
+    area = quick.protocol.area
+    assert area.status == "computed"
+    assert area.target_code == "2.1*"
+    assert "изменение вида разрешённого использования" in (area.note or "")
+    assert any(
+        "изменение вида разрешённого использования" in warning
+        for warning in quick.warnings
+    )
+    assert any(item.key == "vri_change" for item in quick.missing)
+
+
+def test_vri_fallback_renders_reason_and_missing(rules, guidance):
+    """Клиентский отчёт: причина в блоке оценки и пункт в «Что ещё нужно
+    проверить»; оценка помечена предварительной."""
+    base = _shop_parcel(_with_pzz(_base_context()))
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+    markdown = render_quickreport(quick, today=date(2026, 10, 7))
+    assert "предварительная" in markdown
+    assert "Основные причины:" in markdown
+    assert "не предполагает строительство жилого дома" in markdown
+    assert "изменение ВРИ на целевой вид территориальной зоны" in markdown
+
+
+def test_vri_fallback_below_minimum_still_suspends(rules, guidance):
+    """Целевой вид зоны с Smin выше площади участка (КРТ-3-63, 2.1: 30 000 м²)
+    — приостановка «ниже минимальной», а не «применимость не установлена»."""
+    base = _shop_parcel(_with_pzz(_base_context()))
+    base.documents.pzz.zones[0].items = [
+        _vri_item("2.1", "Для индивидуального жилищного строительства", area_min=30000),
+    ]
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+    assert quick.verdict.score is None
+    assert quick.verdict.status_key == "insufficient"
+    assert any("ниже минимальной" in reason for reason in quick.verdict.reasons)
+    assert all(
+        "применимость регламента" not in reason for reason in quick.verdict.reasons
+    )
+    assert quick.protocol.area.target_code == "2.1"
+
+
+def test_vri_fallback_not_used_when_parcel_vri_matches(rules, guidance):
+    """ВРИ участка найден в регламенте — fallback не срабатывает: ни причины
+    о смене ВРИ, ни пункта в «Что ещё нужно проверить»."""
+    base = _with_pzz(_base_context())  # ИЖС → 2.1* совпадает с регламентом
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+    assert quick.verdict.score == 55
+    assert all(
+        "не предполагает строительство жилого дома" not in reason
+        for reason in quick.verdict.reasons
+    )
+    assert all(item.key != "vri_change" for item in quick.missing)
+
+
+def test_vri_fallback_not_used_without_goal_use(rules, guidance):
+    """Зона без целевого вида (только 2.7.*) — стоп-фактор, fallback
+    не подменяет отсутствие целевого использования."""
+    base = _shop_parcel(_with_pzz(_base_context()))
+    base.documents.pzz.zones[0].items = [
+        _vri_item("2.7.1", "Хранение автотранспорта"),
+        _vri_item("2.7.2", "Размещение гаражей для собственных нужд"),
+    ]
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+    assert quick.verdict.score is None
+    assert quick.verdict.status_key == "stop"
+    assert any("отсутствует в регламенте" in reason for reason in quick.verdict.reasons)
+
+
+def test_informational_showcase_layers_are_not_blockers(rules, guidance):
+    """Витринные информационные слои (проекты планировки/межевания, зоны
+    запрета продажи алкоголя) — не ЗОУИТ ст. 105: исключаются из скоринга
+    с протокольной пометкой, а не блокируют оценку (кейсы группы 3)."""
+    base = _with_pzz(_base_context())
+    base.zouit = [
+        _zouit("Проекты планировки территории", None, 91.5),
+        _zouit("Проекты межевания территории", None, 91.5),
+        _zouit("Зоны запрета продажи алкогольной продукции", None, 9.9),
+    ]
+    quick = build_quick_context_from_report(
+        base, rules=rules, guidance=guidance, configuration=_CONFIG_OK
+    )
+    # без групп ограничений: 100 − 10 (U) − 0 (G)
+    assert quick.verdict.score == 90
+    assert all(
+        "без надёжной классификации" not in reason for reason in quick.verdict.reasons
+    )
+    assert quick.protocol.unmatched_zones == []
+    assert sum("не является ЗОУИТ" in note for note in quick.protocol.classify_notes) == 3
 
 
 def _with_card_usages(base: ReportContext) -> ReportContext:
