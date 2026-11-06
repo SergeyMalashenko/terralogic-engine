@@ -567,6 +567,7 @@ def _documents_context(
     store: CaseStore,
     receipt: CollectionReceipt,
     snapshots: list[SourceSnapshot],
+    warnings: list[str] | None = None,
 ) -> DocumentReportContext | None:
     if not snapshots:
         return None
@@ -642,29 +643,54 @@ def _documents_context(
         (fact for fact in facts if fact.fact_type == DOCUMENT_VRI_FACT_TYPE),
         None,
     )
+    fact_number = (
+        _optional_text(first_vri_fact.value.get("doc_number"))
+        if first_vri_fact is not None
+        else None
+    )
+    fact_version = (
+        _optional_text(first_vri_fact.value.get("version_date"))
+        if first_vri_fact is not None
+        else None
+    )
     pzz = None
     if selected_pzz is not None or zones:
+        selected_number = (
+            _optional_text(selected_pzz.get("number"))
+            if selected_pzz is not None
+            else None
+        )
+        selected_version = (
+            _optional_text(selected_pzz.get("version_date"))
+            if selected_pzz is not None
+            else None
+        )
+        if zones and fact_number:
+            # Таблица ВРИ извлечена из конкретной скачанной редакции: реквизиты
+            # в отчёте — её, а не более свежей редакции/поправки, которую sync
+            # анонсирует, но контур не обработал. Расхождение — в протокол.
+            number, version_date = fact_number, fact_version
+            differs = selected_pzz is not None and (
+                (selected_number and selected_number != fact_number)
+                or (selected_version and selected_version != fact_version)
+            )
+            if differs and warnings is not None:
+                fresher = (
+                    f"редакция от {selected_version}"
+                    if selected_number == fact_number
+                    else f"документ № {selected_number} от {selected_version or '—'}"
+                )
+                warnings.append(
+                    f"таблица ВРИ — из ПЗЗ № {fact_number} редакции от "
+                    f"{fact_version or '—'}; по данным РГИС есть новее: "
+                    f"{fresher} (не обработан)"
+                )
+        else:
+            number = selected_number or fact_number
+            version_date = selected_version or fact_version
         pzz = PzzDocumentContext(
-            number=(
-                _optional_text(selected_pzz.get("number"))
-                if selected_pzz is not None
-                else None
-            )
-            or (
-                _optional_text(first_vri_fact.value.get("doc_number"))
-                if first_vri_fact is not None
-                else None
-            ),
-            version_date=(
-                _optional_text(selected_pzz.get("version_date"))
-                if selected_pzz is not None
-                else None
-            )
-            or (
-                _optional_text(first_vri_fact.value.get("version_date"))
-                if first_vri_fact is not None
-                else None
-            ),
+            number=number,
+            version_date=version_date,
             files=(
                 _string_list(selected_pzz.get("files"))
                 if selected_pzz is not None
@@ -759,7 +785,7 @@ def build_report_context(
             features,
             collected=receipt.rgis_snapshot_id is not None,
         ),
-        documents=_documents_context(store, receipt, document_snapshots),
+        documents=_documents_context(store, receipt, document_snapshots, warnings),
         sources=sources,
         warnings=warnings,
         reclamation=_reclamation_context(features),
