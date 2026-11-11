@@ -6,6 +6,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
+from terralogic_engine.acquisition.clients import ParcelResolverClient
 from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
 from terralogic_engine.analytics.pipeline import AnalysisPipeline
 from terralogic_engine.domain.models import (
@@ -47,6 +48,8 @@ from terralogic_engine.reporting.context import (
 )
 from terralogic_engine.reporting.models import (
     GeneratedReport,
+    ListingResolution,
+    PrepareCaseFromListingResult,
     PrepareCaseResult,
     ReportContext,
     ReportTemplate,
@@ -78,6 +81,10 @@ class ParcelNotFoundError(CasePreparationError):
     """Источник однозначно сообщил: участок с таким КН не существует."""
 
 
+class ListingResolutionError(RuntimeError):
+    """Контур parcel-resolver не смог выдать кадастровый номер по ссылке."""
+
+
 class ReportingService:
     """Coordinate collection, analytics, report context, and persistence."""
 
@@ -92,11 +99,15 @@ class ReportingService:
         critic: CriticExecutor | None = None,
         narrative_generator: NarrativeGenerator | None = None,
         writer: NarrativeExecutor | None = None,
+        parcel_resolver: ParcelResolverClient | None = None,
     ) -> None:
         self.store = store
         self.acquisition = acquisition
         self.template_registry = template_registry or create_default_template_registry()
         self.tile_fetcher = tile_fetcher
+        # Контур резолюции ссылок на объявления в кадастровый номер
+        # (parcel-resolver-mcp); None — инструмент from_listing недоступен.
+        self._parcel_resolver = parcel_resolver
         # Коммерческий блок отчёта: статическая конфигурация, не из LLM.
         self._marketing = marketing if marketing is not None else load_marketing()
         # LLM-критик отчёта (§65 ТЗ); None — QA ограничено валидатором.
@@ -161,6 +172,62 @@ class ReportingService:
             warnings=list(dict.fromkeys([*receipt.warnings, *analysis.warnings])),
             errors=receipt.errors,
             collection=build_collection_summary(self.store, receipt),
+        )
+
+    async def prepare_case_from_listing(
+        self,
+        url: str,
+        *,
+        case_id: str | None = None,
+        margin_m: int = 1000,
+        refresh_policy: RefreshPolicy = "if_stale",
+    ) -> PrepareCaseFromListingResult:
+        """Resolve a listing URL to a cadastral number, then collect the case.
+
+        Контур parcel-resolver (объявления → координаты пина → участки ЕГРН)
+        предшествует обычному конвейеру: после успешной резолюции выполняется
+        тот же prepare_case, что и для явно заданного кадастрового номера.
+        Предупреждения резолюции (неточный пин, расхождение площади, статус
+        участка) возвращаются вызывающей стороне как часть результата.
+        """
+        if self._parcel_resolver is None:
+            raise ListingResolutionError(
+                "The parcel resolver contour is not configured; "
+                "start terralogic-mcp with --parcel-resolver-url"
+            )
+        try:
+            envelope = await self._parcel_resolver.resolve_cadastral_number(url)
+        except Exception as exc:
+            raise ListingResolutionError(f"Parcel resolver call failed: {exc}") from exc
+        data = dict(envelope.get("data") or {})
+        cadastral_number = data.get("cadastral_number")
+        warnings = [str(item) for item in data.get("warnings") or []]
+        listing = dict(data.get("listing") or {})
+        if not cadastral_number:
+            details = "; ".join(warnings) or "no cadastral candidates returned"
+            raise ListingResolutionError(
+                "The listing URL could not be resolved to a cadastral "
+                f"number: {details}"
+            )
+        case = await self.prepare_case(
+            cadastral_number,
+            case_id=case_id,
+            margin_m=margin_m,
+            refresh_policy=refresh_policy,
+        )
+        return PrepareCaseFromListingResult(
+            resolution=ListingResolution(
+                url=url,
+                cadastral_number=cadastral_number,
+                listing_id=listing.get("listing_id"),
+                title=listing.get("title"),
+                address=listing.get("address"),
+                price=listing.get("price"),
+                latitude=listing.get("latitude"),
+                longitude=listing.get("longitude"),
+                warnings=warnings,
+            ),
+            case=case,
         )
 
     def get_report_context(

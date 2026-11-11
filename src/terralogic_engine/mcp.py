@@ -17,6 +17,7 @@ from terralogic_engine.acquisition.clients import (
     McpNspdClient,
     McpNspdDocumentsClient,
     McpOsmClient,
+    McpParcelResolverClient,
     McpRgisClient,
     McpRgisDocumentsClient,
     StreamableHttpMcpTransport,
@@ -28,9 +29,13 @@ from terralogic_engine.acquisition.pipeline import (
 from terralogic_engine.domain.models import ReportFeedback
 from terralogic_engine.quickreport.models import QuickReportResult
 from terralogic_engine.reporting.context import ReportContextError
-from terralogic_engine.reporting.models import PrepareCaseResult
+from terralogic_engine.reporting.models import (
+    PrepareCaseFromListingResult,
+    PrepareCaseResult,
+)
 from terralogic_engine.reporting.service import (
     CasePreparationError,
+    ListingResolutionError,
     ParcelNotFoundError,
     ReportingService,
 )
@@ -38,6 +43,10 @@ from terralogic_engine.store.local import LocalCaseStore
 
 DEFAULT_INSTRUCTIONS = (
     "Use terralogic_prepare_case first when the user provides a cadastral number. "
+    "When the user provides a link to a real-estate listing (Avito) instead, "
+    "use terralogic_prepare_case_from_listing: it resolves the URL to a "
+    "cadastral number through the parcel-resolver contour and then runs the "
+    "same collection; always relay the resolution warnings to the user. "
     "It collects NSPD, OSM, and 2GIS data plus RGIS MO and the document "
     "contour (PZZ documents, permitted-use tables, ZOUIT regimes) when "
     "configured and applicable, performs deterministic spatial "
@@ -120,6 +129,7 @@ def create_reporting_service(
     dgis_url: str = "http://127.0.0.1:8003/mcp",
     rgis_url: str | None = None,
     geodocs_url: str | None = None,
+    parcel_resolver_url: str | None = None,
 ) -> ReportingService:
     """Create the production service using the upstream MCP servers.
 
@@ -127,6 +137,8 @@ def create_reporting_service(
     servers as the NSPD and RGIS source tools, so their URLs are reused
     as-is. ``geodocs_url`` points at the second document contour
     (geodocs-mcp): without it the document contour stops after sync.
+    ``parcel_resolver_url`` enables the listing contour (parcel-resolver-mcp):
+    resolution of real-estate listing URLs to cadastral numbers.
     """
 
     store = LocalCaseStore(store_path)
@@ -174,12 +186,23 @@ def create_reporting_service(
         acquisition=acquisition,
         critic=SubprocessCriticExecutor.from_env(),
         narrative_generator=narrative_generator,
+        parcel_resolver=(
+            McpParcelResolverClient(url=parcel_resolver_url)
+            if parcel_resolver_url
+            else None
+        ),
     )
 
 
 def _tool_failure(exc: Exception) -> ToolError:
     if isinstance(exc, ParcelNotFoundError):
         return ToolError(code="not_found", message=str(exc), retryable=False)
+    if isinstance(exc, ListingResolutionError):
+        return ToolError(
+            code="listing_resolution_failed",
+            message=str(exc),
+            retryable=False,
+        )
     if isinstance(exc, CaseNotCollectedError):
         return ToolError(code="not_collected", message=str(exc), retryable=False)
     if isinstance(exc, KeyError):
@@ -275,6 +298,52 @@ def create_mcp_server(
                 error=_tool_failure(exc),
             )
         return ToolResult[PrepareCaseResult](ok=True, data=data)
+
+    @server.tool()
+    async def terralogic_prepare_case_from_listing(
+        url: str,
+        case_id: str | None = None,
+        margin_m: int = 1000,
+        refresh_policy: Literal["never", "if_stale", "always"] = "if_stale",
+    ) -> ToolResult[PrepareCaseFromListingResult]:
+        """Resolve a real-estate listing URL and collect the parcel case.
+
+        Use this tool when the user provides a link to a real-estate
+        listing (Avito is the currently supported source) instead of a
+        cadastral number. The parcel-resolver contour scrapes the listing,
+        reads the seller-placed map pin, finds the EGRN land plots at that
+        point, and then the standard collection and analytics pipeline runs
+        for the resolved cadastral number — exactly as in
+        ``terralogic_prepare_case``. Afterwards call
+        ``terralogic_prepare_quickreport`` with the returned ``case_id``.
+        Always relay ``resolution.warnings`` to the user: the pin is placed
+        by the seller and may be approximate, and the declared area may
+        differ from the registry one. When resolution fails
+        (``listing_resolution_failed``), ask the user for a Telegram
+        geolocation or the cadastral number itself.
+
+        Args:
+            url: Full listing URL, for example
+                ``https://www.avito.ru/domodedovo/zemelnye_uchastki/uchastok_10_sot._izhs_8110049401``.
+            case_id: Optional stable CaseStore identifier; derived from the
+                resolved cadastral number when omitted.
+            margin_m: Metres added to the parcel minimum enclosing radius.
+            refresh_policy: Same semantics as in ``terralogic_prepare_case``.
+        """
+
+        try:
+            data = await service.prepare_case_from_listing(
+                url,
+                case_id=case_id,
+                margin_m=margin_m,
+                refresh_policy=refresh_policy,
+            )
+        except Exception as exc:  # noqa: BLE001 - MCP application boundary
+            return ToolResult[PrepareCaseFromListingResult](
+                ok=False,
+                error=_tool_failure(exc),
+            )
+        return ToolResult[PrepareCaseFromListingResult](ok=True, data=data)
 
     @server.tool()
     async def terralogic_prepare_quickreport(
@@ -421,6 +490,13 @@ def _build_parser() -> argparse.ArgumentParser:
             "query); without it the document contour stops after sync"
         ),
     )
+    parser.add_argument(
+        "--parcel-resolver-url",
+        help=(
+            "Optional parcel-resolver-mcp URL (listing contour: resolution "
+            "of real-estate listing URLs to cadastral numbers)"
+        ),
+    )
     parser.add_argument("--stateful-http", action="store_true")
     parser.add_argument("--sse-response", action="store_true")
     return parser
@@ -438,6 +514,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             dgis_url=args.dgis_url,
             rgis_url=args.rgis_url,
             geodocs_url=args.geodocs_url,
+            parcel_resolver_url=args.parcel_resolver_url,
         )
         server = create_mcp_server(
             service,

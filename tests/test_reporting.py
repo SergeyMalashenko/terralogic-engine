@@ -271,3 +271,124 @@ async def test_prepare_case_source_not_found_raises_parcel_not_found(tmp_path) -
     with pytest.raises(CasePreparationError) as exc_info:
         await service.prepare_case("50:21:0030210:123")
     assert not isinstance(exc_info.value, ParcelNotFoundError)
+
+
+class _FakeParcelResolver:
+    def __init__(self, envelope: dict) -> None:
+        self.envelope = envelope
+        self.urls: list[str] = []
+
+    async def resolve_cadastral_number(self, url: str) -> dict:
+        self.urls.append(url)
+        return dict(self.envelope)
+
+
+_RESOLVED_ENVELOPE = {
+    "ok": True,
+    "data": {
+        "listing": {
+            "listing_id": 8110049401,
+            "title": "Участок 10 сот. (ИЖС)",
+            "address": "Московская обл., Домодедово, мкр-н Барыбино",
+            "price": 900000.0,
+            "latitude": 55.265,
+            "longitude": 37.885,
+        },
+        "cadastral_number": "50:28:0040126:62",
+        "warnings": ["area_mismatch: ..."],
+    },
+    "error": None,
+}
+
+
+async def test_prepare_case_from_listing_requires_resolver(tmp_path) -> None:
+    """Без подключённого контура резолюции — понятная ListingResolutionError."""
+    from terralogic_engine.reporting.service import ListingResolutionError
+
+    store = LocalCaseStore(tmp_path / "store")
+    service = ReportingService(store=store, acquisition=object())
+    with pytest.raises(ListingResolutionError, match="not configured"):
+        await service.prepare_case_from_listing("https://www.avito.ru/x_1")
+
+
+async def test_prepare_case_from_listing_no_candidates(tmp_path) -> None:
+    """Резолвер вернул пустой cadastral_number — ошибка с warnings резолюции."""
+    from terralogic_engine.reporting.service import ListingResolutionError
+
+    envelope = {
+        "ok": True,
+        "data": {
+            "listing": {"listing_id": 1},
+            "cadastral_number": None,
+            "warnings": ["no_landplots_at_coordinates: ..."],
+        },
+        "error": None,
+    }
+    store = LocalCaseStore(tmp_path / "store")
+    service = ReportingService(
+        store=store,
+        acquisition=object(),
+        parcel_resolver=_FakeParcelResolver(envelope),
+    )
+    with pytest.raises(ListingResolutionError, match="no_landplots_at_coordinates"):
+        await service.prepare_case_from_listing("https://www.avito.ru/x_1")
+
+
+async def test_prepare_case_from_listing_happy_path(tmp_path) -> None:
+    """Успешная резолюция делегирует в обычный prepare_case с найденным КН."""
+    from terralogic_engine.reporting.models import PrepareCaseResult
+
+    store = LocalCaseStore(tmp_path / "store")
+    resolver = _FakeParcelResolver(_RESOLVED_ENVELOPE)
+    service = ReportingService(
+        store=store,
+        acquisition=object(),
+        parcel_resolver=resolver,
+    )
+
+    captured: dict = {}
+
+    async def _fake_prepare_case(cadastral_number: str, **kwargs):
+        captured["cadastral_number"] = cadastral_number
+        captured.update(kwargs)
+        return PrepareCaseResult(
+            case_id="case-50-28-0040126-62",
+            collection_run_id="run-1",
+            collection_status="complete",
+            analysis_id="analysis-1",
+        )
+
+    service.prepare_case = _fake_prepare_case  # type: ignore[method-assign]
+
+    result = await service.prepare_case_from_listing(
+        "https://www.avito.ru/domodedovo/zemelnye_uchastki/x_8110049401",
+        refresh_policy="always",
+    )
+
+    assert resolver.urls == [
+        "https://www.avito.ru/domodedovo/zemelnye_uchastki/x_8110049401"
+    ]
+    assert captured["cadastral_number"] == "50:28:0040126:62"
+    assert captured["refresh_policy"] == "always"
+    assert result.resolution.cadastral_number == "50:28:0040126:62"
+    assert result.resolution.listing_id == 8110049401
+    assert result.resolution.warnings == ["area_mismatch: ..."]
+    assert result.case.case_id == "case-50-28-0040126-62"
+
+
+async def test_prepare_case_from_listing_transport_failure(tmp_path) -> None:
+    """Сбой вызова резолвера оборачивается в ListingResolutionError."""
+    from terralogic_engine.reporting.service import ListingResolutionError
+
+    class _BrokenResolver:
+        async def resolve_cadastral_number(self, url: str) -> dict:
+            raise ConnectionError("parcel-resolver-mcp is down")
+
+    store = LocalCaseStore(tmp_path / "store")
+    service = ReportingService(
+        store=store,
+        acquisition=object(),
+        parcel_resolver=_BrokenResolver(),
+    )
+    with pytest.raises(ListingResolutionError, match="parcel-resolver-mcp is down"):
+        await service.prepare_case_from_listing("https://www.avito.ru/x_1")

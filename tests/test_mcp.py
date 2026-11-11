@@ -62,6 +62,7 @@ def test_mcp_registers_case_and_quickreport_tools(
 
     assert list(server.tools) == [
         "terralogic_prepare_case",
+        "terralogic_prepare_case_from_listing",
         "terralogic_prepare_quickreport",
         "terralogic_get_report_pdf",
         "terralogic_submit_feedback",
@@ -110,6 +111,7 @@ async def test_real_streamable_http_lists_two_tools(tmp_path) -> None:
     assert listed.status_code == 200
     assert [tool["name"] for tool in listed.json()["result"]["tools"]] == [
         "terralogic_prepare_case",
+        "terralogic_prepare_case_from_listing",
         "terralogic_prepare_quickreport",
         "terralogic_get_report_pdf",
         "terralogic_submit_feedback",
@@ -288,3 +290,85 @@ async def test_mcp_submit_feedback_rejects_invalid_input(
     assert not bad_cadastral.ok
     assert bad_cadastral.error is not None
     assert bad_cadastral.error.code == "invalid_request"
+
+
+async def test_mcp_prepare_case_from_listing_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Без --parcel-resolver-url инструмент отвечает стабильной ошибкой."""
+    monkeypatch.setattr(
+        "terralogic_engine.mcp._load_mcp_server_class",
+        lambda: FakeFastMCP,
+    )
+    server = create_mcp_server(_service(tmp_path))
+
+    result = await server.tools["terralogic_prepare_case_from_listing"](
+        "https://www.avito.ru/domodedovo/zemelnye_uchastki/x_8110049401"
+    )
+
+    assert not result.ok
+    assert result.error is not None
+    assert result.error.code == "listing_resolution_failed"
+    assert "not configured" in result.error.message
+
+
+async def test_mcp_prepare_case_from_listing_happy_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Ссылка → резолюция → обычный prepare_case; warnings резолюции видны."""
+    from terralogic_engine.reporting.models import PrepareCaseResult
+
+    monkeypatch.setattr(
+        "terralogic_engine.mcp._load_mcp_server_class",
+        lambda: FakeFastMCP,
+    )
+
+    class _FakeResolver:
+        async def resolve_cadastral_number(self, url: str) -> dict:
+            return {
+                "ok": True,
+                "data": {
+                    "listing": {
+                        "listing_id": 8110049401,
+                        "title": "Участок 10 сот. (ИЖС)",
+                        "latitude": 55.265,
+                        "longitude": 37.885,
+                    },
+                    "cadastral_number": "52:26:0040002:3823",
+                    "warnings": ["area_mismatch: ..."],
+                },
+                "error": None,
+            }
+
+    store = LocalCaseStore(tmp_path / "store")
+    service = ReportingService(
+        store=store,
+        acquisition=AcquisitionPipeline(
+            store=store,
+            nspd=FakeNspdClient(),
+            osm=FakeOsmClient(),
+            dgis=FakeDgisClient(),
+        ),
+        parcel_resolver=_FakeResolver(),
+    )
+    server = create_mcp_server(service)
+
+    result = await server.tools["terralogic_prepare_case_from_listing"](
+        "https://www.avito.ru/domodedovo/zemelnye_uchastki/x_8110049401",
+        refresh_policy="always",
+    )
+
+    assert result.ok, result.error
+    assert result.data is not None
+    assert result.data.resolution.cadastral_number == "52:26:0040002:3823"
+    assert result.data.resolution.warnings == ["area_mismatch: ..."]
+    assert isinstance(result.data.case, PrepareCaseResult)
+    assert result.data.case.case_id
+
+    quick = await server.tools["terralogic_prepare_quickreport"](
+        result.data.case.case_id,
+        result.data.case.collection_run_id,
+    )
+    assert quick.ok

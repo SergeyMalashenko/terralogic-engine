@@ -362,6 +362,28 @@ class PrepareCaseResult(BaseModel):
     collection: CollectionSummary | None = None
 
 
+class ListingResolution(BaseModel):
+    """Outcome of resolving a real-estate listing URL to a cadastral number."""
+
+    source: str = "avito"
+    url: str
+    cadastral_number: str
+    listing_id: int | None = None
+    title: str | None = None
+    address: str | None = None
+    price: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class PrepareCaseFromListingResult(BaseModel):
+    """Case collection result extended with the listing resolution context."""
+
+    resolution: ListingResolution
+    case: PrepareCaseResult
+
+
 class GeneratedReport(BaseModel):
     """One persisted Markdown report tied to source and analytics versions."""
 

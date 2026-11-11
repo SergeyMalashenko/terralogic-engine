@@ -337,6 +337,7 @@ class McpNspdDocumentsClient:
         )
         return _checked_tool_result("nspd_sync_parcel_documents", envelope)
 
+
 # Должен перекрывать timeout_seconds исполнителя агентного яруса geodocs
 # (agents.yaml: hermes 5400 c) — иначе клиент сдаётся раньше сервера.
 DEFAULT_GEODOCS_READ_TIMEOUT_SECONDS = 6000.0
@@ -402,3 +403,40 @@ class McpGeodocsClient:
         if response_schema is not None:
             arguments["response_schema"] = dict(response_schema)
         return await self.transport.call_tool("query_documents", arguments)
+
+
+# Прогон актора Apify внутри parcel-resolver-mcp занимает секунды, но при
+# холодном старте контейнера может идти до таймаута сервиса (180 с).
+DEFAULT_PARCEL_RESOLVER_READ_TIMEOUT_SECONDS = 300.0
+
+
+class McpParcelResolverClient:
+    """Map the parcel-resolver listing contour to the application boundary.
+
+    The parcel-resolver tools answer with ok/data/error envelopes, so the
+    results pass the same tool-envelope check as the document contours.
+    """
+
+    def __init__(
+        self,
+        transport: McpToolTransport | None = None,
+        *,
+        url: str | None = None,
+        read_timeout_seconds: float = (DEFAULT_PARCEL_RESOLVER_READ_TIMEOUT_SECONDS),
+    ) -> None:
+        if transport is None:
+            if url is None:
+                raise ValueError(
+                    "McpParcelResolverClient requires a transport or a url"
+                )
+            transport = StreamableHttpMcpTransport(
+                url, read_timeout_seconds=read_timeout_seconds
+            )
+        self.transport = transport
+
+    async def resolve_cadastral_number(self, url: str) -> dict[str, Any]:
+        envelope = await self.transport.call_tool(
+            "parcel_resolve_cadastral_number",
+            {"url": url},
+        )
+        return _checked_tool_result("parcel_resolve_cadastral_number", envelope)

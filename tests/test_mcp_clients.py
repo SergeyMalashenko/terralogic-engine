@@ -219,3 +219,35 @@ def test_geodocs_client_builds_transport_with_long_read_timeout() -> None:
 def test_geodocs_client_requires_transport_or_url() -> None:
     with pytest.raises(ValueError, match="transport or a url"):
         McpGeodocsClient()
+
+
+async def test_parcel_resolver_client_calls_resolve_tool() -> None:
+    from terralogic_engine.acquisition.clients.mcp import (
+        McpParcelResolverClient,
+    )
+
+    transport = RecordingTransport()
+    client = McpParcelResolverClient(transport)
+
+    result = await client.resolve_cadastral_number(
+        "https://www.avito.ru/domodedovo/zemelnye_uchastki/x_8110049401"
+    )
+
+    assert transport.calls == [
+        (
+            "parcel_resolve_cadastral_number",
+            {"url": "https://www.avito.ru/domodedovo/zemelnye_uchastki/x_8110049401"},
+        )
+    ]
+    assert result["ok"] is True
+
+
+async def test_parcel_resolver_client_maps_envelope_error() -> None:
+    from terralogic_engine.acquisition.clients.mcp import (
+        McpParcelResolverClient,
+    )
+
+    client = McpParcelResolverClient(FailingTransport())
+
+    with pytest.raises(McpToolError, match="access_blocked"):
+        await client.resolve_cadastral_number("https://www.avito.ru/x_1")

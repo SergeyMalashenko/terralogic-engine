@@ -119,3 +119,14 @@ class GeodocsClient(Protocol):
         *,
         response_schema: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]: ...
+
+
+class ParcelResolverClient(Protocol):
+    """Resolve a real-estate listing URL to EGRN cadastral candidates.
+
+    Implemented by the parcel-resolver contour (parcel-resolver-mcp):
+    scrape the listing, read the seller-placed map pin, and locate EGRN
+    land plots at that point.
+    """
+
+    async def resolve_cadastral_number(self, url: str) -> Mapping[str, Any]: ...
