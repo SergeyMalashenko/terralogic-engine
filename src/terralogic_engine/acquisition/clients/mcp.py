@@ -410,11 +410,18 @@ class McpGeodocsClient:
 DEFAULT_PARCEL_RESOLVER_READ_TIMEOUT_SECONDS = 300.0
 
 
+class ParcelResolverUnavailable(McpToolError):
+    """Retryable сбой контура резолюции (антибот/таймаут апстрима)."""
+
+
 class McpParcelResolverClient:
     """Map the parcel-resolver listing contour to the application boundary.
 
-    The parcel-resolver tools answer with ok/data/error envelopes, so the
-    results pass the same tool-envelope check as the document contours.
+    Retryable upstream failures (Avito anti-bot stub after all retries,
+    transport timeouts) raise :class:`ParcelResolverUnavailable` so the
+    application layer can report a temporary outage instead of a
+    definitive «not resolvable» verdict; all other envelope errors raise
+    the common :class:`McpToolError`.
     """
 
     def __init__(
@@ -439,4 +446,21 @@ class McpParcelResolverClient:
             "parcel_resolve_cadastral_number",
             {"url": url},
         )
-        return _checked_tool_result("parcel_resolve_cadastral_number", envelope)
+        result = dict(envelope)
+        if result.get("ok") is not True:
+            error = result.get("error")
+            if isinstance(error, Mapping):
+                code = error.get("code", "tool_error")
+                message = error.get("message", "unknown error")
+                if error.get("retryable"):
+                    raise ParcelResolverUnavailable(
+                        "parcel_resolve_cadastral_number temporarily "
+                        f"failed: {code}: {message}"
+                    )
+                raise McpToolError(
+                    f"parcel_resolve_cadastral_number failed: {code}: {message}"
+                )
+            raise McpToolError(
+                "parcel_resolve_cadastral_number failed: ok != True"
+            )
+        return result

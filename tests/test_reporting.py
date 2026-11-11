@@ -392,3 +392,30 @@ async def test_prepare_case_from_listing_transport_failure(tmp_path) -> None:
     )
     with pytest.raises(ListingResolutionError, match="parcel-resolver-mcp is down"):
         await service.prepare_case_from_listing("https://www.avito.ru/x_1")
+
+
+async def test_prepare_case_from_listing_unavailable_is_preparation_error(
+    tmp_path,
+) -> None:
+    """Retryable сбой резолвера → CasePreparationError (не ListingResolution)."""
+    from terralogic_engine.acquisition.clients.mcp import (
+        ParcelResolverUnavailable,
+    )
+    from terralogic_engine.reporting.service import (
+        CasePreparationError,
+        ListingResolutionError,
+    )
+
+    class _UnavailableResolver:
+        async def resolve_cadastral_number(self, url: str) -> dict:
+            raise ParcelResolverUnavailable("anti-bot stub")
+
+    store = LocalCaseStore(tmp_path / "store")
+    service = ReportingService(
+        store=store,
+        acquisition=object(),
+        parcel_resolver=_UnavailableResolver(),
+    )
+    with pytest.raises(CasePreparationError) as exc_info:
+        await service.prepare_case_from_listing("https://www.avito.ru/x_1")
+    assert not isinstance(exc_info.value, ListingResolutionError)

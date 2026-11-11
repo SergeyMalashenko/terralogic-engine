@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from terralogic_engine.acquisition.clients import ParcelResolverClient
+from terralogic_engine.acquisition.clients.mcp import ParcelResolverUnavailable
 from terralogic_engine.acquisition.pipeline import AcquisitionPipeline
 from terralogic_engine.analytics.pipeline import AnalysisPipeline
 from terralogic_engine.domain.models import (
@@ -197,6 +198,12 @@ class ReportingService:
             )
         try:
             envelope = await self._parcel_resolver.resolve_cadastral_number(url)
+        except ParcelResolverUnavailable as exc:
+            # Временный сбой апстрима (антибот после всех retry, таймаут) —
+            # это не «участок не определён», а повторяемая недоступность.
+            raise CasePreparationError(
+                f"Parcel resolver temporarily unavailable: {exc}"
+            ) from exc
         except Exception as exc:
             raise ListingResolutionError(f"Parcel resolver call failed: {exc}") from exc
         data = dict(envelope.get("data") or {})

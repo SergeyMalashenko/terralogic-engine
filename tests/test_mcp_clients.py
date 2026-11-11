@@ -251,3 +251,48 @@ async def test_parcel_resolver_client_maps_envelope_error() -> None:
 
     with pytest.raises(McpToolError, match="access_blocked"):
         await client.resolve_cadastral_number("https://www.avito.ru/x_1")
+
+
+async def test_parcel_resolver_retryable_error_maps_to_unavailable() -> None:
+    from terralogic_engine.acquisition.clients.mcp import (
+        McpParcelResolverClient,
+        ParcelResolverUnavailable,
+    )
+
+    class _RetryableTransport:
+        async def call_tool(self, name, arguments):
+            return {
+                "ok": False,
+                "data": None,
+                "error": {
+                    "code": "apify_upstream_error",
+                    "message": "empty extraction after 3 attempts",
+                    "retryable": True,
+                },
+            }
+
+    client = McpParcelResolverClient(_RetryableTransport())
+    with pytest.raises(ParcelResolverUnavailable):
+        await client.resolve_cadastral_number("https://www.avito.ru/x_1")
+
+
+async def test_parcel_resolver_final_error_stays_tool_error() -> None:
+    from terralogic_engine.acquisition.clients.mcp import (
+        McpParcelResolverClient,
+    )
+
+    class _FinalTransport:
+        async def call_tool(self, name, arguments):
+            return {
+                "ok": False,
+                "data": None,
+                "error": {
+                    "code": "missing_coordinates",
+                    "message": "no map pin",
+                    "retryable": False,
+                },
+            }
+
+    client = McpParcelResolverClient(_FinalTransport())
+    with pytest.raises(McpToolError, match="missing_coordinates"):
+        await client.resolve_cadastral_number("https://www.avito.ru/x_1")
