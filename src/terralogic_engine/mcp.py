@@ -47,6 +47,8 @@ DEFAULT_INSTRUCTIONS = (
     "use terralogic_prepare_case_from_listing: it resolves the URL to a "
     "cadastral number through the parcel-resolver contour and then runs the "
     "same collection; always relay the resolution warnings to the user. "
+    "When the user provides raw map coordinates as 'latitude, longitude' "
+    "(the Yandex Maps copy format), use terralogic_prepare_case_at_coords. "
     "It collects NSPD, OSM, and 2GIS data plus RGIS MO and the document "
     "contour (PZZ documents, permitted-use tables, ZOUIT regimes) when "
     "configured and applicable, performs deterministic spatial "
@@ -336,6 +338,49 @@ def create_mcp_server(
         try:
             data = await service.prepare_case_from_listing(
                 url,
+                case_id=case_id,
+                margin_m=margin_m,
+                refresh_policy=refresh_policy,
+            )
+        except Exception as exc:  # noqa: BLE001 - MCP application boundary
+            return ToolResult[PrepareCaseFromListingResult](
+                ok=False,
+                error=_tool_failure(exc),
+            )
+        return ToolResult[PrepareCaseFromListingResult](ok=True, data=data)
+
+    @server.tool()
+    async def terralogic_prepare_case_at_coords(
+        coordinates: str,
+        case_id: str | None = None,
+        margin_m: int = 1000,
+        refresh_policy: Literal["never", "if_stale", "always"] = "if_stale",
+    ) -> ToolResult[PrepareCaseFromListingResult]:
+        """Resolve raw map coordinates and collect the parcel case.
+
+        Use this tool when the user provides WGS84 coordinates as
+        ``'latitude, longitude'`` (the format Yandex Maps copies, e.g.
+        ``'55.488626, 38.009447'``) instead of a cadastral number or a
+        listing link. The parcel-resolver contour checks the point against
+        EGRN land plots (no scraping involved), and then the standard
+        collection and analytics pipeline runs for the resolved cadastral
+        number — exactly as in ``terralogic_prepare_case``. Afterwards call
+        ``terralogic_prepare_quickreport`` with the returned ``case_id``.
+        When resolution fails (``listing_resolution_failed``), the error
+        ``details.nearby`` lists registered plots around the point — relay
+        them and ask the user for the cadastral number itself.
+
+        Args:
+            coordinates: WGS84 point as ``'latitude, longitude'``.
+            case_id: Optional stable CaseStore identifier; derived from the
+                resolved cadastral number when omitted.
+            margin_m: Metres added to the parcel minimum enclosing radius.
+            refresh_policy: Same semantics as in ``terralogic_prepare_case``.
+        """
+
+        try:
+            data = await service.prepare_case_at_coords(
+                coordinates,
                 case_id=case_id,
                 margin_m=margin_m,
                 refresh_policy=refresh_policy,

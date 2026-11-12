@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -202,41 +202,14 @@ class ReportingService:
         Предупреждения резолюции (неточный пин, расхождение площади, статус
         участка) возвращаются вызывающей стороне как часть результата.
         """
-        if self._parcel_resolver is None:
-            raise ListingResolutionError(
-                "The parcel resolver contour is not configured; "
-                "start terralogic-mcp with --parcel-resolver-url"
-            )
-        try:
-            envelope = await self._parcel_resolver.resolve_cadastral_number(url)
-        except ParcelResolverUnavailable as exc:
-            # Временный сбой апстрима (антибот после всех retry, таймаут) —
-            # это не «участок не определён», а повторяемая недоступность.
-            raise CasePreparationError(
-                f"Parcel resolver temporarily unavailable: {exc}"
-            ) from exc
-        except Exception as exc:
-            raise ListingResolutionError(f"Parcel resolver call failed: {exc}") from exc
+        resolver = self._require_parcel_resolver()
+        envelope = await self._resolve_envelope(resolver.resolve_cadastral_number(url))
         data = dict(envelope.get("data") or {})
         cadastral_number = data.get("cadastral_number")
         warnings = [str(item) for item in data.get("warnings") or []]
         listing = dict(data.get("listing") or {})
         if not cadastral_number:
-            details = "; ".join(warnings) or "no cadastral candidates returned"
-            nearby = [
-                {
-                    "cadastral_number": str(item.get("cadastral_number")),
-                    "distance_m": item.get("distance_m"),
-                    "area_m2": item.get("area_m2"),
-                }
-                for item in data.get("nearby_parcels") or []
-                if isinstance(item, dict) and item.get("cadastral_number")
-            ]
-            raise ListingResolutionError(
-                "The listing URL could not be resolved to a cadastral "
-                f"number: {details}",
-                nearby=nearby,
-            )
+            raise self._unresolved_error(data, warnings, "listing URL")
         case = await self.prepare_case(
             cadastral_number,
             case_id=case_id,
@@ -256,6 +229,90 @@ class ReportingService:
                 warnings=warnings,
             ),
             case=case,
+        )
+
+    async def prepare_case_at_coords(
+        self,
+        coordinates: str,
+        *,
+        case_id: str | None = None,
+        margin_m: int = 1000,
+        refresh_policy: RefreshPolicy = "if_stale",
+    ) -> PrepareCaseFromListingResult:
+        """Resolve raw map coordinates to a cadastral number, then collect.
+
+        Тот же контур parcel-resolver, что и для ссылок на объявления, но
+        без скрейпинга: координаты в формате «55.488626, 38.009447»
+        (копипаста Яндекс Карт) напрямую проверяются по ЕГРН. Пустая
+        точка — честный отказ со списком участков рядом (nearby).
+        """
+        resolver = self._require_parcel_resolver()
+        envelope = await self._resolve_envelope(
+            resolver.resolve_cadastral_number_at_coords(coordinates)
+        )
+        data = dict(envelope.get("data") or {})
+        cadastral_number = data.get("cadastral_number")
+        warnings = [str(item) for item in data.get("warnings") or []]
+        if not cadastral_number:
+            raise self._unresolved_error(data, warnings, "coordinates")
+        case = await self.prepare_case(
+            cadastral_number,
+            case_id=case_id,
+            margin_m=margin_m,
+            refresh_policy=refresh_policy,
+        )
+        return PrepareCaseFromListingResult(
+            resolution=ListingResolution(
+                source="coordinates",
+                url=coordinates,
+                cadastral_number=cadastral_number,
+                latitude=data.get("latitude"),
+                longitude=data.get("longitude"),
+                warnings=warnings,
+            ),
+            case=case,
+        )
+
+    def _require_parcel_resolver(self) -> ParcelResolverClient:
+        if self._parcel_resolver is None:
+            raise ListingResolutionError(
+                "The parcel resolver contour is not configured; "
+                "start terralogic-mcp with --parcel-resolver-url"
+            )
+        return self._parcel_resolver
+
+    @staticmethod
+    async def _resolve_envelope(call: Any) -> Mapping[str, Any]:
+        try:
+            return await call
+        except ParcelResolverUnavailable as exc:
+            # Временный сбой апстрима (антибот после всех retry, таймаут) —
+            # это не «участок не определён», а повторяемая недоступность.
+            raise CasePreparationError(
+                f"Parcel resolver temporarily unavailable: {exc}"
+            ) from exc
+        except Exception as exc:
+            raise ListingResolutionError(f"Parcel resolver call failed: {exc}") from exc
+
+    @staticmethod
+    def _unresolved_error(
+        data: Mapping[str, Any],
+        warnings: list[str],
+        subject: str,
+    ) -> ListingResolutionError:
+        details = "; ".join(warnings) or "no cadastral candidates returned"
+        nearby = [
+            {
+                "cadastral_number": str(item.get("cadastral_number")),
+                "distance_m": item.get("distance_m"),
+                "area_m2": item.get("area_m2"),
+            }
+            for item in data.get("nearby_parcels") or []
+            if isinstance(item, dict) and item.get("cadastral_number")
+        ]
+        return ListingResolutionError(
+            f"The {subject} could not be resolved to a cadastral number: {details}",
+            nearby=nearby,
         )
 
     def get_report_context(

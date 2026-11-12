@@ -277,9 +277,14 @@ class _FakeParcelResolver:
     def __init__(self, envelope: dict) -> None:
         self.envelope = envelope
         self.urls: list[str] = []
+        self.coords: list[str] = []
 
     async def resolve_cadastral_number(self, url: str) -> dict:
         self.urls.append(url)
+        return dict(self.envelope)
+
+    async def resolve_cadastral_number_at_coords(self, coordinates: str) -> dict:
+        self.coords.append(coordinates)
         return dict(self.envelope)
 
 
@@ -374,6 +379,104 @@ async def test_prepare_case_from_listing_happy_path(tmp_path) -> None:
     assert result.resolution.listing_id == 8110049401
     assert result.resolution.warnings == ["area_mismatch: ..."]
     assert result.case.case_id == "case-50-28-0040126-62"
+
+
+async def test_prepare_case_at_coords_requires_resolver(tmp_path) -> None:
+    """Без подключённого контура резолюции — понятная ListingResolutionError."""
+    from terralogic_engine.reporting.service import ListingResolutionError
+
+    store = LocalCaseStore(tmp_path / "store")
+    service = ReportingService(store=store, acquisition=object())
+    with pytest.raises(ListingResolutionError, match="not configured"):
+        await service.prepare_case_at_coords("55.488626, 38.009447")
+
+
+async def test_prepare_case_at_coords_no_candidates_nearby(tmp_path) -> None:
+    """Пустая точка: ошибка с warnings и nearby-участками в details."""
+    from terralogic_engine.reporting.service import ListingResolutionError
+
+    envelope = {
+        "ok": True,
+        "data": {
+            "latitude": 55.488626,
+            "longitude": 38.009447,
+            "cadastral_number": None,
+            "warnings": ["no_landplots_at_coordinates: ..."],
+            "nearby_parcels": [
+                {
+                    "cadastral_number": "50:23:0000000:120934",
+                    "distance_m": 100.0,
+                    "area_m2": 900.0,
+                }
+            ],
+        },
+        "error": None,
+    }
+    store = LocalCaseStore(tmp_path / "store")
+    service = ReportingService(
+        store=store,
+        acquisition=object(),
+        parcel_resolver=_FakeParcelResolver(envelope),
+    )
+    with pytest.raises(ListingResolutionError, match="no_landplots") as excinfo:
+        await service.prepare_case_at_coords("55.488626, 38.009447")
+    assert excinfo.value.nearby == [
+        {
+            "cadastral_number": "50:23:0000000:120934",
+            "distance_m": 100.0,
+            "area_m2": 900.0,
+        }
+    ]
+
+
+async def test_prepare_case_at_coords_happy_path(tmp_path) -> None:
+    """Успешная резолюция координат делегирует в prepare_case с найденным КН."""
+    from terralogic_engine.reporting.models import PrepareCaseResult
+
+    envelope = {
+        "ok": True,
+        "data": {
+            "latitude": 55.488626,
+            "longitude": 38.009447,
+            "cadastral_number": "50:23:0000000:120934",
+            "parcels": [{"cadastral_number": "50:23:0000000:120934"}],
+            "nearby_parcels": [],
+            "warnings": [],
+        },
+        "error": None,
+    }
+    store = LocalCaseStore(tmp_path / "store")
+    resolver = _FakeParcelResolver(envelope)
+    service = ReportingService(
+        store=store,
+        acquisition=object(),
+        parcel_resolver=resolver,
+    )
+
+    captured: dict = {}
+
+    async def _fake_prepare_case(cadastral_number: str, **kwargs):
+        captured["cadastral_number"] = cadastral_number
+        captured.update(kwargs)
+        return PrepareCaseResult(
+            case_id="case-50-23-0000000-120934",
+            collection_run_id="run-1",
+            collection_status="complete",
+            analysis_id="analysis-1",
+        )
+
+    service.prepare_case = _fake_prepare_case  # type: ignore[method-assign]
+
+    result = await service.prepare_case_at_coords("55.488626, 38.009447")
+
+    assert resolver.coords == ["55.488626, 38.009447"]
+    assert captured["cadastral_number"] == "50:23:0000000:120934"
+    assert result.resolution.cadastral_number == "50:23:0000000:120934"
+    assert result.resolution.source == "coordinates"
+    assert result.resolution.url == "55.488626, 38.009447"
+    assert result.resolution.latitude == 55.488626
+    assert result.resolution.longitude == 38.009447
+    assert result.case.case_id == "case-50-23-0000000-120934"
 
 
 async def test_prepare_case_from_listing_transport_failure(tmp_path) -> None:

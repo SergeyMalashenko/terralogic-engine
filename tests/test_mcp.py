@@ -63,6 +63,7 @@ def test_mcp_registers_case_and_quickreport_tools(
     assert list(server.tools) == [
         "terralogic_prepare_case",
         "terralogic_prepare_case_from_listing",
+        "terralogic_prepare_case_at_coords",
         "terralogic_prepare_quickreport",
         "terralogic_get_report_pdf",
         "terralogic_submit_feedback",
@@ -112,6 +113,7 @@ async def test_real_streamable_http_lists_two_tools(tmp_path) -> None:
     assert [tool["name"] for tool in listed.json()["result"]["tools"]] == [
         "terralogic_prepare_case",
         "terralogic_prepare_case_from_listing",
+        "terralogic_prepare_case_at_coords",
         "terralogic_prepare_quickreport",
         "terralogic_get_report_pdf",
         "terralogic_submit_feedback",

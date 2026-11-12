@@ -446,21 +446,37 @@ class McpParcelResolverClient:
             "parcel_resolve_cadastral_number",
             {"url": url},
         )
-        result = dict(envelope)
-        if result.get("ok") is not True:
-            error = result.get("error")
-            if isinstance(error, Mapping):
-                code = error.get("code", "tool_error")
-                message = error.get("message", "unknown error")
-                if error.get("retryable"):
-                    raise ParcelResolverUnavailable(
-                        "parcel_resolve_cadastral_number temporarily "
-                        f"failed: {code}: {message}"
-                    )
-                raise McpToolError(
-                    f"parcel_resolve_cadastral_number failed: {code}: {message}"
+        return _checked_parcel_envelope(
+            envelope, "parcel_resolve_cadastral_number"
+        )
+
+    async def resolve_cadastral_number_at_coords(
+        self, coordinates: str
+    ) -> dict[str, Any]:
+        envelope = await self.transport.call_tool(
+            "parcel_resolve_cadastral_number_at_coords",
+            {"coordinates": coordinates},
+        )
+        return _checked_parcel_envelope(
+            envelope, "parcel_resolve_cadastral_number_at_coords"
+        )
+
+
+def _checked_parcel_envelope(
+    envelope: Mapping[str, Any], tool_name: str
+) -> dict[str, Any]:
+    """Разворачивает конверт ToolResult; retryable → ParcelResolverUnavailable."""
+
+    result = dict(envelope)
+    if result.get("ok") is not True:
+        error = result.get("error")
+        if isinstance(error, Mapping):
+            code = error.get("code", "tool_error")
+            message = error.get("message", "unknown error")
+            if error.get("retryable"):
+                raise ParcelResolverUnavailable(
+                    f"{tool_name} temporarily failed: {code}: {message}"
                 )
-            raise McpToolError(
-                "parcel_resolve_cadastral_number failed: ok != True"
-            )
-        return result
+            raise McpToolError(f"{tool_name} failed: {code}: {message}")
+        raise McpToolError(f"{tool_name} failed: ok != True")
+    return result

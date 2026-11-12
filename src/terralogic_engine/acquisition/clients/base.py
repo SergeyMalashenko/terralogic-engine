@@ -130,3 +130,7 @@ class ParcelResolverClient(Protocol):
     """
 
     async def resolve_cadastral_number(self, url: str) -> Mapping[str, Any]: ...
+
+    async def resolve_cadastral_number_at_coords(
+        self, coordinates: str
+    ) -> Mapping[str, Any]: ...
