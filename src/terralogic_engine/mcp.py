@@ -72,6 +72,7 @@ class ToolError(BaseModel):
     code: str
     message: str
     retryable: bool = False
+    details: dict[str, Any] | None = None
 
 
 class ToolMetadata(BaseModel):
@@ -202,6 +203,7 @@ def _tool_failure(exc: Exception) -> ToolError:
             code="listing_resolution_failed",
             message=str(exc),
             retryable=False,
+            details={"nearby": exc.nearby} if exc.nearby else None,
         )
     if isinstance(exc, CaseNotCollectedError):
         return ToolError(code="not_collected", message=str(exc), retryable=False)

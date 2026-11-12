@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from terralogic_engine.acquisition.clients import ParcelResolverClient
 from terralogic_engine.acquisition.clients.mcp import ParcelResolverUnavailable
@@ -84,6 +85,16 @@ class ParcelNotFoundError(CasePreparationError):
 
 class ListingResolutionError(RuntimeError):
     """Контур parcel-resolver не смог выдать кадастровый номер по ссылке."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        nearby: list[dict[str, Any]] | None = None,
+    ) -> None:
+        super().__init__(message)
+        # Участки ЕГРН рядом с меткой объявления (для честного отказа бота).
+        self.nearby = nearby or []
 
 
 class ReportingService:
@@ -212,9 +223,19 @@ class ReportingService:
         listing = dict(data.get("listing") or {})
         if not cadastral_number:
             details = "; ".join(warnings) or "no cadastral candidates returned"
+            nearby = [
+                {
+                    "cadastral_number": str(item.get("cadastral_number")),
+                    "distance_m": item.get("distance_m"),
+                    "area_m2": item.get("area_m2"),
+                }
+                for item in data.get("nearby_parcels") or []
+                if isinstance(item, dict) and item.get("cadastral_number")
+            ]
             raise ListingResolutionError(
                 "The listing URL could not be resolved to a cadastral "
-                f"number: {details}"
+                f"number: {details}",
+                nearby=nearby,
             )
         case = await self.prepare_case(
             cadastral_number,
