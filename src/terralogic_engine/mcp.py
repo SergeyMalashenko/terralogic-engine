@@ -132,23 +132,33 @@ def _load_mcp_server_class() -> type[Any]:
     return FastMCP
 
 
-def _ctx_progress_bridge(ctx: Any) -> ProgressCallback | None:
+def _ctx_progress_bridge(ctx: Any) -> tuple[ProgressCallback | None, Any]:
     """Sync progress callback → FastMCP progress notifications.
 
-    Отправка уходит фоновыми задачами текущего event loop: и pipeline
-    (async), и quickreport (sync) вызывают коллбэк напрямую. Без
-    progressToken у клиента ``ctx.report_progress`` — no-op, поэтому
-    старые клиенты ничего не замечают.
+    События уходят задачами текущего event loop (pipeline async,
+    quickreport sync — оба вызывают коллбэк напрямую). Вторая часть
+    результата — ``drain``: инструмент обязан дождаться её перед
+    возвратом, иначе уведомления отправятся в уже закрытый стрим
+    (BrokenResourceError) после ответа. Без progressToken у клиента
+    ``ctx.report_progress`` — no-op, старые клиенты не затронуты.
     """
 
+    tasks: set[asyncio.Task] = set()
+
+    async def _drain() -> None:
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     if ctx is None:
-        return None
+        return None, _drain
     loop = asyncio.get_running_loop()
 
     def _progress(percent: float, stage: str) -> None:
-        loop.create_task(ctx.report_progress(percent, 100.0, stage))
+        task = loop.create_task(ctx.report_progress(percent, 100.0, stage))
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
 
-    return _progress
+    return _progress, _drain
 
 
 def create_reporting_service(
@@ -317,19 +327,22 @@ def create_mcp_server(
                 exists — safe read-only status queries).
         """
 
+        progress, drain_progress = _ctx_progress_bridge(ctx)
         try:
             data = await service.prepare_case(
                 cadastral_number,
                 case_id=case_id,
                 margin_m=margin_m,
                 refresh_policy=refresh_policy,
-                progress=_ctx_progress_bridge(ctx),
+                progress=progress,
             )
         except Exception as exc:  # noqa: BLE001 - MCP application boundary
+            await drain_progress()
             return ToolResult[PrepareCaseResult](
                 ok=False,
                 error=_tool_failure(exc),
             )
+        await drain_progress()
         return ToolResult[PrepareCaseResult](ok=True, data=data)
 
     @server.tool()
@@ -365,19 +378,22 @@ def create_mcp_server(
             refresh_policy: Same semantics as in ``terralogic_prepare_case``.
         """
 
+        progress, drain_progress = _ctx_progress_bridge(ctx)
         try:
             data = await service.prepare_case_from_listing(
                 url,
                 case_id=case_id,
                 margin_m=margin_m,
                 refresh_policy=refresh_policy,
-                progress=_ctx_progress_bridge(ctx),
+                progress=progress,
             )
         except Exception as exc:  # noqa: BLE001 - MCP application boundary
+            await drain_progress()
             return ToolResult[PrepareCaseFromListingResult](
                 ok=False,
                 error=_tool_failure(exc),
             )
+        await drain_progress()
         return ToolResult[PrepareCaseFromListingResult](ok=True, data=data)
 
     @server.tool()
@@ -410,19 +426,22 @@ def create_mcp_server(
             refresh_policy: Same semantics as in ``terralogic_prepare_case``.
         """
 
+        progress, drain_progress = _ctx_progress_bridge(ctx)
         try:
             data = await service.prepare_case_at_coords(
                 coordinates,
                 case_id=case_id,
                 margin_m=margin_m,
                 refresh_policy=refresh_policy,
-                progress=_ctx_progress_bridge(ctx),
+                progress=progress,
             )
         except Exception as exc:  # noqa: BLE001 - MCP application boundary
+            await drain_progress()
             return ToolResult[PrepareCaseFromListingResult](
                 ok=False,
                 error=_tool_failure(exc),
             )
+        await drain_progress()
         return ToolResult[PrepareCaseFromListingResult](ok=True, data=data)
 
     @server.tool()
@@ -446,17 +465,20 @@ def create_mcp_server(
                 latest completed collection run is selected.
         """
 
+        progress, drain_progress = _ctx_progress_bridge(ctx)
         try:
             data = service.prepare_quickreport(
                 case_id,
                 collection_run_id=collection_run_id,
-                progress=_ctx_progress_bridge(ctx),
+                progress=progress,
             )
         except Exception as exc:  # noqa: BLE001 - MCP application boundary
+            await drain_progress()
             return ToolResult[QuickReportResult](
                 ok=False,
                 error=_tool_failure(exc),
             )
+        await drain_progress()
         return ToolResult[QuickReportResult](ok=True, data=data)
 
     @server.tool()
