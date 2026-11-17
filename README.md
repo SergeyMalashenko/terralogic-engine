@@ -252,6 +252,7 @@ terralogic-mcp \
   --transport streamable-http \
   --host 127.0.0.1 \
   --port 8004 \
+  --sse-response \
   --store ~/TerraLogicX/case-store \
   --nspd-url http://127.0.0.1:8001/mcp \
   --osm-url http://127.0.0.1:8002/mcp \
@@ -259,6 +260,10 @@ terralogic-mcp \
   --rgis-url http://127.0.0.1:8005/mcp \
   --geodocs-url http://127.0.0.1:8006/mcp
 ```
+
+`--sse-response` включает SSE-ответы вместо одиночного JSON и обязателен
+для MCP progress-уведомлений длительных операций (в json_response-режиме
+транспорт их отбрасывает). Клиенты без progressToken разницы не замечают.
 
 It exposes exactly two high-level tools:
 
