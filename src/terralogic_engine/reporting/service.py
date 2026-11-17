@@ -17,6 +17,11 @@ from terralogic_engine.domain.models import (
     RefreshPolicy,
     ReportFeedback,
 )
+from terralogic_engine.progress import (
+    ProgressCallback,
+    report_progress,
+    scaled_progress,
+)
 from terralogic_engine.qa.critic import CriticExecutor
 from terralogic_engine.quickreport import (
     MarketingConfig,
@@ -145,6 +150,7 @@ class ReportingService:
         case_id: str | None = None,
         margin_m: int = 1000,
         refresh_policy: RefreshPolicy = "if_stale",
+        progress: ProgressCallback | None = None,
     ) -> PrepareCaseResult:
         normalized_case_id = case_id or (
             f"case-{cadastral_number.replace(':', '-').replace(' ', '')}"
@@ -156,7 +162,8 @@ class ReportingService:
                 refresh_policy=refresh_policy,
                 margin_m=margin_m,
                 allow_partial=True,
-            )
+            ),
+            progress=scaled_progress(progress, 0.0, 90.0),
         )
         if receipt.aoi_id is None:
             details = "; ".join(receipt.errors) or "collection produced no AOI"
@@ -165,6 +172,7 @@ class ReportingService:
             if any("not_found:" in error for error in receipt.errors):
                 raise ParcelNotFoundError(f"Parcel not found: {details}")
             raise CasePreparationError(f"Case preparation failed: {details}")
+        report_progress(progress, 95.0, "analysis")
         analysis = self.store.get_analysis_result(
             receipt.case_id,
             receipt.run_id,
@@ -174,6 +182,7 @@ class ReportingService:
                 receipt.case_id,
                 run_id=receipt.run_id,
             )
+        report_progress(progress, 100.0, "case_ready")
         return PrepareCaseResult(
             case_id=receipt.case_id,
             collection_run_id=receipt.run_id,
@@ -193,6 +202,7 @@ class ReportingService:
         case_id: str | None = None,
         margin_m: int = 1000,
         refresh_policy: RefreshPolicy = "if_stale",
+        progress: ProgressCallback | None = None,
     ) -> PrepareCaseFromListingResult:
         """Resolve a listing URL to a cadastral number, then collect the case.
 
@@ -203,6 +213,7 @@ class ReportingService:
         участка) возвращаются вызывающей стороне как часть результата.
         """
         resolver = self._require_parcel_resolver()
+        report_progress(progress, 3.0, "resolution_start")
         envelope = await self._resolve_envelope(resolver.resolve_cadastral_number(url))
         data = dict(envelope.get("data") or {})
         cadastral_number = data.get("cadastral_number")
@@ -210,11 +221,13 @@ class ReportingService:
         listing = dict(data.get("listing") or {})
         if not cadastral_number:
             raise self._unresolved_error(data, warnings, "listing URL")
+        report_progress(progress, 15.0, "resolution_done")
         case = await self.prepare_case(
             cadastral_number,
             case_id=case_id,
             margin_m=margin_m,
             refresh_policy=refresh_policy,
+            progress=scaled_progress(progress, 15.0, 100.0),
         )
         return PrepareCaseFromListingResult(
             resolution=ListingResolution(
@@ -238,6 +251,7 @@ class ReportingService:
         case_id: str | None = None,
         margin_m: int = 1000,
         refresh_policy: RefreshPolicy = "if_stale",
+        progress: ProgressCallback | None = None,
     ) -> PrepareCaseFromListingResult:
         """Resolve raw map coordinates to a cadastral number, then collect.
 
@@ -247,6 +261,7 @@ class ReportingService:
         точка — честный отказ со списком участков рядом (nearby).
         """
         resolver = self._require_parcel_resolver()
+        report_progress(progress, 3.0, "resolution_start")
         envelope = await self._resolve_envelope(
             resolver.resolve_cadastral_number_at_coords(coordinates)
         )
@@ -255,11 +270,13 @@ class ReportingService:
         warnings = [str(item) for item in data.get("warnings") or []]
         if not cadastral_number:
             raise self._unresolved_error(data, warnings, "coordinates")
+        report_progress(progress, 15.0, "resolution_done")
         case = await self.prepare_case(
             cadastral_number,
             case_id=case_id,
             margin_m=margin_m,
             refresh_policy=refresh_policy,
+            progress=scaled_progress(progress, 15.0, 100.0),
         )
         return PrepareCaseFromListingResult(
             resolution=ListingResolution(
@@ -356,6 +373,7 @@ class ReportingService:
         case_id: str,
         *,
         collection_run_id: str | None = None,
+        progress: ProgressCallback | None = None,
     ) -> QuickReportResult:
         """Build and persist the quick report for a case run.
 
@@ -372,6 +390,7 @@ class ReportingService:
             case_id,
             collection_run_id=collection_run_id,
         )
+        report_progress(progress, 15.0, "quick_context")
         map_lines, map_relative_path, map_warnings = self._build_quick_map(
             case_id, context
         )
@@ -381,6 +400,7 @@ class ReportingService:
         # удалось установить», не факты; сбой генератора — fallback на
         # детерминированный текст (§77).
         model = build_quick_model(context, marketing=self._marketing)
+        report_progress(progress, 40.0, "quick_model")
         facts_input: EstablishedFactsInput | None = None
         narrative_result: EstablishedFactsNarrative | None = None
         if self._narrative_generator is not None:
@@ -393,6 +413,7 @@ class ReportingService:
                 model = model.model_copy(
                     update={"narrative": self._quick_narrative(narrative_result)}
                 )
+        report_progress(progress, 60.0, "quick_narrative")
         markdown = render_quick_model(
             model,
             map_lines=map_lines,
@@ -410,10 +431,12 @@ class ReportingService:
             )
         )
         context.warnings.extend(qa_warnings)
+        report_progress(progress, 75.0, "quick_qa")
         pdf_relative_path, pdf_warnings = self._build_quick_pdf(
             case_id, context, model, markdown
         )
         context.warnings.extend(pdf_warnings)
+        report_progress(progress, 90.0, "quick_pdf")
         service_markdown, service_relative_path, service_warnings = (
             self._build_service_report(case_id, context)
         )
@@ -440,6 +463,7 @@ class ReportingService:
                 else None
             ),
         )
+        report_progress(progress, 100.0, "quick_saved")
         return QuickReportResult(
             report_id=report.id,
             case_id=report.case_id,

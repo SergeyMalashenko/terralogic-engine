@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
 import logging
 from collections.abc import Sequence
@@ -27,6 +28,7 @@ from terralogic_engine.acquisition.pipeline import (
     CaseNotCollectedError,
 )
 from terralogic_engine.domain.models import ReportFeedback
+from terralogic_engine.progress import ProgressCallback
 from terralogic_engine.quickreport.models import QuickReportResult
 from terralogic_engine.reporting.context import ReportContextError
 from terralogic_engine.reporting.models import (
@@ -113,6 +115,12 @@ class MCPDependencyError(RuntimeError):
     """Raised when the optional MCP SDK is unavailable."""
 
 
+try:  # SDK опционален: нужен только серверной точке входа
+    from mcp.server.fastmcp import Context
+except ImportError:  # pragma: no cover - без extra [mcp]
+    Context = None  # type: ignore[assignment, misc]
+
+
 def _load_mcp_server_class() -> type[Any]:
     try:
         from mcp.server.fastmcp import FastMCP
@@ -122,6 +130,25 @@ def _load_mcp_server_class() -> type[Any]:
             "`pip install 'terralogic-engine[mcp]'`."
         ) from exc
     return FastMCP
+
+
+def _ctx_progress_bridge(ctx: Any) -> ProgressCallback | None:
+    """Sync progress callback → FastMCP progress notifications.
+
+    Отправка уходит фоновыми задачами текущего event loop: и pipeline
+    (async), и quickreport (sync) вызывают коллбэк напрямую. Без
+    progressToken у клиента ``ctx.report_progress`` — no-op, поэтому
+    старые клиенты ничего не замечают.
+    """
+
+    if ctx is None:
+        return None
+    loop = asyncio.get_running_loop()
+
+    def _progress(percent: float, stage: str) -> None:
+        loop.create_task(ctx.report_progress(percent, 100.0, stage))
+
+    return _progress
 
 
 def create_reporting_service(
@@ -262,6 +289,7 @@ def create_mcp_server(
         case_id: str | None = None,
         margin_m: int = 1000,
         refresh_policy: Literal["never", "if_stale", "always"] = "if_stale",
+        ctx: Context = None,
     ) -> ToolResult[PrepareCaseResult]:
         """Collect and analyze one land parcel before quick-report generation.
 
@@ -295,6 +323,7 @@ def create_mcp_server(
                 case_id=case_id,
                 margin_m=margin_m,
                 refresh_policy=refresh_policy,
+                progress=_ctx_progress_bridge(ctx),
             )
         except Exception as exc:  # noqa: BLE001 - MCP application boundary
             return ToolResult[PrepareCaseResult](
@@ -309,6 +338,7 @@ def create_mcp_server(
         case_id: str | None = None,
         margin_m: int = 1000,
         refresh_policy: Literal["never", "if_stale", "always"] = "if_stale",
+        ctx: Context = None,
     ) -> ToolResult[PrepareCaseFromListingResult]:
         """Resolve a real-estate listing URL and collect the parcel case.
 
@@ -341,6 +371,7 @@ def create_mcp_server(
                 case_id=case_id,
                 margin_m=margin_m,
                 refresh_policy=refresh_policy,
+                progress=_ctx_progress_bridge(ctx),
             )
         except Exception as exc:  # noqa: BLE001 - MCP application boundary
             return ToolResult[PrepareCaseFromListingResult](
@@ -355,6 +386,7 @@ def create_mcp_server(
         case_id: str | None = None,
         margin_m: int = 1000,
         refresh_policy: Literal["never", "if_stale", "always"] = "if_stale",
+        ctx: Context = None,
     ) -> ToolResult[PrepareCaseFromListingResult]:
         """Resolve raw map coordinates and collect the parcel case.
 
@@ -384,6 +416,7 @@ def create_mcp_server(
                 case_id=case_id,
                 margin_m=margin_m,
                 refresh_policy=refresh_policy,
+                progress=_ctx_progress_bridge(ctx),
             )
         except Exception as exc:  # noqa: BLE001 - MCP application boundary
             return ToolResult[PrepareCaseFromListingResult](
@@ -396,6 +429,7 @@ def create_mcp_server(
     async def terralogic_prepare_quickreport(
         case_id: str,
         collection_run_id: str | None = None,
+        ctx: Context = None,
     ) -> ToolResult[QuickReportResult]:
         """Build and persist the quick report for a case.
 
@@ -416,6 +450,7 @@ def create_mcp_server(
             data = service.prepare_quickreport(
                 case_id,
                 collection_run_id=collection_run_id,
+                progress=_ctx_progress_bridge(ctx),
             )
         except Exception as exc:  # noqa: BLE001 - MCP application boundary
             return ToolResult[QuickReportResult](

@@ -60,6 +60,11 @@ from terralogic_engine.domain.models import (
     SourceName,
     utc_now,
 )
+from terralogic_engine.progress import (
+    ProgressCallback,
+    report_progress,
+    scaled_progress,
+)
 from terralogic_engine.store.base import CaseStore
 
 DOCUMENT_SYNC_SNAPSHOT_TYPE = "documents_sync"
@@ -193,7 +198,12 @@ class AcquisitionPipeline:
             return None
         return await self.rgis_documents.sync_parcel_documents(cadastral_number)
 
-    async def collect(self, request: CollectionRequest) -> CollectionReceipt:
+    async def collect(
+        self,
+        request: CollectionRequest,
+        *,
+        progress: ProgressCallback | None = None,
+    ) -> CollectionReceipt:
         """Execute one collection or reuse a fresh successful prior result."""
 
         profile = self.profile_resolver(request.profile, request.profile_version)
@@ -204,11 +214,13 @@ class AcquisitionPipeline:
         )
         reusable = self._reusable_receipt(request, profile)
         if reusable is not None:
+            report_progress(progress, 100.0, "collection_reused")
             return reusable
 
         run_id = f"run-{uuid4().hex}"
         started_at = self.clock()
         self.store.begin_run(request, run_id)
+        report_progress(progress, 3.0, "collection_start")
         nspd_snapshot_id: str | None = None
         osm_snapshot_id: str | None = None
         dgis_snapshot_id: str | None = None
@@ -276,6 +288,22 @@ class AcquisitionPipeline:
             )
             longitude, latitude = provisional_aoi.representative_point
             radius_m = math.ceil(provisional_aoi.search_radius_m)
+            report_progress(progress, 18.0, "parcel_info")
+
+            gather_done = 0
+            gather_total = 6
+
+            async def _tracked(awaitable: Any, stage: str) -> Any:
+                nonlocal gather_done
+                try:
+                    return await awaitable
+                finally:
+                    gather_done += 1
+                    report_progress(
+                        progress,
+                        20.0 + 40.0 * gather_done / gather_total,
+                        stage,
+                    )
 
             async def _collect_rgis() -> Any:
                 if self.rgis is None or not request.cadastral_number.startswith("50:"):
@@ -315,31 +343,43 @@ class AcquisitionPipeline:
                 rgis_result,
                 nspd_documents_result,
             ) = await asyncio.gather(
-                self.nspd.analyze_land_parcel_layers(
-                    request.cadastral_number,
-                    blocks=profile.nspd_blocks,
-                    include_geometry=True,
-                    limit=profile.nspd_limit_per_layer,
-                    detail="full",
+                _tracked(
+                    self.nspd.analyze_land_parcel_layers(
+                        request.cadastral_number,
+                        blocks=profile.nspd_blocks,
+                        include_geometry=True,
+                        limit=profile.nspd_limit_per_layer,
+                        detail="full",
+                    ),
+                    "layers_nspd",
                 ),
-                self.osm.analyze_area(
-                    normalized_geometry,
-                    source_crs="EPSG:4326",
-                    margin_m=margin_m,
-                    blocks=profile.osm_blocks,
-                    limit_per_block=profile.osm_limit_per_block,
-                    include_geometry=True,
+                _tracked(
+                    self.osm.analyze_area(
+                        normalized_geometry,
+                        source_crs="EPSG:4326",
+                        margin_m=margin_m,
+                        blocks=profile.osm_blocks,
+                        limit_per_block=profile.osm_limit_per_block,
+                        include_geometry=True,
+                    ),
+                    "area_osm",
                 ),
-                self.dgis.analyze_social_infrastructure(
-                    latitude=latitude,
-                    longitude=longitude,
-                    radius_m=radius_m,
-                    mode=profile.dgis_mode,
-                    limit_per_category=profile.dgis_limit_per_category,
+                _tracked(
+                    self.dgis.analyze_social_infrastructure(
+                        latitude=latitude,
+                        longitude=longitude,
+                        radius_m=radius_m,
+                        mode=profile.dgis_mode,
+                        limit_per_category=profile.dgis_limit_per_category,
+                    ),
+                    "social_dgis",
                 ),
-                _collect_dgis_transport(),
-                _collect_rgis(),
-                self._collect_nspd_documents(request.cadastral_number),
+                _tracked(_collect_dgis_transport(), "transport_dgis"),
+                _tracked(_collect_rgis(), "rgis"),
+                _tracked(
+                    self._collect_nspd_documents(request.cadastral_number),
+                    "documents_nspd",
+                ),
                 return_exceptions=True,
             )
 
@@ -581,7 +621,10 @@ class AcquisitionPipeline:
                 case_facts=case_facts,
                 warnings=warnings,
                 errors=errors,
+                progress=scaled_progress(progress, 62.0, 86.0),
             )
+
+            report_progress(progress, 90.0, "collection_finalize")
 
             if case_facts:
                 self.store.save_facts(request.case_id, case_facts)
@@ -701,6 +744,7 @@ class AcquisitionPipeline:
         case_facts: list[CaseFact],
         warnings: list[str],
         errors: list[str],
+        progress: ProgressCallback | None = None,
     ) -> None:
         """Second document contour: acquire pending versions, then query facts.
 
@@ -728,7 +772,8 @@ class AcquisitionPipeline:
             fallback = municipality_pzz_fallback(rgis_sync_envelope, candidates)
             if fallback is not None:
                 candidates.append(fallback)
-            for candidate in candidates:
+            report_progress(progress, 20.0, "geodocs_candidates")
+            for index, candidate in enumerate(candidates, start=1):
                 try:
                     acquire_result = await self.geodocs.acquire_documents(
                         candidate["municipality"],
@@ -747,9 +792,14 @@ class AcquisitionPipeline:
                     acquire_attempts.append(
                         {"candidate": candidate, "error": _exception_payload(exc)}
                     )
-                    continue
-                acquire_attempts.append(
-                    {"candidate": candidate, "result": dict(acquire_result)}
+                else:
+                    acquire_attempts.append(
+                        {"candidate": candidate, "result": dict(acquire_result)}
+                    )
+                report_progress(
+                    progress,
+                    20.0 + 60.0 * index / len(candidates),
+                    "geodocs_acquire",
                 )
         # The acquire snapshot is stored even with zero attempts: it marks the
         # contour as executed in this run, which the receipt-reuse check needs.
@@ -781,8 +831,10 @@ class AcquisitionPipeline:
             if warning is not None:
                 warnings.append(warning)
         if not profile.documents_query:
+            report_progress(progress, 100.0, "geodocs_done")
             return
 
+        report_progress(progress, 85.0, "geodocs_acquired")
         if pzz_version_ids:
             await self._query_document_vri(
                 request=request,
@@ -795,6 +847,7 @@ class AcquisitionPipeline:
                 warnings=warnings,
                 errors=errors,
             )
+        report_progress(progress, 95.0, "geodocs_query_vri")
         nspd_version_ids = sync_version_ids(nspd_sync_envelope)
         if nspd_version_ids:
             await self._query_zouit_regimes(
@@ -807,6 +860,7 @@ class AcquisitionPipeline:
                 warnings=warnings,
                 errors=errors,
             )
+        report_progress(progress, 100.0, "geodocs_done")
 
     async def _query_document_vri(
         self,

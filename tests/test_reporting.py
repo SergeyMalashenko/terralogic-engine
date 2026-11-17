@@ -238,7 +238,7 @@ async def test_prepare_case_source_not_found_raises_parcel_not_found(tmp_path) -
         def __init__(self, errors: list[str]) -> None:
             self._errors = errors
 
-        async def collect(self, request):
+        async def collect(self, request, *, progress=None):
             return CollectionReceipt(
                 case_id=request.case_id,
                 run_id="run-x",
