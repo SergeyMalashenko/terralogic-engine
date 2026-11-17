@@ -1831,6 +1831,20 @@ def _configuration_from_store(
         target_item = _goal_target_item(regulations)
     margin = _first_number(target_item.margin) if target_item is not None else None
     if margin is None:
+        # Строка ВРИ участка в регламенте есть, но без параметров — отступы
+        # берём по целевому виду зоны (смена ВРИ устраняет несовместимость,
+        # тот же fallback, что и при отсутствии строки в регламенте).
+        goal_item = _goal_target_item(regulations)
+        if goal_item is not None and goal_item is not target_item:
+            margin = _first_number(goal_item.margin)
+            if margin is not None:
+                warnings.append(
+                    "конфигурация: отступы по целевому виду "
+                    f"{(goal_item.code or '').rstrip('*')} "
+                    "(у ВРИ участка параметры не заданы)"
+                )
+                target_item = goal_item
+    if margin is None:
         warnings.append("конфигурация: нет применимых отступов из регламента ПЗЗ")
         return None
     receipts = store.list_collection_receipts(base.case_id)

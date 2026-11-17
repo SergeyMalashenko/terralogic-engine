@@ -734,6 +734,107 @@ def test_evaluate_configuration_variants():
     assert _eval_config(_rectangle(26, 4), 3) == 10
 
 
+def test_configuration_uses_goal_item_margin_when_use_row_empty(rules):
+    """Строка ВРИ участка без параметров → отступы целевого вида зоны.
+
+    Кейс Жуковки (50:20:0010516:1457): классификатор дал префикс «2.2»
+    (ЛПХ), строка 2.2 в регламенте Ж-2 без отступов, а целевой вид 2.1
+    имеет отступ 3 м — проверка берёт margin целевого вида вместо
+    отказа «нет применимых отступов».
+    """
+    from types import SimpleNamespace
+
+    from terralogic_engine.quickreport.context import _configuration_from_store
+    from terralogic_engine.quickreport.models import (
+        QuickZoneRegulations,
+        QuickZoneUse,
+    )
+
+    base = _base_context()
+    base.parcel = base.parcel.model_copy(
+        update={
+            "permitted_use": (
+                "Для индивидуального жилищного строительства "
+                "и ведения личного подсобного хозяйства"
+            ),
+            "permitted_use_vri": VriReportContext(
+                code="2.2",
+                name="ЛПХ",
+                act_number="П/0412",
+                revision_date="2026-01-01",
+            ),
+        }
+    )
+    regulations = QuickZoneRegulations(
+        zone_code="Ж-2",
+        housing_uses=[
+            QuickZoneUse(code="2.1*", name="ИЖС", margin="3", area_min="600"),
+            QuickZoneUse(code="2.2", name="ЛПХ", margin=None, area_min=None),
+            QuickZoneUse(
+                code="13.2*", name="Садоводство", margin="3", area_min="600"
+            ),
+            QuickZoneUse(
+                code="2.3", name="Блокированная", margin=None, area_min="200"
+            ),
+        ],
+    )
+    store = SimpleNamespace(
+        list_collection_receipts=lambda case_id: [
+            SimpleNamespace(run_id=base.collection_run_id, aoi_id="aoi-1")
+        ],
+        get_area_of_interest=lambda case_id, aoi_id: SimpleNamespace(
+            parcel_geometry=_square(100),
+            source_crs="EPSG:32637",
+            metric_crs="EPSG:32637",
+        ),
+    )
+    warnings: list[str] = []
+
+    outcome = _configuration_from_store(store, base, rules, regulations, warnings)
+
+    assert outcome is not None
+    assert outcome.c == 0
+    assert any("целевому виду" in warning for warning in warnings)
+
+
+def test_configuration_still_none_when_no_margin_anywhere(rules):
+    """Отступов нет ни у ВРИ участка, ни у целевых видов — честный отказ."""
+    from types import SimpleNamespace
+
+    from terralogic_engine.quickreport.context import _configuration_from_store
+    from terralogic_engine.quickreport.models import (
+        QuickZoneRegulations,
+        QuickZoneUse,
+    )
+
+    base = _base_context()
+    base.parcel = base.parcel.model_copy(
+        update={
+            "permitted_use_vri": VriReportContext(
+                code="2.2",
+                name="ЛПХ",
+                act_number="П/0412",
+                revision_date="2026-01-01",
+            ),
+        }
+    )
+    regulations = QuickZoneRegulations(
+        zone_code="Ж-2",
+        housing_uses=[
+            QuickZoneUse(code="2.1*", name="ИЖС", margin=None, area_min="600"),
+            QuickZoneUse(code="2.2", name="ЛПХ", margin=None, area_min=None),
+        ],
+    )
+    warnings: list[str] = []
+
+    outcome = _configuration_from_store(
+        SimpleNamespace(), base, rules, regulations, warnings
+    )
+
+    assert outcome is None
+    assert "конфигурация: нет применимых отступов из регламента ПЗЗ" in warnings
+
+
 # ---------------------------------------------------------------------------
 # Рендер
 # ---------------------------------------------------------------------------
