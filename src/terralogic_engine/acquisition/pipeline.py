@@ -1039,7 +1039,12 @@ class AcquisitionPipeline:
         if request.refresh_policy == "never":
             return latest.model_copy(update={"reused": True})
         age = self.clock() - latest.completed_at
-        if age <= timedelta(seconds=profile.stale_after_seconds):
+        ttl_seconds = (
+            profile.partial_stale_after_seconds
+            if latest.status == "partial"
+            else profile.stale_after_seconds
+        )
+        if age <= timedelta(seconds=ttl_seconds):
             return latest.model_copy(update={"reused": True})
         return None
 

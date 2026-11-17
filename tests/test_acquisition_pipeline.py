@@ -1135,3 +1135,91 @@ async def test_reuse_is_invalidated_when_documents_configuration_changes(
         "document_vri",
         "zouit_regime",
     }
+
+
+async def test_partial_receipt_reused_briefly_then_recollected(tmp_path) -> None:
+    """Partial (transient-сбой источника): короткий reuse, затем пересбор.
+
+    Квит со статусом partial живёт ``partial_stale_after_seconds`` (10 мин
+    по умолчанию), а не полные сутки как complete: транзиентный сбой вроде
+    Overpass 502 самоустраняется на повторном запросе пользователя.
+    """
+    from datetime import timedelta
+
+    from terralogic_engine.domain.models import utc_now
+
+    current = [utc_now()]
+    store = LocalCaseStore(tmp_path / "store")
+    nspd = FakeNspdClient()
+    osm = FakeOsmClient(failure=RuntimeError("Overpass returned HTTP 502"))
+    dgis = FakeDgisClient()
+    pipeline = AcquisitionPipeline(
+        store=store,
+        nspd=nspd,
+        osm=osm,
+        dgis=dgis,
+        clock=lambda: current[0],
+    )
+    request = CollectionRequest(
+        case_id="case-partial",
+        cadastral_number="52:26:0040002:3823",
+        profile_version="3.1",
+        refresh_policy="always",
+        allow_partial=True,
+    )
+
+    first = await pipeline.collect(request)
+
+    assert first.status == "partial"
+    calls_after_first = osm.calls
+
+    # Свежий partial переиспользуется: мгновенный повтор дёшев.
+    reused = await pipeline.collect(
+        request.model_copy(update={"refresh_policy": "if_stale"})
+    )
+    assert reused.reused is True
+    assert osm.calls == calls_after_first
+
+    # После partial_stale_after_seconds повтор пересобирает недостающее.
+    current[0] += timedelta(seconds=601)
+    recollected = await pipeline.collect(
+        request.model_copy(update={"refresh_policy": "if_stale"})
+    )
+    assert recollected.reused is False
+    assert recollected.run_id != first.run_id
+    assert osm.calls > calls_after_first
+
+
+async def test_complete_receipt_keeps_long_reuse_window(tmp_path) -> None:
+    """Complete-квит переиспользуется сутки: пересбор не нужен."""
+    from datetime import timedelta
+
+    from terralogic_engine.domain.models import utc_now
+
+    current = [utc_now()]
+    store = LocalCaseStore(tmp_path / "store")
+    osm = FakeOsmClient()
+    pipeline = AcquisitionPipeline(
+        store=store,
+        nspd=FakeNspdClient(),
+        osm=osm,
+        dgis=FakeDgisClient(),
+        clock=lambda: current[0],
+    )
+    request = CollectionRequest(
+        case_id="case-complete-ttl",
+        cadastral_number="52:26:0040002:3823",
+        profile_version="3.1",
+        refresh_policy="always",
+    )
+
+    first = await pipeline.collect(request)
+    assert first.status == "complete"
+    calls_after_first = osm.calls
+
+    current[0] += timedelta(seconds=601)
+    reused = await pipeline.collect(
+        request.model_copy(update={"refresh_policy": "if_stale"})
+    )
+    assert reused.reused is True
+    assert osm.calls == calls_after_first

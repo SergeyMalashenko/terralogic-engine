@@ -27,6 +27,9 @@ class CollectionProfile(BaseModel):
     rgis_limit_per_layer: int = Field(default=50, ge=1, le=100)
     rgis_zoom: int = Field(default=14, ge=10, le=18)
     stale_after_seconds: int = Field(default=86_400, ge=0)
+    # Частичный сбор (transient-сбой источника) переиспользуется недолго:
+    # повторный запрос через несколько минут пересобирает недостающее.
+    partial_stale_after_seconds: int = Field(default=600, ge=0)
     documents_acquire: bool = False
     documents_acquire_limit: int = Field(default=3, ge=0, le=50)
     documents_query: bool = False
